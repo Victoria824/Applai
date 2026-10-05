@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <header>
+    <h1>AutoApply</h1>
+    <span id="version">v0.1 原型</span>
+  </header>
+
+  <section class="card" id="page-card">
+    <h2>当前页面</h2>
+    <div class="row"><span class="label">网址</span><span id="page-url" class="mono ellipsis">—</span></div>
+    <div class="row"><span class="label">ATS</span><span id="page-ats">检测中…</span></div>
+    <div class="row"><span class="label">验证码</span><span id="page-captcha">检测中…</span></div>
+    <div class="btn-row">
+      <button id="btn-fill" class="primary">自动填写表单</button>
+      <button id="btn-enqueue">加入队列</button>
+    </div>
+    <div id="fill-report" class="report hidden"></div>
+  </section>
+
+  <section class="card">
+    <h2>第一步：求职画像 <button id="btn-profile-toggle" class="link">编辑</button></h2>
+    <div id="profile-view" class="small">未配置，点击"编辑"完成第一步设置</div>
+    <div id="profile-edit" class="hidden">
+      <form id="profile-form" autocomplete="off">
+        <h3>基本信息</h3>
+        <div class="grid2">
+          <label>名 <input data-k="firstName" placeholder="Victoria"></label>
+          <label>姓 <input data-k="lastName" placeholder="Liu"></label>
+        </div>
+        <label>邮箱 <input data-k="email" type="email" placeholder="you@example.com"></label>
+        <label>电话 <input data-k="phone" placeholder="+1 416-555-0132"></label>
+        <label>现居地 <input data-k="location" placeholder="Toronto, ON, Canada"></label>
+        <label>LinkedIn <input data-k="linkedin" placeholder="https://linkedin.com/in/..."></label>
+        <div class="grid2">
+          <label>GitHub <input data-k="github" placeholder="https://github.com/..."></label>
+          <label>个人网站 <input data-k="website" placeholder="https://..."></label>
+        </div>
+
+        <h3>简历</h3>
+        <label class="filebox">选择简历文件（PDF/DOC）
+          <input type="file" id="resume-file" accept=".pdf,.doc,.docx">
+        </label>
+        <div id="resume-status" class="hint">未上传（文件只保存在本机浏览器中）</div>
+
+        <h3>求职偏好</h3>
+        <label>目标职位 <span class="hint-inline">逗号分隔</span>
+          <input data-k="targetTitles" placeholder="AI Engineer, Machine Learning Engineer">
+        </label>
+        <label>行业 <span class="hint-inline">逗号分隔</span>
+          <input data-k="industries" placeholder="AI SaaS, Fintech">
+        </label>
+        <div class="grid2">
+          <label>工作年限 <input data-k="yearsExperience" type="number" min="0" max="50" placeholder="5"></label>
+          <label>远程偏好
+            <select data-k="remotePreference">
+              <option value="any">不限</option>
+              <option value="remote">纯远程</option>
+              <option value="hybrid">混合</option>
+              <option value="onsite">坐班</option>
+            </select>
+          </label>
+        </div>
+        <label>期望地点 <span class="hint-inline">逗号分隔</span>
+          <input data-k="preferredLocations" placeholder="Toronto, Remote">
+        </label>
+        <div class="grid3">
+          <label>薪资下限 <input data-k="salaryMin" type="number" min="0" placeholder="120000"></label>
+          <label>上限 <input data-k="salaryMax" type="number" min="0" placeholder="150000"></label>
+          <label>币种
+            <select data-k="salaryCurrency">
+              <option value="CAD">CAD</option>
+              <option value="USD">USD</option>
+              <option value="CNY">CNY</option>
+            </select>
+          </label>
+        </div>
+        <label>工作许可 <input data-k="workAuth" placeholder="I am authorized to work in Canada"></label>
+        <label class="check"><input type="checkbox" data-k="needsSponsorship"> 需要雇主担保签证 (sponsorship)</label>
+        <label>通用求职信 <textarea data-k="coverLetter" rows="4" placeholder="Dear Hiring Manager, ..."></textarea></label>
+
+        <div class="btn-row">
+          <button type="submit" class="primary">保存画像</button>
+          <button type="button" id="btn-profile-cancel">取消</button>
+          <button type="button" id="btn-json-toggle" class="link">高级：JSON</button>
+        </div>
+        <div id="json-advanced" class="hidden">
+          <textarea id="profile-json" rows="10" spellcheck="false"></textarea>
+          <div class="btn-row"><button type="button" id="btn-json-apply">从 JSON 导入</button></div>
+        </div>
+        <p class="hint">画像只保存在本机浏览器 storage 中，不上传任何服务器。</p>
+      </form>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>设置</h2>
+    <div class="row"><span class="label">ntfy 主题</span>
+      <input id="set-topic" placeholder="如 victoria-apply-9f3k2" class="grow">
+    </div>
+    <div class="row"><span class="label">自动提交</span>
+      <label class="switch"><input type="checkbox" id="set-autosubmit"><span>仅无验证码且无缺失字段时提交（默认关）</span></label>
+    </div>
+    <div class="btn-row"><button id="btn-test-push">测试手机推送</button></div>
+    <p class="hint">手机安装 ntfy App 并订阅相同主题即可收到验证码提醒。</p>
+  </section>
+
+  <section class="card">
+    <h2>队列 <button id="btn-queue-clear" class="link danger">清空已完成</button></h2>
+    <div id="queue-list"><p class="hint">暂无任务</p></div>
+  </section>
+
+  <div id="toast" class="hidden"></div>
+<script src="popup.js"></script>
+</body>
+</html>

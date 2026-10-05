@@ -1,0 +1,38 @@
+{
+  "action": {
+    "default_popup": "popup/popup.html",
+    "default_title": "AutoApply"
+  },
+  "background": {
+    "service_worker": "background/sw.js"
+  },
+  "content_scripts": [
+    {
+      "js": [
+        "content/lib/match.js",
+        "content/lib/combobox.js",
+        "content/ats.js",
+        "content/fill.js",
+        "content/captcha.js",
+        "content/bridge.js"
+      ],
+      "matches": [
+        "<all_urls>"
+      ],
+      "run_at": "document_idle"
+    }
+  ],
+  "description": "原型：在公司官网职位页自动填写申请表单，验证码任务进队列并手机推送提醒。",
+  "host_permissions": [
+    "<all_urls>"
+  ],
+  "manifest_version": 3,
+  "name": "AutoApply — 求职自动投递",
+  "permissions": [
+    "storage",
+    "activeTab",
+    "scripting",
+    "notifications"
+  ],
+  "version": "0.1.0"
+}

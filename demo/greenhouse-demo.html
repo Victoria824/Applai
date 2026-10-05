@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>AI Engineer — Demo Job Application</title>
+<style>
+  body { font-family: -apple-system, "Segoe UI", sans-serif; max-width: 640px; margin: 40px auto; padding: 0 20px; color: #222; }
+  h1 { font-size: 24px; } h2 { font-size: 16px; margin-top: 28px; border-bottom: 1px solid #eee; padding-bottom: 6px; }
+  .field { margin: 12px 0; } label { display: block; font-size: 13px; font-weight: 600; margin-bottom: 4px; }
+  input[type=text], input[type=email], input[type=tel], textarea, select { width: 100%; padding: 8px; font-size: 14px; border: 1px solid #ccc; border-radius: 6px; box-sizing: border-box; }
+  .req::after { content: " *"; color: #c00; }
+  .radio-row label { display: inline; font-weight: 400; margin-right: 16px; }
+  button[type=submit] { margin-top: 20px; padding: 10px 28px; font-size: 15px; background: #15372c; color: #fff; border: none; border-radius: 8px; cursor: pointer; }
+  .note { background: #fffbe6; border: 1px solid #f0d860; padding: 10px 14px; border-radius: 8px; font-size: 13px; margin-bottom: 20px; }
+</style>
+</head>
+<body>
+<div class="note">🧪 这是 AutoApply 的本地演示页（仿 Greenhouse 表单）。先在插件里完成「第一步：求职画像」，再回到本页点插件 →「自动填写表单」。绿色描边 = 已填，红色 = 需人工。</div>
+<h1>AI Engineer</h1>
+<p>Acme Corp · Toronto, ON · Full-time</p>
+
+<form id="application-form" onsubmit="event.preventDefault(); alert('演示页：表单已“提交”（实际未发送）');">
+  <h2>Personal Information</h2>
+  <div class="field"><label class="req" for="first_name">First Name</label><input type="text" id="first_name"></div>
+  <div class="field"><label class="req" for="last_name">Last Name</label><input type="text" id="last_name"></div>
+  <div class="field"><label class="req" for="email">Email</label><input type="email" id="email"></div>
+  <div class="field"><label for="phone">Phone</label><input type="tel" id="phone"></div>
+  <div class="field"><label for="loc">Current Location</label><input type="text" id="loc"></div>
+
+  <h2>Profile</h2>
+  <div class="field"><label>LinkedIn URL</label><input type="text" name="job_application[answers][1][answer]"></div>
+  <div class="field"><label>GitHub URL</label><input type="text" name="job_application[answers][2][answer]"></div>
+  <div class="field"><label>Portfolio / Website</label><input type="text" id="portfolio"></div>
+
+  <h2>Experience</h2>
+  <div class="field"><label>Years of professional experience</label><input type="text" id="yoe"></div>
+  <div class="field"><label>Expected salary</label><input type="text" id="salary"></div>
+  <div class="field"><label class="req" for="cover">Cover Letter</label><textarea id="cover" rows="4"></textarea></div>
+
+  <h2>Additional Questions</h2>
+  <div class="field"><label>Are you legally authorized to work in Canada?</label>
+    <select id="auth"><option value="">Select...</option><option>Yes</option><option>No</option></select></div>
+  <div class="field"><label>Do you require visa sponsorship?</label>
+    <div class="radio-row">
+      <label><input type="radio" name="sponsorship" value="yes"> Yes</label>
+      <label><input type="radio" name="sponsorship" value="no"> No</label>
+    </div></div>
+
+  <h2>Attachments</h2>
+  <div class="field"><label class="req">Resume</label><input type="file" id="resume" accept=".pdf,.doc,.docx"></div>
+
+  <button type="submit">Submit Application</button>
+</form>
+</body>
+</html>
