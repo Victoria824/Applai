@@ -30,6 +30,99 @@ const store = {
   set: (obj) => new Promise((r) => chrome.storage.local.set(obj, r)),
 };
 
+/* ---------- 后端对接 ---------- */
+async function backendBase() {
+  const { aap_settings: s = {} } = await store.get(['aap_settings']);
+  return (s.backendUrl || 'http://127.0.0.1:8000').replace(/\/$/, '');
+}
+
+async function getUserId() {
+  const resp = await new Promise((r) => chrome.runtime.sendMessage({ type: 'AUTOAPPLY_GET_USER' }, r));
+  return resp && resp.user_id;
+}
+
+async function apiGet(path) {
+  const base = await backendBase();
+  const r = await fetch(base + path);
+  if (!r.ok) throw new Error(`后端请求失败 ${r.status}`);
+  return r.json();
+}
+
+async function apiPut(path, body) {
+  const base = await backendBase();
+  const r = await fetch(base + path, {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!r.ok) throw new Error(`后端请求失败 ${r.status}`);
+  return r.json();
+}
+
+async function syncProfileToBackend(profile) {
+  try {
+    const userId = await getUserId();
+    await apiPut('/api/v1/profile', { user_id: userId, profile });
+  } catch (e) {
+    toast('画像已存本机，同步到系统失败：' + e.message);
+  }
+}
+
+/* ---------- 今日投递队列 ---------- */
+async function refreshDailyQueue() {
+  const el = $('daily-queue');
+  el.innerHTML = '<p class="hint">拉取中…</p>';
+  try {
+    const userId = await getUserId();
+    const { aap_settings: s = {} } = await store.get(['aap_settings']);
+    const data = await apiGet(`/api/v1/queue?user_id=${encodeURIComponent(userId)}&top_n=${s.dailyCount || 10}`);
+    const jobs = data.jobs || [];
+    $('queue-count').textContent = jobs.length ? `今日 ${jobs.length} 个（按匹配分排序）` : '';
+    if (!jobs.length) { el.innerHTML = '<p class="hint">今日无可投职位。先在后端添加职位源（/api/v1/jobs/discover）。</p>'; return; }
+    el.innerHTML = jobs.map((j, i) => `
+      <div class="qitem">
+        <div class="t">${i + 1}. ${escapeHtml(j.title || '未命名')}<span class="badge queued">${j.score} 分</span></div>
+        <div class="meta">${escapeHtml(j.company || '')} · ${escapeHtml(j.location || '')}</div>
+        <div class="meta hint">${escapeHtml((j.score_reasons || []).join('；'))}</div>
+      </div>`).join('');
+  } catch (e) {
+    el.innerHTML = `<p class="hint">拉取失败：${escapeHtml(e.message)}。请确认后端运行中且地址正确。</p>`;
+  }
+}
+
+$('btn-refresh-queue').addEventListener('click', refreshDailyQueue);
+$('btn-run-now').addEventListener('click', async () => {
+  if (!confirm('立即执行今日投递？将按顺序打开职位页自动填写并提交（需开启自动提交）。')) return;
+  $('btn-run-now').disabled = true;
+  $('btn-run-now').textContent = '执行中…（可在后台查看进度）';
+  chrome.runtime.sendMessage({ type: 'AUTOAPPLY_RUN_NOW' }, () => {
+    toast('投递任务已启动，后台运行中');
+    setTimeout(() => { $('btn-run-now').disabled = false; $('btn-run-now').textContent = '立即执行投递'; renderQueue(); }, 3000);
+  });
+});
+
+/* ---------- 定时设置 ---------- */
+async function saveSchedule() {
+  const { aap_settings: s = {} } = await store.get(['aap_settings']);
+  const next = {
+    ...s,
+    scheduleEnabled: $('set-schedule').checked,
+    scheduleTime: $('set-time').value || '08:00',
+    dailyCount: Math.max(1, Math.min(30, Number($('set-count').value) || 10)),
+    backendUrl: $('set-backend').value.trim() || 'http://127.0.0.1:8000',
+  };
+  await store.set({ aap_settings: next });
+  chrome.runtime.sendMessage({ type: 'AUTOAPPLY_RESCHEDULE' });
+  if (next.scheduleEnabled) toast(`已开启：每天 ${next.scheduleTime} 自动投 ${next.dailyCount} 份`);
+}
+['set-schedule', 'set-time', 'set-count'].forEach((id) => {
+  $(id).addEventListener('change', saveSchedule);
+});
+$('set-backend').addEventListener('change', async () => {
+  const { aap_settings: s = {} } = await store.get(['aap_settings']);
+  await store.set({ aap_settings: { ...s, backendUrl: $('set-backend').value.trim() || 'http://127.0.0.1:8000' } });
+  toast('后端地址已保存');
+});
+
 /* ---------- 页面检测 ---------- */
 async function detectPage() {
   const tab = await getActiveTab();
@@ -278,7 +371,9 @@ $('profile-form').addEventListener('submit', async (e) => {
   await store.set({ aap_profile: p });
   renderProfileView(p);
   closeProfileEditor();
-  toast('画像已保存 ✓');
+  toast('画像已保存 ✓，正在同步到系统…');
+  await syncProfileToBackend(p);
+  toast('画像已同步到系统 ✓');
 });
 
 $('btn-json-toggle').addEventListener('click', () => {
@@ -331,6 +426,11 @@ $('btn-enqueue').addEventListener('click', async () => {
   renderProfileView(profile);
   $('set-topic').value = settings.topic || '';
   $('set-autosubmit').checked = !!settings.autoSubmit;
+  $('set-backend').value = settings.backendUrl || 'http://127.0.0.1:8000';
+  $('set-schedule').checked = !!settings.scheduleEnabled;
+  $('set-time').value = settings.scheduleTime || '08:00';
+  $('set-count').value = settings.dailyCount || 10;
+  $('user-id').textContent = await getUserId();
   renderQueue();
   detectPage();
 })();

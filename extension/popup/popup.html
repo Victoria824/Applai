@@ -23,6 +23,24 @@
   </section>
 
   <section class="card">
+    <h2>今日投递 <span class="hint-inline" id="queue-count"></span></h2>
+    <div id="daily-queue"><p class="hint">点击「刷新队列」从系统拉取今日匹配职位</p></div>
+    <div class="btn-row">
+      <button id="btn-refresh-queue">刷新队列</button>
+      <button id="btn-run-now" class="primary">立即执行投递</button>
+    </div>
+    <h3 style="font-size:12px;color:#6b7280;margin:10px 0 6px">定时设置</h3>
+    <div class="row"><span class="label">每日投递</span>
+      <label class="switch"><input type="checkbox" id="set-schedule"><span>开启（默认每天 8 点）</span></label>
+    </div>
+    <div class="grid2">
+      <div class="row"><span class="label">时间</span><input id="set-time" type="time" value="08:00" class="grow"></div>
+      <div class="row"><span class="label">份数</span><input id="set-count" type="number" min="1" max="30" value="10" class="grow"></div>
+    </div>
+    <p class="hint">执行器在浏览器打开时运行；每份投递间隔 20–60 秒随机限速。验证码/缺失字段自动进待人工并手机推送。</p>
+  </section>
+
+  <section class="card">
     <h2>第一步：求职画像 <button id="btn-profile-toggle" class="link">编辑</button></h2>
     <div id="profile-view" class="small">未配置，点击"编辑"完成第一步设置</div>
     <div id="profile-edit" class="hidden">
@@ -99,8 +117,12 @@
 
   <section class="card">
     <h2>设置</h2>
+    <div class="row"><span class="label">后端地址</span>
+      <input id="set-backend" placeholder="http://127.0.0.1:8000" class="grow mono">
+    </div>
+    <div class="row"><span class="label">用户 ID</span><span id="user-id" class="mono small">—</span></div>
     <div class="row"><span class="label">ntfy 主题</span>
-      <input id="set-topic" placeholder="如 victoria-apply-9f3k2" class="grow">
+      <input id="set-topic" placeholder="如 applai-9f3k2" class="grow">
     </div>
     <div class="row"><span class="label">自动提交</span>
       <label class="switch"><input type="checkbox" id="set-autosubmit"><span>仅无验证码且无缺失字段时提交（默认关）</span></label>

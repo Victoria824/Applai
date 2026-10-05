@@ -1,4 +1,53 @@
-# Applai — 全自动求职投递工具（原型 v0.1）
+# Applai — 全自动求职投递工具（v0.2）
+
+浏览器插件 + 后端系统。画像同步到系统后，后端按画像分析匹配职位，
+插件每天 8 点自动投递 10 份（可配置）。
+
+## 架构
+
+```
+┌─────────────┐   画像/队列/结果    ┌──────────────────┐
+│ 浏览器插件   │ ◄──────────────► │ 后端 FastAPI      │
+│ (hands)     │   REST API        │ (brain)           │
+│ - 表单填写   │                   │ - 画像存储        │
+│ - 验证码检测 │                   │ - ATS 职位抓取    │
+│ - 8点执行器  │                   │ - 画像×职位匹配  │
+│ - ntfy 推送  │                   │ - 投递记录/统计   │
+└─────────────┘                   └──────────────────┘
+```
+
+## 后端（backend/）
+
+```bash
+cd backend
+python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
+.venv/bin/uvicorn app:app --port 8000
+# 测试：.venv/bin/python -m pytest test_backend.py -q
+```
+
+- `PUT /api/v1/profile` — 同步画像（插件保存时自动调用）
+- `POST /api/v1/jobs/discover` — 从 ATS 公开 API 批量抓取
+  `{"user_id":"...","sources":[{"type":"greenhouse","key":"acme"},{"type":"lever","key":"acme"}]}`
+  （Greenhouse/Lever 有公开免登录 API；board/site 从职位页 URL 解析）
+- `POST /api/v1/jobs` — 手动添加单个职位（自动打分）
+- `GET /api/v1/queue?user_id=...&top_n=10` — 今日投递队列（匹配分排序，排除已处理）
+- `POST /api/v1/applications` — 回写投递结果
+- `GET /api/v1/applications` / `GET /api/v1/stats` — 追踪与统计
+
+匹配逻辑（`matcher.py`，规则版，可解释）：标题 60 分 + 地点/远程 25 分，
+40 分以上进队列。vNext 可换 LLM 语义匹配。
+
+## 插件 v0.2 新功能
+
+- **画像同步**：保存画像时自动 PUT 到后端
+- **今日投递卡**：从后端拉取今日匹配队列（含匹配分和理由），可手动刷新
+- **定时投递**：设置里开启后，每天 8 点（可改）自动跑：后台打开职位页 →
+  自动填写 → 无验证码且字段齐全且开了自动提交则提交 → 结果回写后端；
+  验证码/缺失字段进待人工并手机推送。每份投递间隔 20–60 秒随机限速。
+- **立即执行**按钮：不等 8 点，手动触发今日投递（测试用）
+- 注意：定时器依赖浏览器打开；关机状态下不会跑（vNext 做服务端执行器）
+
+## 快速开始（插件）
 
 浏览器插件原型：验证"官网直投"链路。用户在公司官网职位页打开插件，
 插件自动识别 ATS（Greenhouse / Lever / Ashby / Workday），用个人画像

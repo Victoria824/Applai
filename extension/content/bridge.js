@@ -16,6 +16,13 @@
           (err) => sendResponse({ ok: false, error: String((err && err.message) || err) })
         );
         return true; // 异步响应
+      } else if (msg.type === 'AUTOAPPLY_SUBMIT') {
+        if (!api.submitApplication) { sendResponse({ ok: false, error: 'submit not loaded' }); return true; }
+        Promise.resolve(api.submitApplication(msg.timeoutMs)).then(
+          (result) => sendResponse({ ok: true, result }),
+          (err) => sendResponse({ ok: false, error: String((err && err.message) || err) })
+        );
+        return true; // 异步响应
       } else {
         sendResponse({ ok: false, error: 'unknown message' });
       }
