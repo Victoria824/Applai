@@ -93,7 +93,7 @@ async function doFill() {
       await enqueueJob(tab, 'needs_manual', r);
       chrome.runtime.sendMessage({
         type: 'AUTOAPPLY_NOTIFY',
-        title: 'AutoApply：需要人工处理验证码',
+        title: 'Applai：需要人工处理验证码',
         message: `${r.jobTitle || '该职位'}\n${tab.url}`,
       });
       toast('检测到验证码，已加入待人工队列并推送提醒');
@@ -301,7 +301,7 @@ $('btn-test-push').addEventListener('click', async () => {
   await store.set({ aap_settings: { topic, autoSubmit: $('set-autosubmit').checked } });
   chrome.runtime.sendMessage({
     type: 'AUTOAPPLY_NOTIFY',
-    title: 'AutoApply 测试推送',
+    title: 'Applai 测试推送',
     message: '如果手机收到这条消息，说明验证码提醒通道正常 ✓',
   });
   toast('测试推送已发送');

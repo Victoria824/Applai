@@ -14,7 +14,7 @@ async function pushViaNtfy(title, message) {
   if (!topic) {
     chrome.notifications.create({
       type: 'basic', iconUrl: 'icons/icon48.png',
-      title: 'AutoApply：未配置 ntfy 主题',
+      title: 'Applai：未配置 ntfy 主题',
       message: '请在插件设置中填写 ntfy 主题以启用手机推送',
     }).catch(() => {});
     return { ok: false, error: 'ntfy topic not configured' };
@@ -34,12 +34,12 @@ async function pushViaNtfy(title, message) {
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   (async () => {
     if (msg.type === 'AUTOAPPLY_NOTIFY') {
-      const r = await pushViaNtfy(msg.title || 'AutoApply', msg.message || '');
+      const r = await pushViaNtfy(msg.title || 'Applai', msg.message || '');
       // 同时在桌面弹一条，保证没配 ntfy 也能看到
       try {
         await chrome.notifications.create({
           type: 'basic', iconUrl: 'icons/icon48.png',
-          title: msg.title || 'AutoApply', message: (msg.message || '').slice(0, 200),
+          title: msg.title || 'Applai', message: (msg.message || '').slice(0, 200),
         });
       } catch (e) { /* notifications 权限缺失时忽略 */ }
       sendResponse({ ok: true, ntfy: r });

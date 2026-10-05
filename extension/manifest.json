@@ -1,7 +1,7 @@
 {
   "action": {
     "default_popup": "popup/popup.html",
-    "default_title": "AutoApply"
+    "default_title": "Applai"
   },
   "background": {
     "service_worker": "background/sw.js"
@@ -27,7 +27,7 @@
     "<all_urls>"
   ],
   "manifest_version": 3,
-  "name": "AutoApply — 求职自动投递",
+  "name": "Applai — 求职自动投递",
   "permissions": [
     "storage",
     "activeTab",

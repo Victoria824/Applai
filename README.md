@@ -1,4 +1,4 @@
-# AutoApply — 全自动求职投递工具（原型 v0.1）
+# Applai — 全自动求职投递工具（原型 v0.1）
 
 浏览器插件原型：验证"官网直投"链路。用户在公司官网职位页打开插件，
 插件自动识别 ATS（Greenhouse / Lever / Ashby / Workday），用个人画像
