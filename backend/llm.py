@@ -1,0 +1,106 @@
+"""llm.py — LLM 语义匹配（OpenAI-compatible API，无 SDK 依赖）
+
+支持任何 OpenAI 格式的服务：OpenAI / DeepSeek / OpenRouter / Ollama 本地等。
+配置（环境变量）：
+  APPLAI_LLM_API_KEY   必填，否则自动降级为纯规则打分
+  APPLAI_LLM_BASE_URL  默认 https://api.openai.com/v1
+  APPLAI_LLM_MODEL     默认 gpt-4o-mini
+"""
+import json
+import os
+import re
+
+import httpx
+
+
+def get_config() -> dict:
+    return {
+        "api_key": os.environ.get("APPLAI_LLM_API_KEY", "").strip(),
+        "base_url": (os.environ.get("APPLAI_LLM_BASE_URL") or "https://api.openai.com/v1").rstrip("/"),
+        "model": os.environ.get("APPLAI_LLM_MODEL") or "gpt-4o-mini",
+    }
+
+
+def is_configured() -> bool:
+    return bool(get_config()["api_key"])
+
+
+def _profile_text(p: dict) -> str:
+    rows = [
+        f"目标职位：{', '.join(p.get('targetTitles') or []) or '未填'}",
+        f"工作年限：{p.get('yearsExperience') or '未填'} 年",
+        f"期望地点：{', '.join(p.get('preferredLocations') or []) or '未填'}；远程偏好：{p.get('remotePreference') or 'any'}",
+        f"行业偏好：{', '.join(p.get('industries') or []) or '未填'}",
+        f"期望薪资：{(p.get('salaryMin') or '?')}-{(p.get('salaryMax') or '?')} {p.get('salaryCurrency') or ''}".strip(),
+        f"工作许可：{p.get('workAuth') or '未填'}；需签证担保：{'是' if p.get('needsSponsorship') else '否'}",
+    ]
+    return "\n".join(rows)
+
+
+def _job_text(job: dict) -> str:
+    desc = (job.get("description") or "")[:3500]
+    return (
+        f"标题：{job.get('title') or ''}\n"
+        f"公司：{job.get('company') or ''}\n"
+        f"地点：{job.get('location') or ''}\n"
+        f"描述：{desc or '（无描述）'}"
+    )
+
+
+PROMPT = """你是资深招聘顾问。请评估候选人与职位的匹配度，打分 0-100。
+
+候选人画像：
+{profile}
+
+职位：
+{job}
+
+只返回 JSON（不要用 markdown 包裹）：
+{{"score": 85, "reasons": ["...", "...", "..."]}}
+
+打分标准：90+ 完美匹配；70-89 高度匹配；50-69 部分匹配但有差距；
+40-49 勉强相关；<40 不匹配。
+reasons 用中文，2-4 条，每条一句话，说清匹配点或差距。"""
+
+
+def _extract_json(text: str) -> dict | None:
+    text = text.strip()
+    # 去掉可能的 markdown 包裹
+    m = re.search(r"\{.*\}", text, re.S)
+    if not m:
+        return None
+    try:
+        return json.loads(m.group(0))
+    except json.JSONDecodeError:
+        return None
+
+
+def llm_score(profile: dict, job: dict, timeout: int = 60) -> tuple[float | None, list]:
+    """返回 (分数, 理由列表)；任何失败返回 (None, [])，调用方降级为规则打分。"""
+    cfg = get_config()
+    if not cfg["api_key"]:
+        return None, []
+    prompt = PROMPT.format(profile=_profile_text(profile), job=_job_text(job))
+    try:
+        r = httpx.post(
+            f"{cfg['base_url']}/chat/completions",
+            headers={"Authorization": f"Bearer {cfg['api_key']}", "Content-Type": "application/json"},
+            json={
+                "model": cfg["model"],
+                "messages": [{"role": "user", "content": prompt}],
+                "temperature": 0.2,
+                "max_tokens": 400,
+            },
+            timeout=timeout,
+        )
+        r.raise_for_status()
+        content = r.json()["choices"][0]["message"]["content"]
+        data = _extract_json(content)
+        if not data:
+            return None, []
+        score = float(data.get("score", 0))
+        score = max(0.0, min(100.0, score))
+        reasons = [str(x) for x in (data.get("reasons") or [])][:4]
+        return round(score, 1), reasons
+    except Exception:
+        return None, []

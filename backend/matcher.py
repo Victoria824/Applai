@@ -68,3 +68,22 @@ def build_queue(profile: dict, jobs: list, top_n=10, threshold=40.0) -> list:
             scored.append({**job, "score": s, "score_reasons": reasons})
     scored.sort(key=lambda j: (-j["score"], j.get("created_at", 0)))
     return scored[:top_n]
+
+
+# ---------- LLM 混合打分 ----------
+# 规则预筛（>=25 分）→ LLM 精排 → 加权融合。LLM 未配置或失败时无缝降级为纯规则。
+LLM_PREFILTER = 25.0
+RULES_WEIGHT = 0.35
+LLM_WEIGHT = 0.65
+
+
+def hybrid_score(profile: dict, job: dict, rules_score: float, rules_reasons: list) -> tuple[float, list, str]:
+    """返回 (最终分, 理由, 打分方式 'hybrid'|'rules')。"""
+    import llm as llm_mod
+    if rules_score < LLM_PREFILTER or not llm_mod.is_configured():
+        return rules_score, rules_reasons, "rules"
+    ls, lreasons = llm_mod.llm_score(profile, job)
+    if ls is None:
+        return rules_score, rules_reasons, "rules"
+    final = round(rules_score * RULES_WEIGHT + ls * LLM_WEIGHT, 1)
+    return final, lreasons, "hybrid"

@@ -47,6 +47,11 @@ def get_db():
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     conn.executescript(SCHEMA)
+    # 轻量迁移：jobs 表加 score_via 列
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(jobs)").fetchall()}
+    if "score_via" not in cols:
+        conn.execute("ALTER TABLE jobs ADD COLUMN score_via TEXT DEFAULT 'rules'")
+        conn.commit()
     return conn
 
 
@@ -70,14 +75,18 @@ def get_profile(user_id: str) -> dict:
     return json.loads(row["profile_json"]) if row else {}
 
 
-def add_job(user_id: str, url: str, title="", company="", location="", source="manual", raw=None) -> dict:
+def add_job(user_id: str, url: str, title="", company="", location="", source="manual",
+            raw=None, description="") -> dict:
     conn = get_db()
     now = time.time()
+    raw = dict(raw or {})
+    if description:
+        raw["description"] = description[:4000]
     try:
         cur = conn.execute(
             """INSERT INTO jobs(user_id, url, title, company, location, source, raw_json, created_at)
                VALUES(?,?,?,?,?,?,?,?)""",
-            (user_id, url, title, company, location, source, json.dumps(raw or {}, ensure_ascii=False), now),
+            (user_id, url, title, company, location, source, json.dumps(raw, ensure_ascii=False), now),
         )
         job_id = cur.lastrowid
         is_new = True
@@ -90,10 +99,18 @@ def add_job(user_id: str, url: str, title="", company="", location="", source="m
     return {"id": job_id, "is_new": is_new}
 
 
-def update_job_score(job_id: int, score: float, reasons: list):
+def job_description(job: dict) -> str:
+    try:
+        raw = json.loads(job.get("raw_json") or "{}")
+    except json.JSONDecodeError:
+        raw = {}
+    return raw.get("description", "")
+
+
+def update_job_score(job_id: int, score: float, reasons: list, via: str = "rules"):
     conn = get_db()
-    conn.execute("UPDATE jobs SET score=?, score_reasons=? WHERE id=?",
-                 (score, json.dumps(reasons, ensure_ascii=False), job_id))
+    conn.execute("UPDATE jobs SET score=?, score_reasons=?, score_via=? WHERE id=?",
+                 (score, json.dumps(reasons, ensure_ascii=False), via, job_id))
     conn.commit()
     conn.close()
 

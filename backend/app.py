@@ -45,7 +45,18 @@ class ApplicationIn(BaseModel):
 
 @app.get("/health")
 def health():
-    return {"ok": True, "version": "0.2.0"}
+    import llm as llm_mod
+    return {"ok": True, "version": "0.2.0", "llm": llm_mod.is_configured()}
+
+
+def score_and_store(user_id: str, job_id: int, profile: dict):
+    """规则预筛 + LLM 精排，结果写回 DB。"""
+    job = db.get_job(job_id)
+    rs, rreasons = matcher.score_job(profile, job)
+    fs, freasons, via = matcher.hybrid_score(
+        profile, {**job, "description": db.job_description(job)}, rs, rreasons)
+    db.update_job_score(job_id, fs, freasons, via)
+    return fs, freasons, via
 
 
 @app.put("/api/v1/profile")
@@ -64,12 +75,9 @@ def add_job(body: JobIn):
     src = ingest.parse_source(body.url)
     job = db.add_job(body.user_id, body.url, body.title, body.company,
                      body.location, source=(f"{src['type']}:{src['key']}" if src else "manual"))
-    # 单条手动添加也打分
     profile = db.get_profile(body.user_id)
-    full = db.get_job(job["id"])
-    s, reasons = matcher.score_job(profile, full)
-    db.update_job_score(job["id"], s, reasons)
-    return {"ok": True, **job, "score": s, "score_reasons": reasons}
+    s, reasons, via = score_and_store(body.user_id, job["id"], profile)
+    return {"ok": True, **job, "score": s, "score_reasons": reasons, "score_via": via}
 
 
 @app.post("/api/v1/jobs/discover")
@@ -87,11 +95,11 @@ def discover(body: DiscoverIn):
         for p in postings:
             total_seen += 1
             job = db.add_job(body.user_id, p["url"], p["title"], p["company"],
-                             p["location"], source=p["source"], raw=p["raw"])
+                             p["location"], source=p["source"], raw=p["raw"],
+                             description=p.get("description", ""))
             if job["is_new"]:
                 total_new += 1
-                s, reasons = matcher.score_job(profile, db.get_job(job["id"]))
-                db.update_job_score(job["id"], s, reasons)
+                score_and_store(body.user_id, job["id"], profile)
     return {"ok": True, "seen": total_seen, "new": total_new}
 
 

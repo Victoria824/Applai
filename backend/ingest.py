@@ -9,6 +9,13 @@ import re
 import httpx
 
 HEADERS = {"User-Agent": "Applai/0.2 (+https://github.com/Victoria824/Applai)"}
+DESC_LIMIT = 4000
+
+
+def clean_html(html: str) -> str:
+    text = re.sub(r"<[^>]+>", " ", html or "")
+    text = re.sub(r"\s+", " ", text).strip()
+    return text[:DESC_LIMIT]
 
 
 def parse_source(url: str) -> dict | None:
@@ -22,8 +29,8 @@ def parse_source(url: str) -> dict | None:
 
 
 def fetch_greenhouse(board: str, limit=100) -> list:
-    url = f"https://boards-api.greenhouse.io/v1/boards/{board}/jobs?content=false"
-    r = httpx.get(url, headers=HEADERS, timeout=20)
+    url = f"https://boards-api.greenhouse.io/v1/boards/{board}/jobs?content=true"
+    r = httpx.get(url, headers=HEADERS, timeout=30)
     r.raise_for_status()
     jobs = []
     for j in r.json().get("jobs", [])[:limit]:
@@ -35,13 +42,14 @@ def fetch_greenhouse(board: str, limit=100) -> list:
             "location": loc,
             "source": f"greenhouse:{board}",
             "raw": {"id": j.get("id")},
+            "description": clean_html(j.get("content", "")),
         })
     return jobs
 
 
 def fetch_lever(site: str, limit=100) -> list:
     url = f"https://api.lever.co/v0/postings/{site}?mode=json"
-    r = httpx.get(url, headers=HEADERS, timeout=20)
+    r = httpx.get(url, headers=HEADERS, timeout=30)
     r.raise_for_status()
     data = r.json()
     jobs = []
@@ -54,6 +62,7 @@ def fetch_lever(site: str, limit=100) -> list:
             "location": cats.get("location", ""),
             "source": f"lever:{site}",
             "raw": {"id": j.get("id")},
+            "description": clean_html(j.get("descriptionPlain") or j.get("description") or ""),
         })
     return jobs
 

@@ -80,3 +80,59 @@ def test_matcher_unit():
     assert s >= 80, (s, reasons)
     s2, _ = matcher.score_job(PROFILE, {"title": "Accountant", "location": "Vancouver"})
     assert s2 < 40, s2
+
+
+# ---------- LLM 混合打分 ----------
+def test_hybrid_blend(monkeypatch):
+    import llm as llm_mod
+    import matcher
+    monkeypatch.setenv("APPLAI_LLM_API_KEY", "fake-key")
+    monkeypatch.setattr(llm_mod, "llm_score", lambda p, j, timeout=60: (90.0, ["LLM 理由"]))
+    fs, reasons, via = matcher.hybrid_score(PROFILE, {"title": "AI Engineer"}, 85.0, ["规则理由"])
+    assert via == "hybrid"
+    assert fs == round(85.0 * 0.35 + 90.0 * 0.65, 1) == 88.2, fs
+    assert reasons == ["LLM 理由"]
+
+
+def test_hybrid_prefilter_skips_llm(monkeypatch):
+    import llm as llm_mod
+    import matcher
+    monkeypatch.setenv("APPLAI_LLM_API_KEY", "fake-key")
+    called = []
+    monkeypatch.setattr(llm_mod, "llm_score",
+                        lambda p, j, timeout=60: (called.append(1), (99.0, []))[1])
+    fs, reasons, via = matcher.hybrid_score(PROFILE, {"title": "Accountant"}, 10.0, ["规则理由"])
+    assert via == "rules" and fs == 10.0 and called == []
+
+
+def test_hybrid_llm_failure_fallback(monkeypatch):
+    import llm as llm_mod
+    import matcher
+    monkeypatch.setenv("APPLAI_LLM_API_KEY", "fake-key")
+    monkeypatch.setattr(llm_mod, "llm_score", lambda p, j, timeout=60: (None, []))
+    fs, reasons, via = matcher.hybrid_score(PROFILE, {"title": "AI Engineer"}, 85.0, ["规则理由"])
+    assert via == "rules" and fs == 85.0 and reasons == ["规则理由"]
+
+
+def test_hybrid_no_key_fallback(monkeypatch):
+    import matcher
+    monkeypatch.delenv("APPLAI_LLM_API_KEY", raising=False)
+    fs, reasons, via = matcher.hybrid_score(PROFILE, {"title": "AI Engineer"}, 85.0, ["规则理由"])
+    assert via == "rules" and fs == 85.0
+
+
+def test_llm_prompt_contains_profile_and_job():
+    import llm as llm_mod
+    prompt = llm_mod.PROMPT.format(
+        profile=llm_mod._profile_text(PROFILE),
+        job=llm_mod._job_text({"title": "AI Engineer", "company": "Acme",
+                               "location": "Toronto", "description": "Build LLM systems."}))
+    assert "AI Engineer" in prompt and "Toronto" in prompt and "Build LLM systems." in prompt
+    assert "score" in prompt and "reasons" in prompt
+
+
+def test_llm_extract_json_with_fences():
+    import llm as llm_mod
+    d = llm_mod._extract_json('```json\n{"score": 72, "reasons": ["a"]}\n```')
+    assert d == {"score": 72, "reasons": ["a"]}
+    assert llm_mod._extract_json("not json at all") is None

@@ -34,8 +34,20 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 - `POST /api/v1/applications` — 回写投递结果
 - `GET /api/v1/applications` / `GET /api/v1/stats` — 追踪与统计
 
-匹配逻辑（`matcher.py`，规则版，可解释）：标题 60 分 + 地点/远程 25 分，
-40 分以上进队列。vNext 可换 LLM 语义匹配。
+匹配逻辑（`matcher.py`）：
+
+- **规则版**：标题 60 分 + 地点/远程 25 分，40 分以上进队列
+- **LLM 语义匹配**（`llm.py`，OpenAI-compatible，无 SDK 依赖）：
+  规则预筛 ≥25 分 → LLM 读职位描述精排 → 加权融合（规则 35% + LLM 65%）。
+  LLM 未配置或调用失败时无缝降级为纯规则。每次打分只做一次，结果缓存。
+
+```bash
+export APPLAI_LLM_API_KEY="sk-..."          # 必填，否则自动降级
+export APPLAI_LLM_BASE_URL="https://api.deepseek.com/v1"  # 可选，默认 OpenAI
+export APPLAI_LLM_MODEL="deepseek-chat"     # 可选，默认 gpt-4o-mini
+```
+兼容 OpenAI / DeepSeek / OpenRouter / Ollama 本地（`http://localhost:11434/v1`）等。
+`/health` 返回 `"llm": true/false` 可确认是否生效。
 
 ## 插件 v0.2 新功能
 
