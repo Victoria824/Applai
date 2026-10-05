@@ -49,6 +49,24 @@ export APPLAI_LLM_MODEL="deepseek-chat"     # 可选，默认 gpt-4o-mini
 兼容 OpenAI / DeepSeek / OpenRouter / Ollama 本地（`http://localhost:11434/v1`）等。
 `/health` 返回 `"llm": true/false` 可确认是否生效。
 
+**供应商速查**（都是 OpenAI-compatible，直接换三个环境变量即可）：
+
+| 方案 | `APPLAI_LLM_BASE_URL` | `APPLAI_LLM_MODEL` | 费用 |
+|---|---|---|---|
+| Ollama 本地 | `http://localhost:11434/v1` | `qwen2.5`（先 `ollama pull qwen2.5`） | 完全免费 |
+| Qwen 阿里百炼（国内） | `https://dashscope.aliyuncs.com/compatible-mode/v1` | `qwen-turbo` | 新用户有免费额度，之后很便宜 |
+| Qwen 国际版 | `https://dashscope-intl.aliyuncs.com/compatible-mode/v1` | `qwen-turbo` | 同上（key 与国内不通用） |
+| 硅基流动 | `https://api.siliconflow.cn/v1` | `Qwen/Qwen3-8B`（注意带 `Qwen/` 前缀） | 新用户免费额度 |
+| DeepSeek | `https://api.deepseek.com/v1` | `deepseek-chat` | 极便宜 |
+| OpenRouter | `https://openrouter.ai/api/v1` | 带 `:free` 后缀的模型 | 部分模型免费 |
+
+示例（Qwen 国内版）：
+```bash
+export APPLAI_LLM_API_KEY="sk-..."   # 从 dashscope.console.aliyun.com 获取
+export APPLAI_LLM_BASE_URL="https://dashscope.aliyuncs.com/compatible-mode/v1"
+export APPLAI_LLM_MODEL="qwen-turbo"
+```
+
 ## 插件 v0.2 新功能
 
 - **画像同步**：保存画像时自动 PUT 到后端
