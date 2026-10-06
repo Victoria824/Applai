@@ -21,15 +21,15 @@ jobs:
 
       - name: Ensure data volume exists (one-time)
         run: |
-          if fly volumes list -a applai-backend 2>/dev/null | grep -q applai_data; then
+          if flyctl volumes list -a applai-backend 2>/dev/null | grep -q applai_data; then
             echo "volume applai_data already exists"
           else
-            fly volumes create applai_data --region yyz --size 1 --yes -a applai-backend
+            flyctl volumes create applai_data --region yyz --size 1 --yes -a applai-backend
           fi
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
 
       - name: Deploy
-        run: fly deploy --remote-only -a applai-backend
+        run: flyctl deploy --remote-only -a applai-backend
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
