@@ -1,0 +1,59 @@
+%PDF-1.4
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [3 0 R] /Count 1 >>
+endobj
+3 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>
+endobj
+4 0 obj
+<< /Length 1399 >>
+stream
+BT /F1 11 Tf 14 TL 50 770 Td
+(Alex Chen  \(TEST PERSONA - fictional resume for Applai QA\)) Tj T*
+(AI Engineer | Toronto, ON, Canada) Tj T*
+(alex.chen.qa@example.com | +1 \(416\) 555-0137 | linkedin.com/in/alexchen-qa-fake) Tj T*
+() Tj T*
+(SUMMARY) Tj T*
+(AI Engineer with 5 years of experience building LLM-powered products and) Tj T*
+(ML platforms. Shipped RAG chatbots serving 200k users; fine-tuned open) Tj T*
+(models for domain QA; led migration of batch pipelines to streaming.) Tj T*
+() Tj T*
+(EXPERIENCE) Tj T*
+(Senior AI Engineer - Northwind Labs, Toronto \(2022 - present\)) Tj T*
+(- Built RAG pipeline \(LangChain, pgvector\) lifting answer accuracy 71% -> 89%) Tj T*
+(- Fine-tuned Llama-3-8B with LoRA for support ticket classification) Tj T*
+(- Owned FastAPI inference services on Kubernetes, p99 latency 380ms) Tj T*
+(ML Engineer - DataWorks Inc, Remote \(2020 - 2022\)) Tj T*
+(- Spark + Airflow feature pipelines; XGBoost churn model \(+6% retention\)) Tj T*
+(- A/B testing infra used by 4 product teams) Tj T*
+() Tj T*
+(SKILLS) Tj T*
+(Python, PyTorch, TensorFlow, Hugging Face, LangChain, RAG, LoRA/QLoRA,) Tj T*
+(FastAPI, Docker, Kubernetes, Spark, Airflow, PostgreSQL, Redis, AWS) Tj T*
+() Tj T*
+(EDUCATION) Tj T*
+(B.Sc. Computer Science - University of Toronto \(2016 - 2020\)) Tj T*
+() Tj T*
+(This is a fictional test resume generated for Applai QA. Not a real person.) Tj T*
+ET
+endstream
+endobj
+5 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>
+endobj
+xref
+0 6
+0000000000 65535 f 
+0000000009 00000 n 
+0000000058 00000 n 
+0000000115 00000 n 
+0000000241 00000 n 
+0000001692 00000 n 
+trailer
+<< /Size 6 /Root 1 0 R >>
+startxref
+1762
+%%EOF

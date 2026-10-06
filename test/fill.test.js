@@ -19,10 +19,17 @@ function makeDom(html, url) {
   const dom = new JSDOM(html, { url: url || 'https://example.com/' });
   const { window } = dom;
   window.chrome = { runtime: { onMessage: { addListener() {} } } };
+  // jsdom 无 DataTransfer：用最小 mock 补齐（files 可赋值的行为由用例自行在 input 上装 setter 模拟）
+  const DataTransferImpl = window.DataTransfer || function MockDataTransfer() {
+    const items = [];
+    this.items = { add: (f) => { items.push(f); } };
+    Object.defineProperty(this, 'files', { get: () => items });
+  };
   const sandbox = {
     window, document: window.document, location: window.location,
     Event: window.Event, MouseEvent: window.MouseEvent, KeyboardEvent: window.KeyboardEvent,
     PointerEvent: window.PointerEvent, Node: window.Node, navigator: window.navigator, CSS: window.CSS,
+    File: window.File, DataTransfer: DataTransferImpl, atob: window.atob.bind(window),
     setTimeout, clearTimeout,
   };
   sandbox.globalThis = sandbox;
@@ -270,8 +277,88 @@ console.log('\n[12] 排除词回归');
   void r;
 }
 
+await testResumeAutoAttach();
+await testResumeFallbackNoData();
+await testResumeZhAndMalformed();
+
 console.log(`\n结果：${passed} 通过，${failed} 失败`);
 process.exit(failed ? 1 : 0);
+}
+
+/* ---------- 13. 简历自动上传（DataTransfer） ---------- */
+async function testResumeAutoAttach() {
+console.log('\n[13] 简历自动上传（DataTransfer）');
+{
+  const prof = { ...PROFILE, resumeFile: { name: 'Victoria_Liu_Resume.pdf', size: 1024, dataUrl: 'data:application/pdf;base64,JVBERi0=' } };
+  const w = makeDom(`<html><body><form>
+    <label for="resume">Upload Resume *</label><input type="file" id="resume">
+    <label for="portfolio">Portfolio files</label><input type="file" id="portfolio">
+  </form></body></html>`, 'https://boards.greenhouse.io/acme/jobs/13');
+
+  // 模拟浏览器中 input.files 可被赋值的行为，并记录事件
+  const wire = (input) => {
+    let files = null; const st = { input: 0, change: 0 };
+    Object.defineProperty(input, 'files', { configurable: true, get: () => files, set: (v) => { files = v; } });
+    input.addEventListener('input', () => st.input++);
+    input.addEventListener('change', () => st.change++);
+    return { get files() { return files; }, st };
+  };
+  const rBox = wire(w.document.getElementById('resume'));
+  const pBox = wire(w.document.getElementById('portfolio'));
+
+  const r = await w.__autoapply.fillApplication(prof, {});
+  const rf = rBox.files && rBox.files[0];
+  check('(a) 简历框被附上 File', !!rf && rf.name === 'Victoria_Liu_Resume.pdf' && rf.type === 'application/pdf' && rf.size > 0,
+    JSON.stringify(rf && { name: rf.name, type: rf.type, size: rf.size }));
+  check('(a) input+change 事件均触发', rBox.st.input === 1 && rBox.st.change === 1, JSON.stringify(rBox.st));
+  check('(a) 报告记为已填', r.filled.some((x) => x.intent === 'resume'), JSON.stringify(r.filled));
+  check('(b) 作品集框未被触碰', pBox.files === null && pBox.st.change === 0, JSON.stringify({ files: pBox.files, st: pBox.st }));
+  check('(b) 非简历框仍进人工队列', r.missing.some((m) => m.intent === 'resume' && /Victoria_Liu_Resume\.pdf/.test(m.reason)),
+    JSON.stringify(r.missing.map((m) => m.reason)));
+}
+}
+
+/* ---------- 14. 无简历数据回退人工队列 ---------- */
+async function testResumeFallbackNoData() {
+console.log('\n[14] 无 resumeFile 时回退人工队列');
+{
+  const prof = { ...PROFILE };
+  delete prof.resumeFile;
+  const w = makeDom(`<html><body><form>
+    <label for="resume">Resume</label><input type="file" id="resume">
+  </form></body></html>`, 'https://boards.greenhouse.io/acme/jobs/14');
+  const r = await w.__autoapply.fillApplication(prof, {});
+  check('(c) 无 resumeFile 时进人工队列且不记已填',
+    r.missing.some((m) => m.intent === 'resume') && !r.filled.some((x) => x.intent === 'resume'),
+    JSON.stringify(r.missing));
+}
+}
+
+/* ---------- 15. 中文简历框 / 异常 dataUrl 回退 ---------- */
+async function testResumeZhAndMalformed() {
+console.log('\n[15] 中文简历框与异常 dataUrl');
+{
+  const prof = { ...PROFILE, resumeFile: { name: '简历.pdf', size: 5, dataUrl: 'data:application/pdf;base64,JVBERi0=' } };
+  const w = makeDom(`<html><body><form>
+    <label for="cv">请上传简历（PDF 格式）</label><input type="file" id="cv">
+  </form></body></html>`, 'https://jobs.ashbyhq.com/acme/abc');
+  const cv = w.document.getElementById('cv');
+  let files = null;
+  Object.defineProperty(cv, 'files', { configurable: true, get: () => files, set: (v) => { files = v; } });
+  const r = await w.__autoapply.fillApplication(prof, {});
+  check('中文「简历」标签命中并自动上传', !!(files && files[0] && files[0].name === '简历.pdf'),
+    JSON.stringify(files && files[0] && files[0].name));
+
+  const prof2 = { ...PROFILE, resumeFile: { name: 'x.pdf', size: 1, dataUrl: 'not-a-data-url' } };
+  const w2 = makeDom(`<html><body><form>
+    <label>Resume</label><input type="file" id="r2">
+  </form></body></html>`, 'https://boards.greenhouse.io/acme/jobs/15');
+  const r2 = await w2.__autoapply.fillApplication(prof2, {});
+  check('非法 dataUrl 回退人工队列',
+    r2.missing.some((m) => m.intent === 'resume') && !r2.filled.some((x) => x.intent === 'resume'),
+    JSON.stringify(r2.missing));
+  void r;
+}
 }
 
 main().catch((e) => { console.error(e); process.exit(1); });

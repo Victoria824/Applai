@@ -193,6 +193,50 @@
     } catch (e) { /* ignore */ }
   }
 
+  /* ---------- 简历自动上传 ----------
+   * 浏览器只禁止给 input[type=file] 的 .value 赋值，但允许用 DataTransfer
+   * 给 .files 赋值，因此自动附上画像里的简历是可行的。
+   * 非简历框 / 无简历数据 / 失败时一律回退人工队列。 */
+  const RESUME_SYNONYMS_EN = ['resume', 'cv', 'curriculum vitae'];
+  const RESUME_SYNONYMS_ZH = ['简历', '履历'];
+
+  function isResumeFileInput(el) {
+    const M = window.__autofillMatch;
+    if (!M) return false;
+    const sig = M.normalizeLabel(fieldSignature(el));
+    if (!sig) return false;
+    // 中文按子串命中（中文词间无空格），英文按词边界命中
+    if (RESUME_SYNONYMS_ZH.some((s) => sig.includes(s))) return true;
+    const padded = ' ' + sig + ' ';
+    return RESUME_SYNONYMS_EN.some((s) => padded.includes(' ' + M.normalizeLabel(s) + ' '));
+  }
+
+  function dataUrlToFile(dataUrl, fileName) {
+    const m = /^data:([^;,]*);base64,([\s\S]*)$/.exec(dataUrl || '');
+    if (!m) return null;
+    const bin = atob(m[2]);
+    const bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    return new File([bytes], fileName || 'resume.pdf', { type: m[1] || 'application/pdf' });
+  }
+
+  // 命中则返回 true；任何失败（无数据、非简历框、API 不可用）返回 false → 上游走人工队列
+  function attachResume(el, profile) {
+    const rf = profile && profile.resumeFile;
+    if (!rf || !rf.dataUrl) return false;
+    if (!isResumeFileInput(el)) return false;
+    try {
+      const file = dataUrlToFile(rf.dataUrl, rf.name);
+      if (!file) return false;
+      const dt = new DataTransfer();
+      dt.items.add(file);
+      el.files = dt.files;
+      el.dispatchEvent(new Event('input', { bubbles: true }));
+      el.dispatchEvent(new Event('change', { bubbles: true }));
+      return true;
+    } catch (e) { return false; }
+  }
+
   function fillSelect(el, value, key) {
     const M = window.__autofillMatch;
     const texts = Array.from(el.options).map((o) => (o.text || '').trim());
@@ -358,13 +402,22 @@
       }
     }
 
-    // 简历上传：只能高亮，提示手动
+    // 文件上传：简历意图 + 画像有简历数据 → 自动附上；其余（作品集附件、无简历数据、失败）走人工队列
     const fileInputs = Array.from(document.querySelectorAll('input[type="file"]')).filter(isVisible);
-    if (fileInputs.length) {
-      fileInputs.forEach((f) => mark(f, false));
+    const manualFiles = [];
+    for (const f of fileInputs) {
+      if (attachResume(f, profile)) {
+        mark(f, true);
+        report.filled.push({ intent: 'resume', label: shortLabel(fieldSignature(f)) });
+      } else {
+        manualFiles.push(f);
+      }
+    }
+    if (manualFiles.length) {
+      manualFiles.forEach((f) => mark(f, false));
       const rn = profile.resumeFile && profile.resumeFile.name ? `（画像中的简历：${profile.resumeFile.name}）` : '';
-      report.missing.push({ intent: 'resume', label: '简历上传', reason: `浏览器安全限制：插件无法代选文件，请手动点击红色框选择简历${rn}` });
-    } else {
+      report.missing.push({ intent: 'resume', label: '简历上传', reason: `插件无法自动填充此文件框，请手动点击红色框上传${rn}` });
+    } else if (!fileInputs.length) {
       report.needsReview.push({ intent: 'resume', label: '简历上传', reason: '未找到文件上传框，请确认页面' });
     }
 
@@ -388,5 +441,6 @@
 
   window.__autoapply = window.__autoapply || {};
   window.__autoapply.fillApplication = fillApplication;
+  window.__autoapply.attachResume = attachResume;
   window.__autoapply.FIELD_SYNONYMS = FIELD_SYNONYMS;
 })();
