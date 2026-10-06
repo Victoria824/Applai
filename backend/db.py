@@ -172,3 +172,21 @@ def stats(user_id: str) -> dict:
     out = {r["status"]: r["c"] for r in rows}
     conn.close()
     return out
+
+
+def list_users() -> list:
+    """Dashboard 用户列表：user_id + 画像标签（目标职位），按最近活跃排序。"""
+    conn = get_db()
+    rows = conn.execute(
+        "SELECT user_id, profile_json FROM users ORDER BY updated_at DESC"
+    ).fetchall()
+    conn.close()
+    out = []
+    for r in rows:
+        try:
+            p = json.loads(r["profile_json"] or "{}")
+        except Exception:
+            p = {}
+        titles = ", ".join(p.get("targetTitles") or []) or "未填目标职位"
+        out.append({"user_id": r["user_id"], "label": titles})
+    return out

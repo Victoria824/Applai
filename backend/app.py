@@ -1,9 +1,15 @@
-"""app.py — Applai 后端：画像 / 职位 / 匹配队列 / 投递记录
+"""app.py — Applai 后端：画像 / 职位 / 匹配队列 / 投递记录 / 网页 Dashboard
 
 运行：cd backend && pip install -r requirements.txt && uvicorn app:app --port 8000
 """
-from fastapi import FastAPI, HTTPException
+import os
+import secrets
+from pathlib import Path
+
+from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import HTMLResponse, RedirectResponse, Response
+from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from pydantic import BaseModel, Field
 
 import db
@@ -135,3 +141,65 @@ def get_applications(user_id: str, limit: int = 200):
 @app.get("/api/v1/stats")
 def get_stats(user_id: str):
     return {"user_id": user_id, "stats": db.stats(user_id)}
+
+
+# ---------- 网页 Dashboard（密码保护） ----------
+# 密码通过环境变量 APPLAI_DASHBOARD_PASSWORD 设置（Fly 上用 secret）。
+# 未设置时 /dashboard 返回 503，避免无密码裸奔。
+
+_basic = HTTPBasic(auto_error=False)
+
+
+def dashboard_auth(creds: HTTPBasicCredentials = Depends(_basic)):
+    pwd = os.environ.get("APPLAI_DASHBOARD_PASSWORD", "")
+    if not pwd:
+        raise HTTPException(503, "dashboard not configured: set APPLAI_DASHBOARD_PASSWORD")
+    if not creds or not secrets.compare_digest(creds.password or "", pwd):
+        raise HTTPException(
+            401, "login required",
+            headers={"WWW-Authenticate": 'Basic realm="Applai Dashboard"'},
+        )
+    return True
+
+
+@app.get("/dashboard", response_class=HTMLResponse, include_in_schema=False)
+def dashboard_page(_ok: bool = Depends(dashboard_auth)):
+    html = Path(__file__).parent / "dashboard.html"
+    return HTMLResponse(html.read_text(encoding="utf-8"))
+
+
+@app.get("/dashboard/manifest.json", include_in_schema=False)
+def dashboard_manifest():
+    return {
+        "name": "Applai Dashboard",
+        "short_name": "Applai",
+        "start_url": "/dashboard",
+        "display": "standalone",
+        "background_color": "#ffffff",
+        "theme_color": "#111827",
+        "icons": [
+            {"src": "/dashboard/icon.svg", "sizes": "any", "type": "image/svg+xml"}
+        ],
+    }
+
+
+@app.get("/dashboard/icon.svg", include_in_schema=False)
+def dashboard_icon():
+    svg = (
+        '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">'
+        '<rect width="64" height="64" rx="14" fill="#111827"/>'
+        '<circle cx="32" cy="32" r="14" fill="none" stroke="#fff" stroke-width="5"/>'
+        '<circle cx="32" cy="32" r="4" fill="#fff"/></svg>'
+    )
+    return Response(svg, media_type="image/svg+xml")
+
+
+@app.get("/api/v1/users")
+def list_users(_ok: bool = Depends(dashboard_auth)):
+    """Dashboard 用户列表（带画像标签，方便选择）。"""
+    return {"users": db.list_users()}
+
+
+@app.get("/", include_in_schema=False)
+def root():
+    return RedirectResponse("/dashboard")

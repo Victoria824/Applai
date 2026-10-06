@@ -136,3 +136,30 @@ def test_llm_extract_json_with_fences():
     d = llm_mod._extract_json('```json\n{"score": 72, "reasons": ["a"]}\n```')
     assert d == {"score": 72, "reasons": ["a"]}
     assert llm_mod._extract_json("not json at all") is None
+
+
+def test_dashboard_requires_password(monkeypatch):
+    monkeypatch.delenv("APPLAI_DASHBOARD_PASSWORD", raising=False)
+    r = client.get("/dashboard")
+    assert r.status_code == 503
+
+
+def test_dashboard_auth_flow(monkeypatch):
+    monkeypatch.setenv("APPLAI_DASHBOARD_PASSWORD", "s3cret")
+    # 未带凭证 → 401 + WWW-Authenticate
+    r = client.get("/dashboard")
+    assert r.status_code == 401
+    assert "WWW-Authenticate" in r.headers
+    # 错误密码 → 401
+    r = client.get("/dashboard", auth=("x", "wrong"))
+    assert r.status_code == 401
+    # 正确密码 → 200 且为 HTML
+    r = client.get("/dashboard", auth=("anyone", "s3cret"))
+    assert r.status_code == 200
+    assert "Applai" in r.text and "<html" in r.text.lower()
+    # users 接口同样受保护
+    r = client.get("/api/v1/users")
+    assert r.status_code == 401
+    r = client.get("/api/v1/users", auth=("u", "s3cret"))
+    assert r.status_code == 200
+    assert isinstance(r.json()["users"], list)

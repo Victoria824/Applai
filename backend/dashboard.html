@@ -1,0 +1,268 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Applai Dashboard</title>
+<meta name="theme-color" content="#111827">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<link rel="manifest" href="/dashboard/manifest.json">
+<link rel="icon" href="/dashboard/icon.svg" type="image/svg+xml">
+<style>
+:root{
+  --bg:#f6f7f9; --card:#ffffff; --ink:#111827; --muted:#6b7280;
+  --line:#e5e7eb; --accent:#111827;
+  --green:#047857; --green-bg:#ecfdf5;
+  --blue:#1d4ed8; --blue-bg:#eff6ff;
+  --orange:#c2410c; --orange-bg:#fff7ed;
+  --red:#b91c1c; --red-bg:#fef2f2;
+  --purple:#6d28d9; --purple-bg:#f5f3ff;
+  --gray:#4b5563; --gray-bg:#f3f4f6;
+  --radius:14px;
+}
+*{box-sizing:border-box; -webkit-tap-highlight-color:transparent;}
+body{margin:0; background:var(--bg); color:var(--ink);
+  font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
+  font-size:15px; line-height:1.55;}
+header{position:sticky; top:0; z-index:10; background:var(--accent); color:#fff;
+  padding:14px 16px calc(14px + env(safe-area-inset-top)) ; padding-top:calc(14px + env(safe-area-inset-top));
+  display:flex; align-items:center; gap:10px;}
+header h1{font-size:18px; margin:0; font-weight:700; letter-spacing:.5px;}
+header .sub{font-size:12px; opacity:.65;}
+.badge{display:inline-block; font-size:12px; padding:2px 10px; border-radius:999px; font-weight:600;}
+.badge.llm-on{background:#065f46; color:#d1fae5;}
+.badge.llm-off{background:#3f3f46; color:#e4e4e7;}
+main{max-width:720px; margin:0 auto; padding:14px 14px 60px;}
+.bar{display:flex; gap:10px; align-items:center; margin:4px 0 14px;}
+select{flex:1; font-size:15px; padding:10px 12px; border:1px solid var(--line);
+  border-radius:10px; background:#fff; color:var(--ink);}
+button{font-size:14px; padding:10px 14px; border-radius:10px; border:1px solid var(--line);
+  background:#fff; color:var(--ink); cursor:pointer;}
+button.primary{background:var(--accent); color:#fff; border-color:var(--accent);}
+button:active{transform:scale(.97);}
+.stats{display:grid; grid-template-columns:repeat(4,1fr); gap:8px; margin-bottom:16px;}
+.stat{background:var(--card); border:1px solid var(--line); border-radius:var(--radius);
+  padding:10px 6px; text-align:center;}
+.stat .n{font-size:22px; font-weight:700;}
+.stat .t{font-size:11px; color:var(--muted); margin-top:2px;}
+h2{font-size:16px; margin:22px 0 10px; display:flex; align-items:center; gap:8px;}
+h2 .count{font-size:12px; color:var(--muted); font-weight:400;}
+.card{background:var(--card); border:1px solid var(--line); border-radius:var(--radius);
+  padding:14px; margin-bottom:10px;}
+.card .top{display:flex; gap:10px; align-items:flex-start;}
+.score{min-width:52px; height:52px; border-radius:12px; display:flex; flex-direction:column;
+  align-items:center; justify-content:center; background:var(--accent); color:#fff; flex-shrink:0;}
+.score b{font-size:19px; line-height:1;}
+.score span{font-size:10px; opacity:.7;}
+.card h3{margin:0 0 2px; font-size:15px;}
+.card .meta{font-size:13px; color:var(--muted);}
+.reasons{margin:8px 0 0; padding:0; list-style:none; display:flex; flex-wrap:wrap; gap:6px;}
+.reasons li{font-size:12px; background:var(--gray-bg); color:var(--gray);
+  padding:3px 9px; border-radius:999px;}
+.actions{display:flex; gap:8px; margin-top:10px; flex-wrap:wrap;}
+.actions a, .actions button{font-size:13px; padding:8px 12px; text-decoration:none;}
+.actions a{border:1px solid var(--line); border-radius:10px; background:#fff; color:var(--ink);}
+.st{display:inline-block; font-size:11px; padding:2px 9px; border-radius:999px; font-weight:600;}
+.st-queued{background:var(--blue-bg); color:var(--blue);}
+.st-filled{background:var(--purple-bg); color:var(--purple);}
+.st-submitted{background:var(--green-bg); color:var(--green);}
+.st-needs_manual{background:var(--orange-bg); color:var(--orange);}
+.st-failed{background:var(--red-bg); color:var(--red);}
+.st-skipped{background:var(--gray-bg); color:var(--gray);}
+.detail{font-size:13px; color:var(--muted); background:var(--gray-bg); border-radius:8px;
+  padding:8px 10px; margin-top:8px; word-break:break-word;}
+.time{font-size:12px; color:var(--muted); margin-top:6px;}
+.empty{background:var(--card); border:1px dashed var(--line); border-radius:var(--radius);
+  padding:22px; text-align:center; color:var(--muted); font-size:14px;}
+.err{background:var(--red-bg); color:var(--red); border-radius:10px; padding:10px 14px;
+  margin-bottom:12px; font-size:14px; display:none;}
+.hint{font-size:12px; color:var(--muted); margin-top:6px;}
+.loading{color:var(--muted); font-size:14px; padding:16px; text-align:center;}
+@media (min-width:640px){ .stats{gap:12px;} }
+</style>
+</head>
+<body>
+<header>
+  <h1>Applai</h1>
+  <span class="sub">投递控制台</span>
+  <span style="flex:1"></span>
+  <span id="llmBadge" class="badge llm-off">LLM …</span>
+</header>
+<main>
+  <div id="err" class="err"></div>
+
+  <div class="bar">
+    <select id="userSel" aria-label="选择用户"></select>
+    <button id="refreshBtn" class="primary">刷新</button>
+  </div>
+  <div class="hint">用户 ID 可在浏览器插件 popup 的「用户 ID」一栏复制。若下拉框已有，直接选择即可。</div>
+
+  <div class="stats" id="stats"></div>
+
+  <h2>📋 今日队列 <span class="count" id="queueCount"></span></h2>
+  <div id="queue"><div class="loading">加载中…</div></div>
+
+  <h2>⚠️ 待人工处理 <span class="count" id="manualCount"></span></h2>
+  <div id="manual"><div class="loading">加载中…</div></div>
+
+  <h2>🗂️ 申请历史</h2>
+  <div id="history"><div class="loading">加载中…</div></div>
+</main>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s == null ? "" : s)
+  .replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;")
+  .replace(/"/g,"&quot;").replace(/'/g,"&#39;");
+const STATUS_LABEL = {
+  queued:"待投递", filled:"已填写", submitted:"已投递",
+  needs_manual:"待人工", failed:"失败", skipped:"已跳过"
+};
+const stBadge = (s) => `<span class="st st-${esc(s)}">${esc(STATUS_LABEL[s] || s)}</span>`;
+const fmtTime = (ts) => {
+  if (!ts) return "";
+  const d = new Date(ts * 1000);
+  return d.toLocaleString("zh-CN", {month:"numeric", day:"numeric", hour:"2-digit", minute:"2-digit"});
+};
+const showErr = (msg) => { const e = $("err"); e.textContent = msg; e.style.display = "block"; };
+const clearErr = () => { $("err").style.display = "none"; };
+
+async function api(path, opts) {
+  const r = await fetch(path, opts);
+  if (!r.ok) {
+    const t = await r.text().catch(() => "");
+    throw new Error(`请求失败 ${r.status} ${t.slice(0,120)}`);
+  }
+  return r.json();
+}
+
+function userId() { return $("userSel").value; }
+
+async function loadUsers() {
+  const data = await api("/api/v1/users");
+  const sel = $("userSel");
+  sel.innerHTML = "";
+  const saved = localStorage.getItem("applai_dashboard_user") || "";
+  data.users.forEach((u) => {
+    const o = document.createElement("option");
+    o.value = u.user_id;
+    o.textContent = `${u.label} (${u.user_id.slice(0,8)}…)`;
+    sel.appendChild(o);
+  });
+  if (!data.users.length) {
+    const o = document.createElement("option");
+    o.value = ""; o.textContent = "暂无用户（先在插件里同步画像）";
+    sel.appendChild(o);
+  } else if (saved && [...sel.options].some((o) => o.value === saved)) {
+    sel.value = saved;
+  }
+  sel.onchange = () => {
+    localStorage.setItem("applai_dashboard_user", sel.value);
+    loadAll();
+  };
+}
+
+async function loadHealth() {
+  try {
+    const h = await api("/health");
+    const b = $("llmBadge");
+    if (h.llm) { b.textContent = "LLM 已启用"; b.className = "badge llm-on"; }
+    else { b.textContent = "LLM 未启用"; b.className = "badge llm-off"; }
+  } catch (e) { /* 忽略，页面本身已通过鉴权 */ }
+}
+
+function jobCard(j) {
+  const reasons = (j.score_reasons || []).map((r) => `<li>${esc(r)}</li>`).join("");
+  return `<div class="card"><div class="top">
+    <div class="score"><b>${esc(j.score)}</b><span>分</span></div>
+    <div><h3>${esc(j.title)}</h3>
+      <div class="meta">${esc(j.company || "")} · ${esc(j.location || "")}</div>
+    </div></div>
+    ${reasons ? `<ul class="reasons">${reasons}</ul>` : ""}
+    <div class="actions">
+      ${j.url ? `<a href="${esc(j.url)}" target="_blank" rel="noopener">去投递 ↗</a>` : ""}
+      <button data-act="skip" data-job="${j.id}">跳过</button>
+    </div></div>`;
+}
+
+function appCard(a, showActions) {
+  const btns = showActions ? `<div class="actions">
+      ${a.url ? `<a href="${esc(a.url)}" target="_blank" rel="noopener">打开职位页 ↗</a>` : ""}
+      <button class="primary" data-act="submitted" data-job="${a.job_id}">已手动投递</button>
+      <button data-act="skipped" data-job="${a.job_id}">跳过</button>
+    </div>` : "";
+  return `<div class="card"><div class="top"><div>
+    <h3>${esc(a.title || "(未知职位)")} ${stBadge(a.status)}</h3>
+    <div class="meta">${esc(a.company || "")}</div></div></div>
+    ${a.detail ? `<div class="detail">${esc(a.detail)}</div>` : ""}
+    <div class="time">更新于 ${esc(fmtTime(a.updated_at))}</div>
+    ${btns}</div>`;
+}
+
+async function loadQueue() {
+  const box = $("queue");
+  try {
+    const d = await api(`/api/v1/queue?user_id=${encodeURIComponent(userId())}&top_n=10`);
+    $("queueCount").textContent = `共 ${d.count} 个`;
+    box.innerHTML = d.jobs.length ? d.jobs.map(jobCard).join("")
+      : `<div class="empty">今日队列为空。可能职位库还没有数据，先在插件里跑一次职位发现。</div>`;
+  } catch (e) { box.innerHTML = `<div class="empty">加载失败：${esc(e.message)}</div>`; }
+}
+
+async function loadApps() {
+  const uid = encodeURIComponent(userId());
+  let apps = [];
+  try { apps = (await api(`/api/v1/applications?user_id=${uid}`)).applications || []; }
+  catch (e) { showErr("申请记录加载失败：" + e.message); return; }
+
+  const manual = apps.filter((a) => a.status === "needs_manual");
+  $("manualCount").textContent = `共 ${manual.length} 个`;
+  $("manual").innerHTML = manual.length ? manual.map((a) => appCard(a, true)).join("")
+    : `<div class="empty">没有需要人工处理的申请 🎉</div>`;
+
+  $("history").innerHTML = apps.length ? apps.map((a) => appCard(a, false)).join("")
+    : `<div class="empty">还没有申请记录。</div>`;
+
+  // 统计
+  let s = {};
+  try { s = (await api(`/api/v1/stats?user_id=${uid}`)).stats || {}; } catch (e) {}
+  const defs = [["queued","待投递"],["submitted","已投递"],["needs_manual","待人工"],["skipped","已跳过"]];
+  $("stats").innerHTML = defs.map(([k, t]) =>
+    `<div class="stat"><div class="n">${s[k] || 0}</div><div class="t">${t}</div></div>`).join("");
+}
+
+async function markApp(jobId, status) {
+  clearErr();
+  try {
+    await api("/api/v1/applications", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({user_id: userId(), job_id: Number(jobId), status, detail: "dashboard 手动标记"})
+    });
+    await loadApps();
+  } catch (e) { showErr("标记失败：" + e.message); }
+}
+
+document.addEventListener("click", (ev) => {
+  const b = ev.target.closest("button[data-act]");
+  if (b) markApp(b.dataset.job, b.dataset.act);
+});
+$("refreshBtn").onclick = () => loadAll();
+
+async function loadAll() {
+  clearErr();
+  if (!userId()) return;
+  await Promise.all([loadHealth(), loadQueue(), loadApps()]);
+}
+
+(async () => {
+  try {
+    await loadHealth();
+    await loadUsers();
+    await loadAll();
+  } catch (e) { showErr("初始化失败：" + e.message); }
+})();
+</script>
+</body>
+</html>
