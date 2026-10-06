@@ -1,0 +1,41 @@
+# Applai backend — Fly.io 部署配置
+# 首次部署流程（账号持有人操作）：
+#   1. fly auth login
+#   2. fly volumes create applai_data --region yyz --size 1   # 1GB 持久化盘，存 SQLite
+#   3. fly deploy
+#   4. fly secrets set APPLAI_LLM_API_KEY="sk-..." \
+#         APPLAI_LLM_BASE_URL="https://{WorkspaceId}.cn-beijing.maas.aliyuncs.com/compatible-mode/v1"
+#      （key 与专属地址在 bailian.console.aliyun.com 获取；secret 不进 git）
+
+app = "applai-backend"
+primary_region = "yyz"   # 多伦多，离用户最近
+
+[build]
+  dockerfile = "Dockerfile"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "256mb"
+
+[http_service]
+  internal_port = 8000
+  force_https = true
+  auto_stop_machines = "stop"
+  auto_start_machines = true
+  min_machines_running = 1   # 保持 1 台常开：插件随时调 API；SQLite 卷同一时间只能挂一台机器
+
+  [http_service.checks]
+    [http_service.checks.alive]
+      grace_period = "10s"
+      interval = "30s"
+      method = "GET"
+      path = "/health"
+      timeout = "5s"
+
+[[mounts]]
+  source = "applai_data"
+  destination = "/data"
+
+[env]
+  APPLAI_DB = "/data/applai.db"   # SQLite 落到持久化盘，机器重启不丢
+  APPLAI_LLM_MODEL = "qwen-turbo"
