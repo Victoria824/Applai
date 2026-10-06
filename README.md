@@ -54,16 +54,16 @@ export APPLAI_LLM_MODEL="deepseek-chat"     # 可选，默认 gpt-4o-mini
 | 方案 | `APPLAI_LLM_BASE_URL` | `APPLAI_LLM_MODEL` | 费用 |
 |---|---|---|---|
 | Ollama 本地 | `http://localhost:11434/v1` | `qwen2.5`（先 `ollama pull qwen2.5`） | 完全免费 |
-| Qwen 阿里百炼（国内） | `https://dashscope.aliyuncs.com/compatible-mode/v1` | `qwen-turbo` | 新用户有免费额度，之后很便宜 |
-| Qwen 国际版 | `https://dashscope-intl.aliyuncs.com/compatible-mode/v1` | `qwen-turbo` | 同上（key 与国内不通用） |
+| Qwen 百炼（国内） | `https://{WorkspaceId}.cn-beijing.maas.aliyuncs.com/compatible-mode/v1`（去 bailian.console.aliyun.com 拿 key，控制台会直接显示你的专属地址，照抄） | `qwen-turbo` | 新用户有免费额度，之后很便宜 |
+| Qwen 国际版 | 以控制台显示的专属地址为准（旧 `dashscope-intl.aliyuncs.com` 仍可用但不推荐；key 与国内不通用） | `qwen-turbo` | 同上 |
 | 硅基流动 | `https://api.siliconflow.cn/v1` | `Qwen/Qwen3-8B`（注意带 `Qwen/` 前缀） | 新用户免费额度 |
 | DeepSeek | `https://api.deepseek.com/v1` | `deepseek-chat` | 极便宜 |
 | OpenRouter | `https://openrouter.ai/api/v1` | 带 `:free` 后缀的模型 | 部分模型免费 |
 
 示例（Qwen 国内版）：
 ```bash
-export APPLAI_LLM_API_KEY="sk-..."   # 从 dashscope.console.aliyun.com 获取
-export APPLAI_LLM_BASE_URL="https://dashscope.aliyuncs.com/compatible-mode/v1"
+export APPLAI_LLM_API_KEY="sk-..."   # 从 bailian.console.aliyun.com 获取（旧 dashscope.console.aliyun.com 已于 2026-08-01 下线）
+export APPLAI_LLM_BASE_URL="https://{你的WorkspaceId}.cn-beijing.maas.aliyuncs.com/compatible-mode/v1"  # 用控制台显示的专属地址
 export APPLAI_LLM_MODEL="qwen-turbo"
 ```
 
