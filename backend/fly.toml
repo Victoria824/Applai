@@ -24,13 +24,12 @@ primary_region = "yyz"   # 多伦多，离用户最近
   auto_start_machines = true
   min_machines_running = 1   # 保持 1 台常开：插件随时调 API；SQLite 卷同一时间只能挂一台机器
 
-  [http_service.checks]
-    [http_service.checks.alive]
-      grace_period = "10s"
-      interval = "30s"
-      method = "GET"
-      path = "/health"
-      timeout = "5s"
+  [[http_service.checks]]
+    grace_period = "10s"
+    interval = "30s"
+    method = "GET"
+    path = "/health"
+    timeout = "5s"
 
 [[mounts]]
   source = "applai_data"
