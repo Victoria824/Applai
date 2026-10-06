@@ -33,7 +33,7 @@ const store = {
 /* ---------- 后端对接 ---------- */
 async function backendBase() {
   const { aap_settings: s = {} } = await store.get(['aap_settings']);
-  return (s.backendUrl || 'http://127.0.0.1:8000').replace(/\/$/, '');
+  return (s.backendUrl || 'https://applai-backend.fly.dev').replace(/\/$/, '');
 }
 
 async function getUserId() {
@@ -108,7 +108,7 @@ async function saveSchedule() {
     scheduleEnabled: $('set-schedule').checked,
     scheduleTime: $('set-time').value || '08:00',
     dailyCount: Math.max(1, Math.min(30, Number($('set-count').value) || 10)),
-    backendUrl: $('set-backend').value.trim() || 'http://127.0.0.1:8000',
+    backendUrl: $('set-backend').value.trim() || 'https://applai-backend.fly.dev',
   };
   await store.set({ aap_settings: next });
   chrome.runtime.sendMessage({ type: 'AUTOAPPLY_RESCHEDULE' });
@@ -119,7 +119,7 @@ async function saveSchedule() {
 });
 $('set-backend').addEventListener('change', async () => {
   const { aap_settings: s = {} } = await store.get(['aap_settings']);
-  await store.set({ aap_settings: { ...s, backendUrl: $('set-backend').value.trim() || 'http://127.0.0.1:8000' } });
+  await store.set({ aap_settings: { ...s, backendUrl: $('set-backend').value.trim() || 'https://applai-backend.fly.dev' } });
   toast('后端地址已保存');
 });
 
@@ -426,7 +426,7 @@ $('btn-enqueue').addEventListener('click', async () => {
   renderProfileView(profile);
   $('set-topic').value = settings.topic || '';
   $('set-autosubmit').checked = !!settings.autoSubmit;
-  $('set-backend').value = settings.backendUrl || 'http://127.0.0.1:8000';
+  $('set-backend').value = settings.backendUrl || 'https://applai-backend.fly.dev';
   $('set-schedule').checked = !!settings.scheduleEnabled;
   $('set-time').value = settings.scheduleTime || '08:00';
   $('set-count').value = settings.dailyCount || 10;

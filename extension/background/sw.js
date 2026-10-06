@@ -3,13 +3,23 @@
 
 const DEFAULTS = {
   topic: '', autoSubmit: false,
-  backendUrl: 'http://127.0.0.1:8000',
+  backendUrl: 'https://applai-backend.fly.dev',
   scheduleEnabled: false, scheduleTime: '08:00', dailyCount: 10,
 };
 
+// One-time migration: installs that saved the old local-backend default before
+// the Fly.io deployment automatically switch to the production URL.
+const OLD_LOCAL_BACKEND = 'http://127.0.0.1:8000';
+
 async function getSettings() {
   const { aap_settings: s = {} } = await chrome.storage.local.get(['aap_settings']);
-  return { ...DEFAULTS, ...s };
+  const merged = { ...DEFAULTS, ...s };
+  const saved = String(merged.backendUrl || '').replace(/\/$/, '');
+  if (saved === OLD_LOCAL_BACKEND) {
+    merged.backendUrl = DEFAULTS.backendUrl;
+    await chrome.storage.local.set({ aap_settings: { ...s, backendUrl: merged.backendUrl } });
+  }
+  return merged;
 }
 
 async function getUserId() {
