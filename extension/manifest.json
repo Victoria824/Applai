@@ -15,7 +15,8 @@
         "content/fill.js",
         "content/captcha.js",
         "content/submit.js",
-        "content/bridge.js"
+        "content/bridge.js",
+        "content/connect.js"
       ],
       "matches": [
         "<all_urls>"

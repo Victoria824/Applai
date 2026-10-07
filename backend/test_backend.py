@@ -240,3 +240,32 @@ def test_claim_old_data():
     # 不存在的旧 ID
     r = c.post("/api/v1/auth/claim", json={"old_user_id": "no_such_user"})
     assert r.status_code == 400
+
+
+def test_resume_parse(monkeypatch):
+    import llm as llm_mod
+    c = _authed_client("resumeqa")
+    pdf = open("/home/hatch/workspace/job-apply-tool/test_fixtures/fake_ai_engineer_resume.pdf", "rb").read()
+    # mock LLM 抽取
+    monkeypatch.setattr(llm_mod, "llm_parse_resume",
+                        lambda text, timeout=60: {"firstName": "Alex", "lastName": "Chen",
+                                                 "email": "alex.chen.qa@example.com",
+                                                 "targetTitles": ["AI Engineer"],
+                                                 "yearsExperience": 5})
+    r = c.post("/api/v1/resume/parse", files={"file": ("resume.pdf", pdf, "application/pdf")})
+    assert r.status_code == 200, r.text
+    d = r.json()
+    assert d["fields"]["email"] == "alex.chen.qa@example.com"
+    assert d["fields"]["yearsExperience"] == 5
+    assert d["chars"] > 100
+    # 非 PDF 拒绝
+    r = c.post("/api/v1/resume/parse", files={"file": ("a.txt", b"hello", "text/plain")})
+    assert r.status_code == 400
+    # 未登录拒绝
+    anon = TestClient(app.app)
+    r = anon.post("/api/v1/resume/parse", files={"file": ("resume.pdf", pdf, "application/pdf")})
+    assert r.status_code == 401
+    # LLM 失败 → 502
+    monkeypatch.setattr(llm_mod, "llm_parse_resume", lambda text, timeout=60: None)
+    r = c.post("/api/v1/resume/parse", files={"file": ("resume.pdf", pdf, "application/pdf")})
+    assert r.status_code == 502

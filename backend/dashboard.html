@@ -140,11 +140,21 @@ h2 .count{font-size:12px; color:var(--muted); font-weight:400;}
   <h2>🗂️ 申请历史</h2>
   <div id="history"><div class="loading">加载中…</div></div>
 
-  <h2 class="sec-head">🔌 连接插件 <button id="tokenNewBtn">新建 Token</button></h2>
+  <h2>🔌 连接插件</h2>
   <div class="card">
-    <div class="hint" style="margin:0 0 8px">在 Chrome 插件「设置」→「API Token」里粘贴下面的 Token，插件就能以你的身份读写数据。Token 只显示一次，请妥善保存。</div>
-    <div id="tokenNew" style="display:none;margin-bottom:10px"></div>
-    <div id="tokenList"><div class="loading">加载中…</div></div>
+    <div class="hint" style="margin:0 0 10px">点一下，Token 自动传进已安装的 Chrome 插件，无需复制粘贴。</div>
+    <div class="actions" style="margin-top:0">
+      <button class="primary" id="oneClickConnect">一键连接插件</button>
+    </div>
+    <div class="hint" id="connectStatus"></div>
+    <details style="margin-top:10px">
+      <summary style="font-size:13px;color:var(--muted);cursor:pointer">手动方式（复制 Token）</summary>
+      <div style="margin-top:8px">
+        <div class="actions" style="margin-top:0"><button id="tokenNewBtn">新建 Token</button></div>
+        <div id="tokenNew" style="display:none;margin:8px 0"></div>
+        <div id="tokenList"><div class="loading">加载中…</div></div>
+      </div>
+    </details>
   </div>
 
   <h2>📦 认领旧数据</h2>
@@ -390,6 +400,37 @@ function renderPfForm(p) {
       $("pfResumeNew").textContent = `已选择：${file.name}（保存后生效）`;
     };
     r.readAsDataURL(file);
+    // PDF 简历 → 后端识别 → 自动预填
+    if (/\.pdf$/i.test(file.name)) {
+      $("pfResumeNew").textContent = "正在识别简历内容…";
+      const fd = new FormData();
+      fd.append("file", file, file.name);
+      fetch("/api/v1/resume/parse", { method: "POST", credentials: "include", body: fd })
+        .then(async (resp) => {
+          const d = await resp.json().catch(() => ({}));
+          if (!resp.ok) throw new Error(d.detail || `识别失败 ${resp.status}`);
+          return d;
+        })
+        .then((d) => {
+          prefillProfileForm(d.fields || {});
+          const n = Object.keys(d.fields || {}).length;
+          toast(n ? `已识别 ${n} 项信息，请确认修改 ✓` : "未识别出有效信息，请手动填写");
+          if (pendingResume) $("pfResumeNew").textContent = `已选择：${file.name}（保存后生效）`;
+        })
+        .catch((err) => {
+          $("pfResumeNew").textContent = `已选择：${file.name}。自动识别失败（${err.message}），请手动填写`;
+        });
+    }
+  });
+}
+
+function prefillProfileForm(fields) {
+  Object.entries(fields).forEach(([k, v]) => {
+    if (k === "summary" || v == null || v === "") return;
+    const el = $("pf_" + k);
+    if (!el) return;
+    if (el.type === "checkbox") { el.checked = !!v; return; }
+    el.value = Array.isArray(v) ? v.join(", ") : String(v);
   });
 }
 
@@ -457,7 +498,61 @@ $("pfSaveBtn").onclick = saveProfile;
   } catch (e) { if (!/未登录/.test(e.message)) showErr("初始化失败：" + e.message); }
 })();
 
-/* ---------- 插件 Token ---------- */
+/* ---------- 一键连接插件 ---------- */
+// 插件的 content/connect.js 会在页面里监听 APPLAI_* 消息，无需知道插件 ID。
+function extPing(timeoutMs = 1500) {
+  return new Promise((resolve) => {
+    const h = (e) => {
+      if (e.source === window && e.data && e.data.type === "APPLAI_PONG") {
+        window.removeEventListener("message", h);
+        clearTimeout(t);
+        resolve(true);
+      }
+    };
+    const t = setTimeout(() => { window.removeEventListener("message", h); resolve(false); }, timeoutMs);
+    window.addEventListener("message", h);
+    window.postMessage({ type: "APPLAI_PING" }, "*");
+  });
+}
+$("oneClickConnect").onclick = async () => {
+  clearErr();
+  const st = $("connectStatus");
+  st.textContent = "正在检测插件…";
+  if (!(await extPing())) {
+    st.textContent = "未检测到插件。请先安装 Chrome 插件，再点一次。";
+    return;
+  }
+  st.textContent = "已找到插件，正在传送 Token…";
+  let token;
+  try {
+    const d = await api("/api/v1/auth/tokens", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "一键连接 " + new Date().toLocaleDateString("zh-CN") })
+    });
+    token = d.token;
+  } catch (e) { st.textContent = "创建 Token 失败：" + e.message; return; }
+  const ok = await new Promise((resolve) => {
+    const h = (e) => {
+      if (e.source === window && e.data && e.data.type === "APPLAI_CONNECT_RESULT") {
+        window.removeEventListener("message", h);
+        clearTimeout(t);
+        resolve(!!e.data.ok);
+      }
+    };
+    const t = setTimeout(() => { window.removeEventListener("message", h); resolve(false); }, 5000);
+    window.addEventListener("message", h);
+    window.postMessage({ type: "APPLAI_CONNECT", token }, "*");
+  });
+  if (ok) {
+    st.textContent = "";
+    toast("插件已连接 ✓（Token 已自动保存到插件设置）");
+    await loadTokens();
+  } else {
+    st.textContent = "传送失败，请用下面的手动方式复制 Token。";
+  }
+};
+
+/* ---------- 插件 Token（手动） ---------- */
 async function loadTokens() {
   const box = $("tokenList");
   try {

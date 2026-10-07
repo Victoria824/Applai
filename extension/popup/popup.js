@@ -340,7 +340,41 @@ $('resume-file').addEventListener('change', (e) => {
     toast('简历已就绪，保存画像后生效');
   };
   reader.readAsDataURL(f);
+  // PDF 简历 → 后端识别 → 自动预填表单（需先在设置中配置 API Token）
+  if (/\.pdf$/i.test(f.name)) {
+    (async () => {
+      try {
+        const base = await backendBase();
+        const headers = await authHeaders();
+        if (!headers.Authorization) { toast('提示：先配置 API Token 可启用简历自动识别'); return; }
+        toast('正在识别简历内容…');
+        const fd = new FormData();
+        fd.append('file', f, f.name);
+        const r = await fetch(base + '/api/v1/resume/parse', {
+          method: 'POST', headers, body: fd,
+        });
+        const d = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(d.detail || `识别失败 ${r.status}`);
+        prefillProfileForm(d.fields || {});
+        const n = Object.keys(d.fields || {}).length;
+        toast(n ? `已识别 ${n} 项信息，请确认修改 ✓` : '未识别出有效信息，请手动填写');
+      } catch (err) {
+        toast('简历识别失败：' + err.message + '，请手动填写');
+      }
+    })();
+  }
 });
+
+/* 简历识别结果预填表单（用户确认后保存） */
+function prefillProfileForm(fields) {
+  Object.entries(fields).forEach(([k, v]) => {
+    if (k === 'summary' || v == null || v === '') return;
+    const el = document.querySelector(`#profile-form [data-k="${k}"]`);
+    if (!el) return;
+    if (el.type === 'checkbox') { el.checked = !!v; return; }
+    el.value = Array.isArray(v) ? v.join(', ') : String(v);
+  });
+}
 
 function collectProfileForm() {
   const p = {};

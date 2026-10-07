@@ -6,7 +6,7 @@ import os
 import time
 from pathlib import Path
 
-from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from pydantic import BaseModel, Field
@@ -260,6 +260,38 @@ def revoke_token(tid: int, user: dict = Depends(get_current_user)):
     if not db.revoke_api_token(user["id"], tid):
         raise HTTPException(404, "token not found")
     return {"ok": True}
+
+
+@app.post("/api/v1/resume/parse")
+async def resume_parse(file: UploadFile = File(...), user: dict = Depends(get_current_user)):
+    """上传简历 PDF → 提取文本 → LLM 结构化抽取 → 返回字段供前端预填（用户确认后保存）。"""
+    name = (file.filename or "").lower()
+    if not name.endswith(".pdf"):
+        raise HTTPException(400, "目前只支持 PDF 简历")
+    data = await file.read()
+    if len(data) > 4 * 1024 * 1024:
+        raise HTTPException(400, "文件超过 4MB")
+    if len(data) < 100:
+        raise HTTPException(400, "文件内容为空")
+    try:
+        from pypdf import PdfReader
+        import io
+        reader = PdfReader(io.BytesIO(data))
+        text = "\n".join((p.extract_text() or "") for p in reader.pages[:5])[:8000]
+    except Exception:
+        raise HTTPException(400, "PDF 解析失败，请确认文件未损坏或加密")
+    if len(text.strip()) < 50:
+        raise HTTPException(400, "未能从 PDF 提取到文字（可能是扫描图片版），请手动填写")
+    import llm as llm_mod
+    fields = llm_mod.llm_parse_resume(text)
+    if not fields:
+        raise HTTPException(502, "简历识别服务暂不可用，请手动填写")
+    # 只保留白名单字段
+    allowed = ("firstName", "lastName", "email", "phone", "location", "linkedin",
+               "github", "website", "targetTitles", "industries", "yearsExperience",
+               "preferredLocations", "workAuth", "summary")
+    out = {k: fields.get(k) for k in allowed if fields.get(k) not in (None, "", [])}
+    return {"fields": out, "chars": len(text)}
 
 
 @app.post("/api/v1/auth/claim")

@@ -244,6 +244,16 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       sendResponse({ ok: true });
     } else if (msg.type === 'AUTOAPPLY_GET_USER') {
       sendResponse({ ok: true, user_id: await getUserId() });
+    } else if (msg.type === 'AUTOAPPLY_SAVE_TOKEN') {
+      // Dashboard「一键连接插件」：保存 API Token（简单校验格式）
+      const t = String(msg.token || '').trim();
+      if (/^aap_[0-9a-f]{32,}$/.test(t)) {
+        const { aap_settings: s = {} } = await chrome.storage.local.get(['aap_settings']);
+        await chrome.storage.local.set({ aap_settings: { ...s, apiToken: t } });
+        sendResponse({ ok: true });
+      } else {
+        sendResponse({ ok: false, error: 'bad token format' });
+      }
     } else {
       sendResponse({ ok: false, error: 'unknown message' });
     }

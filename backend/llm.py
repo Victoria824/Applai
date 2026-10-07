@@ -104,3 +104,44 @@ def llm_score(profile: dict, job: dict, timeout: int = 60) -> tuple[float | None
         return round(score, 1), reasons
     except Exception:
         return None, []
+
+
+RESUME_PROMPT = """从下面的简历文本中提取求职者信息，只返回 JSON，不要任何解释。
+字段（没有就留空字符串 / 空数组 / null）：
+{"firstName": "", "lastName": "", "email": "", "phone": "", "location": "",
+ "linkedin": "", "github": "", "website": "",
+ "targetTitles": ["从经历推断 1-3 个目标职位"],
+ "industries": [], "yearsExperience": 工作年限数字或null,
+ "preferredLocations": [], "workAuth": "",
+ "summary": "一句话中文总结"}
+姓名如果是中文："王小明" → firstName "小明", lastName "王"；英文 "John Smith" → firstName "John", lastName "Smith"。
+
+简历文本：
+```
+{resume}
+```
+"""
+
+
+def llm_parse_resume(text: str, timeout: int = 60) -> dict | None:
+    """简历文本 → 结构化字段；失败返回 None，调用方提示用户手动填写。"""
+    cfg = get_config()
+    if not cfg["api_key"] or not text.strip():
+        return None
+    try:
+        r = httpx.post(
+            f"{cfg['base_url']}/chat/completions",
+            headers={"Authorization": f"Bearer {cfg['api_key']}", "Content-Type": "application/json"},
+            json={
+                "model": cfg["model"],
+                "messages": [{"role": "user", "content": RESUME_PROMPT.format(resume=text[:6000])}],
+                "temperature": 0.1,
+                "max_tokens": 800,
+            },
+            timeout=timeout,
+        )
+        r.raise_for_status()
+        data = _extract_json(r.json()["choices"][0]["message"]["content"])
+        return data if isinstance(data, dict) else None
+    except Exception:
+        return None
