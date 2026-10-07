@@ -5,6 +5,7 @@ import tempfile
 # 测试用独立数据库
 tmp = tempfile.mkdtemp()
 os.environ["APPLAI_DB"] = os.path.join(tmp, "test.db")
+os.environ["APPLAI_COOKIE_SECURE"] = "0"  # httpx 不通过 http 发送 Secure cookie
 
 import db
 db.DB_PATH = os.path.join(tmp, "test.db")
@@ -12,7 +13,24 @@ db.DB_PATH = os.path.join(tmp, "test.db")
 from fastapi.testclient import TestClient
 import app
 
-client = TestClient(app.app)
+import pytest as _pytest
+
+@_pytest.fixture(autouse=True)
+def _clear_rate_limit():
+    import app as _appmod
+    _appmod._attempts.clear()
+    yield
+
+
+def _authed_client(username):
+    """注册一个新账号并返回已登录的独立 client（cookie 隔离）。"""
+    c = TestClient(app.app)
+    r = c.post("/api/v1/auth/register", json={"username": username, "password": "password123"})
+    assert r.status_code == 200, r.text
+    return c
+
+
+client = _authed_client("legacy_tester")
 UID = "test_user_1"
 PROFILE = {
     "firstName": "Victoria", "lastName": "Liu", "email": "v@test.com",
@@ -138,28 +156,87 @@ def test_llm_extract_json_with_fences():
     assert llm_mod._extract_json("not json at all") is None
 
 
-def test_dashboard_requires_password(monkeypatch):
-    monkeypatch.delenv("APPLAI_DASHBOARD_PASSWORD", raising=False)
-    r = client.get("/dashboard")
-    assert r.status_code == 503
+def test_dashboard_redirects_to_login():
+    c = TestClient(app.app)
+    r = c.get("/dashboard", follow_redirects=False)
+    assert r.status_code in (302, 307)
+    assert "/login" in r.headers["location"]
+    r = c.get("/login")
+    assert r.status_code == 200 and "Applai" in r.text
 
 
-def test_dashboard_auth_flow(monkeypatch):
-    monkeypatch.setenv("APPLAI_DASHBOARD_PASSWORD", "s3cret")
-    # 未带凭证 → 401 + WWW-Authenticate
-    r = client.get("/dashboard")
-    assert r.status_code == 401
-    assert "WWW-Authenticate" in r.headers
-    # 错误密码 → 401
-    r = client.get("/dashboard", auth=("x", "wrong"))
-    assert r.status_code == 401
-    # 正确密码 → 200 且为 HTML
-    r = client.get("/dashboard", auth=("anyone", "s3cret"))
+def test_register_login_flow():
+    c = TestClient(app.app)
+    r = c.post("/api/v1/auth/register", json={"username": "alice", "password": "password123"})
     assert r.status_code == 200
-    assert "Applai" in r.text and "<html" in r.text.lower()
-    # users 接口同样受保护
-    r = client.get("/api/v1/users")
+    r = c.get("/api/v1/auth/me")
+    assert r.json()["username"] == "alice"
+    r = c.get("/dashboard")
+    assert r.status_code == 200 and "Applai" in r.text
+    # 重复注册
+    r = c.post("/api/v1/auth/register", json={"username": "alice", "password": "password123"})
+    assert r.status_code == 400
+    # 用户名不合法 / 密码太短
+    r = c.post("/api/v1/auth/register", json={"username": "ab", "password": "password123"})
+    assert r.status_code == 400
+    r = c.post("/api/v1/auth/register", json={"username": "alice2", "password": "short"})
+    assert r.status_code == 400
+    # 登出后失效
+    c.post("/api/v1/auth/logout")
+    assert c.get("/api/v1/auth/me").status_code == 401
+
+
+def test_login_wrong_password():
+    c = _authed_client("bob")
+    c.post("/api/v1/auth/logout")
+    r = c.post("/api/v1/auth/login", json={"username": "bob", "password": "wrongpass"})
     assert r.status_code == 401
-    r = client.get("/api/v1/users", auth=("u", "s3cret"))
+    r = c.post("/api/v1/auth/login", json={"username": "bob", "password": "password123"})
     assert r.status_code == 200
-    assert isinstance(r.json()["users"], list)
+    assert c.get("/api/v1/auth/me").status_code == 200
+
+
+def test_user_isolation():
+    ca = _authed_client("iso_a")
+    cb = _authed_client("iso_b")
+    ca.put("/api/v1/profile", json={"user_id": "ignored", "profile": {"email": "a@x.com"}})
+    assert ca.get("/api/v1/profile").json()["profile"]["email"] == "a@x.com"
+    assert cb.get("/api/v1/profile").json()["profile"] in (None, {})
+    r = ca.post("/api/v1/jobs",
+                json={"user_id": "ignored", "url": "https://example.com/iso1", "title": "T", "company": "C"})
+    real_job_id = r.json()["id"]
+    assert len(ca.get("/api/v1/applications").json()["applications"]) == 0
+    ca.post("/api/v1/applications",
+            json={"user_id": "ignored", "job_id": real_job_id, "status": "submitted"})
+    apps_b = cb.get("/api/v1/applications").json()["applications"]
+    assert apps_b == []
+    assert len(ca.get("/api/v1/applications").json()["applications"]) == 1
+
+
+def test_api_token_auth_and_revoke():
+    c = _authed_client("tokuser")
+    r = c.post("/api/v1/auth/tokens", json={"name": "ext"}).json()
+    raw = r["token"]
+    assert raw.startswith("aap_")
+    tid = r["id"]
+    # 无 cookie、仅 Bearer 可用
+    c2 = TestClient(app.app)
+    r = c2.get("/api/v1/auth/me", headers={"Authorization": f"Bearer {raw}"})
+    assert r.status_code == 200 and r.json()["username"] == "tokuser"
+    assert c2.get("/api/v1/auth/me", headers={"Authorization": "Bearer aap_bogus"}).status_code == 401
+    # 撤销后失效
+    assert c.delete(f"/api/v1/auth/tokens/{tid}").status_code == 200
+    assert c2.get("/api/v1/auth/me", headers={"Authorization": f"Bearer {raw}"}).status_code == 401
+
+
+def test_claim_old_data():
+    import db as dbmod
+    dbmod.upsert_profile("old_u_123", {"email": "old@x.com"})
+    c = _authed_client("claimer")
+    assert c.get("/api/v1/profile").json()["profile"] in (None, {})
+    r = c.post("/api/v1/auth/claim", json={"old_user_id": "old_u_123"})
+    assert r.status_code == 200
+    assert c.get("/api/v1/profile").json()["profile"]["email"] == "old@x.com"
+    # 不存在的旧 ID
+    r = c.post("/api/v1/auth/claim", json={"old_user_id": "no_such_user"})
+    assert r.status_code == 400

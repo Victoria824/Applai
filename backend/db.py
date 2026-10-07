@@ -1,6 +1,9 @@
 """db.py — SQLite 持久层（MVP 先用 SQLite，产品化时换 Postgres，SQL 零改动）"""
+import hashlib
+import hmac
 import json
 import os
+import secrets
 import sqlite3
 import time
 from pathlib import Path
@@ -43,10 +46,35 @@ CREATE INDEX IF NOT EXISTS idx_apps_user ON applications(user_id);
 """
 
 
+AUTH_SCHEMA = """
+CREATE TABLE IF NOT EXISTS auth_users (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  app_user_id TEXT UNIQUE NOT NULL,
+  username TEXT UNIQUE NOT NULL,
+  pw_hash TEXT NOT NULL,
+  created_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS auth_sessions (
+  token TEXT PRIMARY KEY,
+  user_id INTEGER NOT NULL,
+  created_at INTEGER NOT NULL,
+  expires_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS api_tokens (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  token_hash TEXT UNIQUE NOT NULL,
+  user_id INTEGER NOT NULL,
+  name TEXT DEFAULT '',
+  created_at INTEGER NOT NULL,
+  last_used INTEGER
+);
+"""
+
 def get_db():
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     conn.executescript(SCHEMA)
+    conn.executescript(AUTH_SCHEMA)
     # 轻量迁移：jobs 表加 score_via 列
     cols = {r[1] for r in conn.execute("PRAGMA table_info(jobs)").fetchall()}
     if "score_via" not in cols:
@@ -190,3 +218,158 @@ def list_users() -> list:
         titles = ", ".join(p.get("targetTitles") or []) or "未填目标职位"
         out.append({"user_id": r["user_id"], "label": titles})
     return out
+
+
+# ================= 账号体系（多用户隔离） =================
+_PBKDF2_ITERS = 600_000
+
+def _pw_hash(password: str) -> str:
+    salt = secrets.token_bytes(16)
+    dk = hashlib.pbkdf2_hmac("sha256", password.encode(), salt, _PBKDF2_ITERS)
+    return f"{salt.hex()}${_PBKDF2_ITERS}${dk.hex()}"
+
+def _pw_verify(stored: str, password: str) -> bool:
+    try:
+        salt_hex, iters, dk_hex = stored.split("$")
+        dk = hashlib.pbkdf2_hmac("sha256", password.encode(),
+                                 bytes.fromhex(salt_hex), int(iters))
+        return hmac.compare_digest(dk.hex(), dk_hex)
+    except Exception:
+        return False
+
+def _valid_username(username: str) -> bool:
+    return bool(username) and 3 <= len(username) <= 32 and \
+        all(c.isalnum() or c in "_-" for c in username)
+
+def create_auth_user(username: str, password: str) -> dict:
+    """注册。返回 {id, app_user_id, username}；用户名重复/不合法或密码太短抛 ValueError。"""
+    username = (username or "").strip().lower()
+    if not _valid_username(username):
+        raise ValueError("用户名需为 3–32 位字母/数字/_/-")
+    if not password or len(password) < 8:
+        raise ValueError("密码至少 8 位")
+    conn = get_db()
+    try:
+        app_user_id = "u_" + secrets.token_hex(8)
+        now = int(time.time())
+        cur = conn.execute(
+            "INSERT INTO auth_users (app_user_id, username, pw_hash, created_at) VALUES (?,?,?,?)",
+            (app_user_id, username, _pw_hash(password), now))
+        conn.commit()
+        return {"id": cur.lastrowid, "app_user_id": app_user_id, "username": username}
+    except sqlite3.IntegrityError:
+        raise ValueError("用户名已被注册")
+    finally:
+        conn.close()
+
+def get_auth_user(auth_id: int) -> dict | None:
+    conn = get_db()
+    r = conn.execute("SELECT id, app_user_id, username, created_at FROM auth_users WHERE id=?",
+                     (auth_id,)).fetchone()
+    conn.close()
+    return dict(r) if r else None
+
+def verify_login(username: str, password: str) -> dict | None:
+    """登录验证，成功返回 {id, app_user_id, username}，失败返回 None。"""
+    username = (username or "").strip().lower()
+    conn = get_db()
+    r = conn.execute("SELECT id, app_user_id, username, pw_hash FROM auth_users WHERE username=?",
+                     (username,)).fetchone()
+    conn.close()
+    if not r or not _pw_verify(r["pw_hash"], password or ""):
+        return None
+    return {"id": r["id"], "app_user_id": r["app_user_id"], "username": r["username"]}
+
+SESSION_DAYS = 30
+
+def create_session(auth_id: int) -> str:
+    token = secrets.token_hex(32)
+    now = int(time.time())
+    conn = get_db()
+    conn.execute("INSERT INTO auth_sessions (token, user_id, created_at, expires_at) VALUES (?,?,?,?)",
+                 (token, auth_id, now, now + SESSION_DAYS * 86400))
+    # 顺手清理过期会话
+    conn.execute("DELETE FROM auth_sessions WHERE expires_at < ?", (now,))
+    conn.commit()
+    conn.close()
+    return token
+
+def get_session_user(token: str) -> dict | None:
+    if not token:
+        return None
+    conn = get_db()
+    r = conn.execute(
+        "SELECT u.id, u.app_user_id, u.username FROM auth_sessions s "
+        "JOIN auth_users u ON u.id = s.user_id "
+        "WHERE s.token=? AND s.expires_at > ?", (token, int(time.time()))).fetchone()
+    conn.close()
+    return dict(r) if r else None
+
+def delete_session(token: str):
+    conn = get_db()
+    conn.execute("DELETE FROM auth_sessions WHERE token=?", (token,))
+    conn.commit()
+    conn.close()
+
+def create_api_token(auth_id: int, name: str = "") -> tuple[int, str]:
+    """创建插件用 API Token。返回 (id, 明文token) ——明文只返回这一次。"""
+    raw = "aap_" + secrets.token_hex(32)
+    th = hashlib.sha256(raw.encode()).hexdigest()
+    conn = get_db()
+    cur = conn.execute(
+        "INSERT INTO api_tokens (token_hash, user_id, name, created_at) VALUES (?,?,?,?)",
+        (th, auth_id, (name or "")[:64], int(time.time())))
+    conn.commit()
+    conn.close()
+    return cur.lastrowid, raw
+
+def get_api_token_user(raw_token: str) -> dict | None:
+    if not raw_token or not raw_token.startswith("aap_"):
+        return None
+    th = hashlib.sha256(raw_token.encode()).hexdigest()
+    conn = get_db()
+    r = conn.execute(
+        "SELECT u.id, u.app_user_id, u.username, t.id AS tid FROM api_tokens t "
+        "JOIN auth_users u ON u.id = t.user_id WHERE t.token_hash=?", (th,)).fetchone()
+    if r:
+        conn.execute("UPDATE api_tokens SET last_used=? WHERE id=?", (int(time.time()), r["tid"]))
+        conn.commit()
+    conn.close()
+    return {"id": r["id"], "app_user_id": r["app_user_id"], "username": r["username"]} if r else None
+
+def list_api_tokens(auth_id: int) -> list:
+    conn = get_db()
+    rows = conn.execute(
+        "SELECT id, name, created_at, last_used FROM api_tokens WHERE user_id=? ORDER BY id DESC",
+        (auth_id,)).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+def revoke_api_token(auth_id: int, token_id: int) -> bool:
+    conn = get_db()
+    cur = conn.execute("DELETE FROM api_tokens WHERE id=? AND user_id=?", (token_id, auth_id))
+    conn.commit()
+    conn.close()
+    return cur.rowcount > 0
+
+def claim_old_data(new_app_user_id: str, old_app_user_id: str) -> dict:
+    """把旧 user_id 下的画像/职位/申请记录迁移到新账号。旧 ID 需存在且新账号无数据冲突。"""
+    if not old_app_user_id or old_app_user_id == new_app_user_id:
+        raise ValueError("旧用户 ID 无效")
+    conn = get_db()
+    try:
+        has = conn.execute("SELECT 1 FROM users WHERE user_id=?", (old_app_user_id,)).fetchone()
+        if not has:
+            raise ValueError("找不到该旧用户 ID 的数据")
+        # 职位 URL 冲突时保留新账号的（新账号刚注册通常为空）
+        conn.execute("DELETE FROM jobs WHERE user_id=? AND url IN "
+                     "(SELECT url FROM jobs WHERE user_id=?)",
+                     (old_app_user_id, new_app_user_id))
+        conn.execute("UPDATE users SET user_id=? WHERE user_id=?", (new_app_user_id, old_app_user_id))
+        conn.execute("UPDATE jobs SET user_id=? WHERE user_id=?", (new_app_user_id, old_app_user_id))
+        conn.execute("UPDATE applications SET user_id=? WHERE user_id=?",
+                     (new_app_user_id, old_app_user_id))
+        conn.commit()
+        return {"ok": True}
+    finally:
+        conn.close()

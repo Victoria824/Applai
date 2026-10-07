@@ -35,9 +35,15 @@ function apiUrl(path) {
   return getSettings().then((s) => s.backendUrl.replace(/\/$/, '') + path);
 }
 
+async function authHeaders() {
+  const s = await getSettings();
+  const t = (s.apiToken || '').trim();
+  return t ? { 'Authorization': 'Bearer ' + t } : {};
+}
+
 async function apiGet(path) {
   const url = await apiUrl(path);
-  const r = await fetch(url);
+  const r = await fetch(url, { headers: await authHeaders() });
   if (!r.ok) throw new Error(`GET ${path} -> ${r.status}`);
   return r.json();
 }
@@ -45,7 +51,7 @@ async function apiGet(path) {
 async function apiPost(path, body) {
   const url = await apiUrl(path);
   const r = await fetch(url, {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    method: 'POST', headers: { 'Content-Type': 'application/json', ...(await authHeaders()) },
     body: JSON.stringify(body),
   });
   if (!r.ok) throw new Error(`POST ${path} -> ${r.status}`);

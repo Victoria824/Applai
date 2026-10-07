@@ -112,10 +112,11 @@ h2 .count{font-size:12px; color:var(--muted); font-weight:400;}
   <div id="toast" class="toast"></div>
 
   <div class="bar">
-    <select id="userSel" aria-label="选择用户"></select>
+    <span id="meInfo" style="font-size:14px;color:var(--muted)">加载中…</span>
+    <span style="flex:1"></span>
     <button id="refreshBtn" class="primary">刷新</button>
+    <button id="logoutBtn">退出</button>
   </div>
-  <div class="hint">用户 ID 可在浏览器插件 popup 的「用户 ID」一栏复制。若下拉框已有，直接选择即可。</div>
 
   <h2 class="sec-head">👤 求职画像 <button id="pfEditBtn">编辑</button></h2>
   <div class="card">
@@ -138,6 +139,22 @@ h2 .count{font-size:12px; color:var(--muted); font-weight:400;}
 
   <h2>🗂️ 申请历史</h2>
   <div id="history"><div class="loading">加载中…</div></div>
+
+  <h2 class="sec-head">🔌 连接插件 <button id="tokenNewBtn">新建 Token</button></h2>
+  <div class="card">
+    <div class="hint" style="margin:0 0 8px">在 Chrome 插件「设置」→「API Token」里粘贴下面的 Token，插件就能以你的身份读写数据。Token 只显示一次，请妥善保存。</div>
+    <div id="tokenNew" style="display:none;margin-bottom:10px"></div>
+    <div id="tokenList"><div class="loading">加载中…</div></div>
+  </div>
+
+  <h2>📦 认领旧数据</h2>
+  <div class="card">
+    <div class="hint" style="margin:0 0 8px">如果你之前用插件（无账号时代）投过，旧数据存在旧用户 ID 下。在插件 popup「设置」→「用户 ID」复制它，粘贴到这里认领到当前账号。</div>
+    <div style="display:flex;gap:8px">
+      <input id="claimInput" placeholder="旧用户 ID，如 u_ab12cd34" style="flex:1;font-size:14px;padding:9px 10px;border:1px solid var(--line);border-radius:10px">
+      <button class="primary" id="claimBtn">认领</button>
+    </div>
+  </div>
 </main>
 
 <script>
@@ -159,7 +176,8 @@ const showErr = (msg) => { const e = $("err"); e.textContent = msg; e.style.disp
 const clearErr = () => { $("err").style.display = "none"; };
 
 async function api(path, opts) {
-  const r = await fetch(path, opts);
+  const r = await fetch(path, { credentials: "include", ...(opts || {}) });
+  if (r.status === 401) { location.href = "/login"; throw new Error("未登录"); }
   if (!r.ok) {
     const t = await r.text().catch(() => "");
     throw new Error(`请求失败 ${r.status} ${t.slice(0,120)}`);
@@ -167,31 +185,18 @@ async function api(path, opts) {
   return r.json();
 }
 
-function userId() { return $("userSel").value; }
+let ME = null;
+function userId() { return ME ? ME.app_user_id : ""; }
 
-async function loadUsers() {
-  const data = await api("/api/v1/users");
-  const sel = $("userSel");
-  sel.innerHTML = "";
-  const saved = localStorage.getItem("applai_dashboard_user") || "";
-  data.users.forEach((u) => {
-    const o = document.createElement("option");
-    o.value = u.user_id;
-    o.textContent = `${u.label} (${u.user_id.slice(0,8)}…)`;
-    sel.appendChild(o);
-  });
-  if (!data.users.length) {
-    const o = document.createElement("option");
-    o.value = ""; o.textContent = "暂无用户（先在插件里同步画像）";
-    sel.appendChild(o);
-  } else if (saved && [...sel.options].some((o) => o.value === saved)) {
-    sel.value = saved;
-  }
-  sel.onchange = () => {
-    localStorage.setItem("applai_dashboard_user", sel.value);
-    loadAll();
-  };
+async function loadMe() {
+  const d = await api("/api/v1/auth/me");
+  ME = d;
+  $("meInfo").textContent = `👤 ${d.username}`;
 }
+$("logoutBtn").onclick = async () => {
+  await api("/api/v1/auth/logout", { method: "POST" }).catch(() => {});
+  location.href = "/login";
+};
 
 async function loadHealth() {
   try {
@@ -432,9 +437,7 @@ async function saveProfile() {
       headers: {"Content-Type": "application/json"},
       body: JSON.stringify({user_id: userId(), profile: p})
     });
-    // 同步用户下拉框的标签
-    await loadUsers();
-    $("userSel").value = userId();
+    // 刷新画像显示
     currentProfile = p;
     renderPfView(p);
     closePfEdit();
@@ -449,10 +452,65 @@ $("pfSaveBtn").onclick = saveProfile;
 (async () => {
   try {
     await loadHealth();
-    await loadUsers();
+    await loadMe();
     await loadAll();
-  } catch (e) { showErr("初始化失败：" + e.message); }
+  } catch (e) { if (!/未登录/.test(e.message)) showErr("初始化失败：" + e.message); }
 })();
+
+/* ---------- 插件 Token ---------- */
+async function loadTokens() {
+  const box = $("tokenList");
+  try {
+    const d = await api("/api/v1/auth/tokens");
+    const ts = d.tokens || [];
+    box.innerHTML = ts.length ? ts.map((t) =>
+      `<div class="row" style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid var(--gray-bg)">
+        <div style="flex:1"><div style="font-size:14px">${esc(t.name || "(未命名)")}</div>
+        <div class="hint" style="margin:0">创建于 ${esc(fmtTime(t.created_at))}${t.last_used ? " · 上次使用 " + esc(fmtTime(t.last_used)) : ""}</div></div>
+        <button data-tid="${t.id}" style="font-size:13px;padding:6px 10px">撤销</button>
+      </div>`).join("")
+      : `<div class="empty">还没有 Token，点右上角「新建 Token」。</div>`;
+  } catch (e) { box.innerHTML = `<div class="empty">加载失败：${esc(e.message)}</div>`; }
+}
+$("tokenNewBtn").onclick = async () => {
+  clearErr();
+  const name = prompt("给这个 Token 起个名字（如：我的 Chrome 插件）", "") || "";
+  try {
+    const d = await api("/api/v1/auth/tokens", {
+      method: "POST", headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({ name })
+    });
+    $("tokenNew").style.display = "block";
+    $("tokenNew").innerHTML =
+      `<div class="detail" style="word-break:break-all"><b>复制保存，只显示一次：</b><br>${esc(d.token)}</div>`;
+    await loadTokens();
+  } catch (e) { showErr("创建失败：" + e.message); }
+};
+$("tokenList").addEventListener("click", async (ev) => {
+  const b = ev.target.closest("button[data-tid]");
+  if (!b || !confirm("确定撤销这个 Token？插件将立即断开。")) return;
+  try {
+    await api(`/api/v1/auth/tokens/${b.dataset.tid}`, { method: "DELETE" });
+    await loadTokens();
+  } catch (e) { showErr("撤销失败：" + e.message); }
+});
+
+/* ---------- 认领旧数据 ---------- */
+$("claimBtn").onclick = async () => {
+  clearErr();
+  const oldId = $("claimInput").value.trim();
+  if (!oldId) { toast("请先粘贴旧用户 ID"); return; }
+  try {
+    await api("/api/v1/auth/claim", {
+      method: "POST", headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({ old_user_id: oldId })
+    });
+    toast("认领成功 ✓");
+    $("claimInput").value = "";
+    await loadAll();
+  } catch (e) { showErr("认领失败：" + e.message); }
+};
+loadTokens();
 </script>
 </body>
 </html>

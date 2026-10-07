@@ -41,20 +41,31 @@ async function getUserId() {
   return resp && resp.user_id;
 }
 
+async function authHeaders() {
+  const { aap_settings: st = {} } = await store.get(['aap_settings']);
+  const t = (st.apiToken || '').trim();
+  return t ? { 'Authorization': 'Bearer ' + t } : {};
+}
+
+function apiErr(r) {
+  if (r.status === 401) return new Error('未登录：请在网页版注册账号，并把「连接插件」里的 API Token 粘贴到下方设置中');
+  return new Error(`后端请求失败 ${r.status}`);
+}
+
 async function apiGet(path) {
   const base = await backendBase();
-  const r = await fetch(base + path);
-  if (!r.ok) throw new Error(`后端请求失败 ${r.status}`);
+  const r = await fetch(base + path, { headers: await authHeaders() });
+  if (!r.ok) throw apiErr(r);
   return r.json();
 }
 
 async function apiPut(path, body) {
   const base = await backendBase();
   const r = await fetch(base + path, {
-    method: 'PUT', headers: { 'Content-Type': 'application/json' },
+    method: 'PUT', headers: { 'Content-Type': 'application/json', ...(await authHeaders()) },
     body: JSON.stringify(body),
   });
-  if (!r.ok) throw new Error(`后端请求失败 ${r.status}`);
+  if (!r.ok) throw apiErr(r);
   return r.json();
 }
 
@@ -116,6 +127,11 @@ async function saveSchedule() {
 }
 ['set-schedule', 'set-time', 'set-count'].forEach((id) => {
   $(id).addEventListener('change', saveSchedule);
+});
+$('set-token').addEventListener('change', async () => {
+  const { aap_settings: s = {} } = await store.get(['aap_settings']);
+  await store.set({ aap_settings: { ...s, apiToken: $('set-token').value.trim() } });
+  toast('API Token 已保存');
 });
 $('set-backend').addEventListener('change', async () => {
   const { aap_settings: s = {} } = await store.get(['aap_settings']);
@@ -427,6 +443,7 @@ $('btn-enqueue').addEventListener('click', async () => {
   $('set-topic').value = settings.topic || '';
   $('set-autosubmit').checked = !!settings.autoSubmit;
   $('set-backend').value = settings.backendUrl || 'https://applai-backend.fly.dev';
+  $('set-token').value = settings.apiToken || '';
   $('set-schedule').checked = !!settings.scheduleEnabled;
   $('set-time').value = settings.scheduleTime || '08:00';
   $('set-count').value = settings.dailyCount || 10;
