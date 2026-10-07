@@ -469,28 +469,31 @@ def chat(body: ChatIn, user: dict = Depends(get_current_user)):
     for a in apps:
         lines.append(f"- {a.get('title','?')} @ {a.get('company','?')}：{a.get('status','?')}（{a.get('detail','')[:60]}）")
     ctx.append("【最近申请】\n" + ("\n".join(lines) if lines else "暂无"))
+    try:
+        q = db.list_jobs(uid, 500)
+        done = db.applied_job_ids(uid)
+        queued = sorted([x for x in q if x["id"] not in done],
+                        key=lambda x: x.get("score", 0), reverse=True)
+        ql = [f"- {j.get('title','?')} @ {j.get('company','?')}：{j.get('score',0)}分（{j.get('location','')}）"
+              for j in queued[:15]]
+        ctx.append("【待投递队列（按分数排序）】\n" + ("\n".join(ql) if ql else "队列为空"))
+    except Exception:
+        queued = []
+        ctx.append("【待投递队列】暂无")
 
     # JD 上下文：待人工 + 高分待投递，截断拼接到预算内
     jd_parts, used = [], sum(len(c) for c in ctx)
     manual = [a for a in apps if a.get("status") == "needs_manual"][:5]
-    queued_ids = set()
-    try:
-        q = db.list_jobs(uid, 500)
-        done = db.applied_job_ids(uid)
-        for j in sorted([x for x in q if x["id"] not in done],
-                        key=lambda x: x.get("score", 0), reverse=True)[:5]:
-            queued_ids.add(j["id"])
-    except Exception:
-        pass
+    queued_ids = {j["id"] for j in queued[:5]}
     want = {a.get("job_id") for a in manual} | queued_ids
-    for a in apps:
-        jid = a.get("job_id")
-        if jid in want:
-            want.discard(jid)
-            desc = (db.job_description(db.get_job(jid)) or "")[:1500]
-            if desc and used < MAX_CTX:
-                jd_parts.append(f"【JD】{a.get('title')} @ {a.get('company')}：\n{desc}")
-                used += len(jd_parts[-1])
+    for jid in want:
+        job = db.get_job(jid)
+        if not job or used >= MAX_CTX:
+            continue
+        desc = (db.job_description(job) or "")[:1500]
+        if desc:
+            jd_parts.append(f"【JD】{job.get('title')} @ {job.get('company')}：\n{desc}")
+            used += len(jd_parts[-1])
     if jd_parts:
         ctx.append("\n\n".join(jd_parts))
 
