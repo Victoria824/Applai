@@ -134,7 +134,7 @@ def llm_parse_resume(text: str, timeout: int = 60) -> dict | None:
             headers={"Authorization": f"Bearer {cfg['api_key']}", "Content-Type": "application/json"},
             json={
                 "model": cfg["model"],
-                "messages": [{"role": "user", "content": RESUME_PROMPT.format(resume=text[:6000])}],
+                "messages": [{"role": "user", "content": RESUME_PROMPT.replace("{resume}", text[:6000])}],
                 "temperature": 0.1,
                 "max_tokens": 800,
             },

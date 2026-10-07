@@ -269,3 +269,26 @@ def test_resume_parse(monkeypatch):
     monkeypatch.setattr(llm_mod, "llm_parse_resume", lambda text, timeout=60: None)
     r = c.post("/api/v1/resume/parse", files={"file": ("resume.pdf", pdf, "application/pdf")})
     assert r.status_code == 502
+
+
+def test_resume_prompt_renders():
+    import llm as llm_mod
+    out = llm_mod.RESUME_PROMPT.replace("{resume}", "John Smith\nAI Engineer")
+    assert "John Smith" in out and "{resume}" not in out
+    assert '"firstName"' in out  # JSON 示例完整保留
+
+
+def test_llm_parse_resume_success(monkeypatch):
+    import llm as llm_mod
+    import httpx
+
+    class FakeResp:
+        def raise_for_status(self): pass
+        def json(self):
+            return {"choices": [{"message": {"content": '```json\n{"firstName":"Alex","email":"a@b.com"}\n```'}}]}
+
+    monkeypatch.setattr(llm_mod, "get_config",
+                        lambda: {"api_key": "k", "base_url": "https://x", "model": "m"})
+    monkeypatch.setattr(httpx, "post", lambda *a, **k: FakeResp())
+    d = llm_mod.llm_parse_resume("some resume text here " * 10)
+    assert d and d["firstName"] == "Alex" and d["email"] == "a@b.com"
