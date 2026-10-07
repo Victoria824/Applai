@@ -215,12 +215,13 @@ details summary{font-weight:600;}
   <section class="page" id="page-sources">
     <h2>🏢 职位来源</h2>
     <div class="card">
-      <div class="hint" style="margin:0 0 10px">💡 <b>智能模式已开启</b>：每天自动按你的画像生成搜索关键词，全网抓取匹配职位。下面是额外手动添加的公司（可选）。</div>
+      <div class="hint" style="margin:0 0 10px">💡 <b>智能模式已开启</b>：每天自动按你的画像生成搜索关键词，抓取 <b>Job Bank（加拿大官方）</b> + <b>14 家多伦多/加拿大公司</b>（Wealthsimple、1Password、StackAdapt…）+ 全网聚合源。下面是额外手动添加的公司（可选）。</div>
       <div class="hint" style="margin:0 0 10px" id="kwNote"></div>
       <div style="display:flex;gap:8px;flex-wrap:wrap">
         <select id="srcType" style="font-size:14px;padding:9px 10px;border:1px solid var(--line);border-radius:12px">
           <option value="greenhouse">Greenhouse</option>
           <option value="lever">Lever</option>
+          <option value="ashby">Ashby</option>
         </select>
         <input id="srcKey" placeholder="board 名 / 公司名" style="flex:1;min-width:140px;font-size:14px;padding:9px 12px;border:1px solid var(--line);border-radius:12px">
         <button class="primary" id="srcAddBtn">添加</button>

@@ -198,14 +198,20 @@ def _run_smart_discover(uid: str, limit: int = 60) -> dict:
     if not profile:
         raise HTTPException(400, "profile not found, sync profile first")
     manual = [{"type": s["type"], "key": s["key"]} for s in db.list_sources(uid)]
-    out = _run_discover(uid, manual, limit) if manual else {"seen": 0, "new": 0}
+    seen_keys = {(s["type"], s["key"]) for s in manual}
+    seeds = [{"type": t, "key": k} for t, k in ingest.CA_SEED_BOARDS
+             if (t, k) not in seen_keys]
+    out = _run_discover(uid, manual + seeds, limit) if (manual or seeds) else {"seen": 0, "new": 0}
     kws, note = _keywords_for(uid, profile)
     if not kws:
-        return {**out, "keywords": [], "mode": "manual_only"}
+        return {**out, "keywords": [], "mode": "seeds_only"}
     agg_new, agg_seen = 0, 0
-    for fetcher in (ingest.fetch_arbeitnow, ingest.fetch_remotive):
+    agg_sources = [("jobbank", lambda: ingest.fetch_jobbank(kws, 40)),
+                   ("arbeitnow", lambda: ingest.fetch_arbeitnow(kws, limit)),
+                   ("remotive", lambda: ingest.fetch_remotive(kws, limit))]
+    for _name, fetcher in agg_sources:
         try:
-            postings = fetcher(kws, limit)
+            postings = fetcher()
         except Exception:
             continue
         for p in postings:

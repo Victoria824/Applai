@@ -72,6 +72,8 @@ def fetch_source(source: dict, limit=100) -> list:
         return fetch_greenhouse(source["key"], limit)
     if source["type"] == "lever":
         return fetch_lever(source["key"], limit)
+    if source["type"] == "ashby":
+        return fetch_ashby(source["key"], limit)
     raise ValueError(f"unsupported source type: {source['type']}")
 
 
@@ -128,6 +130,103 @@ def fetch_remotive(keywords: list, limit=100) -> list:
                 "source": "remotive",
                 "raw": {"id": j.get("id")},
                 "description": clean_html(j.get("description", "")),
+            })
+            if len(jobs) >= limit:
+                return jobs
+    return jobs
+
+
+# 加拿大/GTA 种子公司（已验证的公开 ATS，智能抓取时自动包含）
+CA_SEED_BOARDS = [
+    ("ashby", "wealthsimple"), ("ashby", "1password"), ("ashby", "neofinancial"),
+    ("ashby", "docebo"), ("ashby", "hopper"), ("ashby", "loopio"),
+    ("ashby", "koho"), ("ashby", "clearco"),
+    ("greenhouse", "stackadapt"), ("greenhouse", "tulip"), ("greenhouse", "hootsuite"),
+    ("greenhouse", "d2l"), ("greenhouse", "abcellera"),
+    ("lever", "wattpad"),
+]
+
+
+def fetch_ashby(board: str, limit=100) -> list:
+    """Ashby 公开 API（免 key），加拿大 fintech 常用。"""
+    url = f"https://api.ashbyhq.com/posting-api/job-board/{board}"
+    r = httpx.get(url, headers=HEADERS, timeout=30)
+    r.raise_for_status()
+    jobs = []
+    for j in r.json().get("jobs", [])[:limit]:
+        if not j.get("isListed", True):
+            continue
+        loc = j.get("location") or ""
+        if j.get("isRemote"):
+            loc = (loc + " / Remote").strip(" /")
+        jobs.append({
+            "url": j.get("jobUrl", ""),
+            "title": j.get("title", ""),
+            "company": board,
+            "location": loc,
+            "source": f"ashby:{board}",
+            "raw": {"id": j.get("id")},
+            "description": clean_html(j.get("descriptionPlain") or j.get("descriptionHtml") or ""),
+        })
+    return jobs
+
+
+def _jobbank_detail(url: str, timeout: int = 12) -> str:
+    """抓 Job Bank 详情页正文（best effort）。"""
+    try:
+        r = httpx.get(url, headers=HEADERS, timeout=timeout)
+        r.raise_for_status()
+        m = re.search(r'job-posting-details.*?<div[^>]*>(.*)', r.text, re.S)
+        if not m:
+            return ""
+        return clean_html(m.group(1))[:4000]
+    except Exception:
+        return ""
+
+
+def fetch_jobbank(keywords: list, limit=60) -> list:
+    """加拿大 Job Bank RSS（联邦政府官方，免 key）。按关键词搜安省职位。"""
+    import xml.etree.ElementTree as ET
+    jobs, seen = [], set()
+    queries = [k for k in (keywords or []) if k][:4] or [""]
+    per_q = max(5, limit // max(1, len(queries)))
+    for q in queries:
+        params = {"sort": "D", "rows": per_q, "fprov": "ON"}
+        if q:
+            params["searchstring"] = q
+        try:
+            r = httpx.get("https://www.jobbank.gc.ca/jobsearch/feed/jobSearchRSSfeed",
+                          params=params, headers=HEADERS, timeout=30)
+            r.raise_for_status()
+            root = ET.fromstring(r.content)
+        except Exception:
+            continue
+        ns = {"a": "http://www.w3.org/2005/Atom"}
+        for e in root.findall("a:entry", ns):
+            link = e.find("a:link", ns)
+            url = link.get("href", "") if link is not None else ""
+            if not url or url in seen:
+                continue
+            seen.add(url)
+            title = (e.findtext("a:title", default="", namespaces=ns) or "").strip()
+            summary = (e.findtext("a:summary", default="", namespaces=ns) or "")
+            loc_m = re.search(r"Location:</strong>\s*([^<]+)", summary)
+            emp_m = re.search(r"Employer:</strong>\s*([^<]+)", summary)
+            sal_m = re.search(r"Salary:</strong>\s*([^<]+)", summary)
+            location = (loc_m.group(1).strip() if loc_m else "")
+            employer = (emp_m.group(1).strip() if emp_m else "")
+            salary = (sal_m.group(1).strip() if sal_m else "")
+            desc = _jobbank_detail(url)
+            if salary:
+                desc = f"Salary: {salary}\n{desc}"
+            jobs.append({
+                "url": url,
+                "title": title,
+                "company": employer,
+                "location": location,
+                "source": "jobbank",
+                "raw": {},
+                "description": desc,
             })
             if len(jobs) >= limit:
                 return jobs

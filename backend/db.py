@@ -405,8 +405,8 @@ def claim_old_data(new_app_user_id: str, old_app_user_id: str) -> dict:
 def add_source(user_id: str, type_: str, key: str) -> dict:
     type_ = (type_ or "").strip().lower()
     key = (key or "").strip()
-    if type_ not in ("greenhouse", "lever"):
-        raise ValueError("type 仅支持 greenhouse / lever")
+    if type_ not in ("greenhouse", "lever", "ashby"):
+        raise ValueError("type 仅支持 greenhouse / lever / ashby")
     if not key or len(key) > 128:
         raise ValueError("key 无效")
     conn = get_db()

@@ -326,7 +326,7 @@ def test_discover_auto_no_sources():
     r = c.post("/api/v1/jobs/discover/auto")
     assert r.status_code == 200
     d = r.json()
-    assert d["mode"] == "manual_only" and d["new"] == 0  # 无关键词→不抓取
+    assert d["mode"] == "seeds_only"  # 无关键词→只抓种子公司
 
 
 def test_settings():
@@ -368,3 +368,18 @@ def test_push_subscribe():
     r = c.post("/api/v1/push/subscribe", json={
         "endpoint": "http://x", "p256dh": "k", "auth": "a"})
     assert r.status_code == 400
+
+
+def test_ashby_source_type():
+    c = _authed_client("ashbyqa")
+    r = c.post("/api/v1/sources", json={"type": "ashby", "key": "wealthsimple"})
+    assert r.status_code == 200
+    ss = c.get("/api/v1/sources").json()["sources"]
+    assert ss[0]["type"] == "ashby"
+
+
+def test_ca_seeds_present():
+    import ingest
+    assert len(ingest.CA_SEED_BOARDS) >= 10
+    types = {t for t, _ in ingest.CA_SEED_BOARDS}
+    assert {"ashby", "greenhouse", "lever"} <= types
