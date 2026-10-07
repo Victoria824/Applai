@@ -7,43 +7,37 @@
 <meta name="theme-color" content="#111827">
 <link rel="icon" href="/dashboard/icon.svg" type="image/svg+xml">
 <style>
-:root{--bg:#f3f5fa;--card:#fff;--ink:#0f172a;--muted:#64748b;--line:#e8ecf3;--accent:#4f46e5;--accent-dark:#4338ca;--red:#dc2626;}
+:root{--bg:#f5f6f7;--card:#fff;--ink:#1a1a1a;--body:#595959;--muted:#8c8c8c;--line:#e5e7eb;--blue:#1677ff;--red:#ff4d4f;}
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent;}
 body{margin:0;color:var(--ink);
   font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
-  min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px;
-  background:linear-gradient(135deg,#1e1b4b 0%,#312e81 50%,#4c1d95 100%);}
-body::before{content:"";position:fixed;inset:0;
-  background-image:radial-gradient(600px 300px at 20% 10%, rgba(129,140,248,.25), transparent 60%),
-                   radial-gradient(500px 300px at 85% 90%, rgba(192,132,252,.2), transparent 60%);
-  pointer-events:none;}
-.card{position:relative;background:var(--card);border:none;border-radius:22px;
-  padding:32px 28px;width:100%;max-width:380px;
-  box-shadow:0 24px 60px -12px rgba(0,0,0,.45);}
-h1{margin:0 0 4px;font-size:26px;font-weight:800;letter-spacing:2px;
-  background:linear-gradient(135deg,var(--accent),#7c3aed);
-  -webkit-background-clip:text;background-clip:text;color:transparent;}
-.sub{color:var(--muted);font-size:13px;margin-bottom:22px;font-weight:600;}
-label{display:block;font-size:13px;color:var(--muted);margin:14px 0 5px;font-weight:600;}
-input{width:100%;font-size:16px;padding:12px 14px;border:1px solid var(--line);
-  border-radius:12px;background:#f8fafc;color:var(--ink);transition:border-color .15s,box-shadow .15s;}
-input:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px rgba(79,70,229,.15);background:#fff;}
-button{width:100%;font-size:16px;padding:13px;border:none;border-radius:999px;
-  background:linear-gradient(135deg,var(--accent),var(--accent-dark));color:#fff;margin-top:20px;cursor:pointer;font-weight:700;
-  box-shadow:0 6px 18px -6px rgba(79,70,229,.6);transition:transform .12s;}
+  min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px;background:var(--bg);}
+.card{position:relative;background:var(--card);border:1px solid var(--line);border-radius:16px;
+  padding:36px 32px;width:100%;max-width:380px;}
+h1{margin:0 0 4px;font-size:26px;font-weight:700;letter-spacing:.5px;}
+h1 .dot{color:var(--blue);}
+.sub{color:var(--muted);font-size:13px;margin-bottom:24px;}
+label{display:block;font-size:13px;color:var(--body);margin:14px 0 5px;font-weight:500;}
+input{width:100%;font-size:15px;padding:11px 14px;border:1px solid var(--line);
+  border-radius:999px;background:#fff;color:var(--ink);transition:border-color .15s,box-shadow .15s;}
+input:focus{outline:none;border-color:var(--blue);box-shadow:0 0 0 3px rgba(22,119,255,.15);}
+button{width:100%;font-size:15px;padding:12px;border:none;border-radius:999px;
+  background:var(--ink);color:#fff;margin-top:20px;cursor:pointer;font-weight:600;transition:background .15s;}
+button:hover{background:#333;}
 button:active{transform:scale(.98);}
-button.ghost{background:#fff;color:var(--ink);border:1px solid var(--line);margin-top:10px;box-shadow:none;}
-.err{color:var(--red);font-size:13px;min-height:20px;margin-top:10px;font-weight:600;}
-.tabs{display:flex;gap:8px;margin-bottom:6px;background:var(--bg);padding:4px;border-radius:999px;}
-.tabs button{margin-top:0;padding:9px;box-shadow:none;}
-.tabs button.on{background:#fff;color:var(--ink);box-shadow:0 2px 8px rgba(15,23,42,.12);}
+button.ghost{background:#fff;color:var(--ink);border:1px solid var(--line);margin-top:10px;}
+button.ghost:hover{background:var(--bg);}
+.err{color:var(--red);font-size:13px;min-height:20px;margin-top:10px;}
+.tabs{display:flex;gap:4px;margin-bottom:6px;background:var(--bg);padding:4px;border-radius:999px;}
+.tabs button{margin-top:0;padding:9px;}
+.tabs button.on{background:#fff;color:var(--ink);box-shadow:0 1px 4px rgba(0,0,0,.1);}
 .tabs button:not(.on){background:transparent;color:var(--muted);border:none;}
 .hint{font-size:12px;color:var(--muted);margin-top:16px;line-height:1.7;}
 </style>
 </head>
 <body>
 <div class="card">
-  <h1>Applai</h1>
+  <h1>Applai<span class="dot">.</span></h1>
   <div class="sub">自动求职控制台</div>
   <div class="tabs">
     <button id="tabLogin" class="on">登录</button>

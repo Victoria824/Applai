@@ -11,53 +11,58 @@
 <link rel="icon" href="/dashboard/icon.svg" type="image/svg+xml">
 <style>
 :root{
-  --bg:#f3f5fa; --card:#ffffff; --ink:#0f172a; --muted:#64748b;
-  --line:#e8ecf3; --accent:#4f46e5; --accent-dark:#4338ca; --accent-soft:#eef2ff;
-  --green:#059669; --green-bg:#ecfdf5;
-  --blue:#2563eb; --blue-bg:#eff6ff;
-  --orange:#ea580c; --orange-bg:#fff7ed;
-  --red:#dc2626; --red-bg:#fef2f2;
+  --bg:#f5f6f7; --card:#ffffff; --ink:#1a1a1a; --body:#595959; --muted:#8c8c8c;
+  --line:#e5e7eb; --nav-active:#f0f1f3;
+  --blue:#1677ff; --blue-soft:#e8f1ff;
+  --black:#1a1a1a;
+  --green:#00b578; --green-bg:#e6f9f0;
+  --orange:#ff6a00; --orange-bg:#fff3e8;
+  --red:#ff4d4f; --red-bg:#ffeeee;
   --purple:#7c3aed; --purple-bg:#f5f3ff;
-  --gray:#475569; --gray-bg:#f1f5f9;
-  --radius:18px;
-  --shadow:0 1px 2px rgba(15,23,42,.05), 0 8px 24px -8px rgba(15,23,42,.12);
+  --gray:#595959; --gray-bg:#f0f1f3;
+  --radius:16px;
+  --shadow:none;
 }
 *{box-sizing:border-box; -webkit-tap-highlight-color:transparent;}
 body{margin:0; background:var(--bg); color:var(--ink);
   font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
   font-size:15px; line-height:1.6;
   background-image:radial-gradient(1200px 400px at 50% -100px, #e0e7ff 0%, transparent 60%);}
-header{position:sticky; top:0; z-index:10; color:#fff;
-  background:linear-gradient(135deg,#1e1b4b 0%,#312e81 55%,#4c1d95 100%);
-  padding:14px 18px; padding-top:calc(14px + env(safe-area-inset-top));
-  display:flex; align-items:center; gap:10px;
-  box-shadow:0 4px 20px -4px rgba(49,46,129,.45);}
-header h1{font-size:19px; margin:0; font-weight:800; letter-spacing:1px;}
-header .sub{font-size:12px; opacity:.7; font-weight:400;}
-.badge{display:inline-block; font-size:11px; padding:3px 11px; border-radius:999px; font-weight:700; letter-spacing:.3px;}
-.badge.llm-on{background:rgba(52,211,153,.18); color:#a7f3d0; border:1px solid rgba(52,211,153,.4);}
-.badge.llm-off{background:rgba(255,255,255,.12); color:#cbd5e1; border:1px solid rgba(255,255,255,.18);}
-main{max-width:720px; margin:0 auto; padding:16px 16px 70px;}
+header{position:sticky; top:0; z-index:10; color:var(--ink); background:#fff;
+  border-bottom:1px solid var(--line);
+  padding:0 20px; height:60px; padding-top:env(safe-area-inset-top);
+  display:flex; align-items:center; gap:10px;}
+header h1{font-size:19px; margin:0; font-weight:700; letter-spacing:.5px;}
+header h1 .dot{color:var(--blue);}
+header .sub{font-size:12px; color:var(--muted); font-weight:400;}
+.badge{display:inline-block; font-size:11px; padding:4px 12px; border-radius:999px; font-weight:600;}
+.badge.llm-on{background:var(--green-bg); color:var(--green); border:1px solid #b8ecd4;}
+.badge.llm-off{background:var(--gray-bg); color:var(--muted); border:1px solid var(--line);}
+.meinfo{font-size:13px; color:var(--body); font-weight:500;}
+.btn-black-sm{background:var(--black); color:#fff; border:none; font-size:12px;
+  padding:8px 18px; border-radius:999px; font-weight:600; cursor:pointer; box-shadow:none;}
 .bar{display:flex; gap:10px; align-items:center; margin:2px 0 14px;}
 #meInfo{font-size:14px; color:var(--muted); font-weight:600;}
-button{font-size:14px; padding:10px 18px; border-radius:999px; border:1px solid var(--line);
-  background:#fff; color:var(--ink); cursor:pointer; font-weight:600;
-  transition:transform .12s ease, box-shadow .12s ease;}
-button:active{transform:scale(.96);}
-button.primary{background:linear-gradient(135deg,var(--accent),var(--accent-dark)); color:#fff; border:none;
-  box-shadow:0 4px 14px -4px rgba(79,70,229,.5);}
-button.primary:active{transform:scale(.96);}
+button{font-size:14px; padding:10px 20px; border-radius:999px; border:1px solid var(--line);
+  background:#fff; color:var(--ink); cursor:pointer; font-weight:500;
+  transition:background .15s ease, transform .1s ease;}
+button:hover{background:var(--gray-bg);}
+button:active{transform:scale(.97);}
+button.primary{background:var(--black); color:#fff; border:none; font-weight:600;}
+button.primary:hover{background:#333;}
+button.blue{background:var(--blue); color:#fff; border:none; font-weight:600;}
+button.blue:hover{background:#0f66e0;}
 .stats{display:grid; grid-template-columns:repeat(4,1fr); gap:10px; margin-bottom:18px;}
 .stat{background:var(--card); border:none; border-radius:var(--radius);
   padding:14px 6px 12px; text-align:center; box-shadow:var(--shadow); position:relative; overflow:hidden;}
-.stat::before{content:""; position:absolute; top:0; left:0; right:0; height:3px; background:var(--sc,var(--accent));}
+.stat::before{content:""; position:absolute; top:0; left:0; right:0; height:3px; background:var(--sc,var(--blue));}
 .stat .n{font-size:24px; font-weight:800; letter-spacing:-.5px;}
 .stat .t{font-size:11px; color:var(--muted); margin-top:3px; font-weight:600;}
 h2{font-size:16px; margin:26px 0 12px; display:flex; align-items:center; gap:8px; font-weight:800; letter-spacing:.3px;}
 h2 .count{font-size:12px; color:var(--muted); font-weight:500; background:#fff;
   padding:2px 10px; border-radius:999px; box-shadow:var(--shadow);}
-.card{background:var(--card); border:none; border-radius:var(--radius);
-  padding:16px; margin-bottom:12px; box-shadow:var(--shadow);}
+.card{background:var(--card); border:1px solid var(--line); border-radius:var(--radius);
+  padding:20px 22px; margin-bottom:16px;}
 .card .top{display:flex; gap:12px; align-items:flex-start;}
 .score{min-width:56px; height:56px; border-radius:16px; display:flex; flex-direction:column;
   align-items:center; justify-content:center; color:#fff; flex-shrink:0; font-weight:800;
@@ -70,7 +75,7 @@ h2 .count{font-size:12px; color:var(--muted); font-weight:500; background:#fff;
 .card h3{margin:0 0 3px; font-size:15px; font-weight:700; letter-spacing:.2px;}
 .card .meta{font-size:13px; color:var(--muted);}
 .reasons{margin:10px 0 0; padding:0; list-style:none; display:flex; flex-wrap:wrap; gap:6px;}
-.reasons li{font-size:12px; background:var(--accent-soft); color:var(--accent-dark);
+.reasons li{font-size:12px; background:var(--blue-soft); color:var(--blue);
   padding:4px 11px; border-radius:999px; font-weight:600;}
 .actions{display:flex; gap:8px; margin-top:12px; flex-wrap:wrap;}
 .actions a, .actions button{font-size:13px; padding:9px 15px; text-decoration:none; border-radius:999px;}
@@ -94,8 +99,8 @@ h2 .count{font-size:12px; color:var(--muted); font-weight:500; background:#fff;
 select{font-size:15px; padding:10px 12px; border:1px solid var(--line);
   border-radius:12px; background:#fff; color:var(--ink);}
 input[type=text], input[type=email], input[type=number]{transition:border-color .15s, box-shadow .15s;}
-input:focus, select:focus, textarea:focus{outline:none; border-color:var(--accent) !important;
-  box-shadow:0 0 0 3px rgba(79,70,229,.15);}
+input:focus, select:focus, textarea:focus{outline:none; border-color:var(--blue) !important;
+  box-shadow:0 0 0 3px rgba(22,119,255,.15);}
 .pf-view{font-size:14px;}
 .pf-view .row{padding:7px 0; border-bottom:1px solid var(--gray-bg);}
 .pf-view .row:last-child{border-bottom:none;}
@@ -108,7 +113,7 @@ input:focus, select:focus, textarea:focus{outline:none; border-color:var(--accen
 .pf-form .grid2{display:grid; grid-template-columns:1fr 1fr; gap:0 12px;}
 .pf-form .grid3{display:grid; grid-template-columns:1fr 1fr 1fr; gap:0 12px;}
 .pf-form .check{display:flex; align-items:center; gap:8px; font-size:14px; color:var(--ink); margin-top:14px; font-weight:600;}
-.pf-form .check input{width:18px; height:18px; accent-color:var(--accent);}
+.pf-form .check input{width:18px; height:18px; accent-color:var(--blue);}
 .toast{position:fixed; left:50%; bottom:28px; transform:translateX(-50%);
   background:#0f172a; color:#fff; font-size:14px; padding:12px 22px; font-weight:600;
   border-radius:999px; display:none; z-index:50; box-shadow:0 8px 24px rgba(0,0,0,.25);
@@ -119,14 +124,16 @@ details summary{font-weight:600;}
 #claimInput{transition:border-color .15s, box-shadow .15s;}
 @media (min-width:640px){ .stats{gap:14px;} main{padding:20px 20px 80px;} }
 
-.layout{display:flex; max-width:1060px; margin:0 auto; align-items:flex-start; gap:4px;}
-#sidenav{position:sticky; top:84px; width:196px; flex-shrink:0; background:var(--card);
-  border-radius:var(--radius); box-shadow:var(--shadow); padding:10px; margin:16px 0 0 16px;
-  display:flex; flex-direction:column; gap:2px;}
+.layout{display:flex; max-width:1280px; margin:0 auto; align-items:flex-start;}
+main{flex:1; min-width:0; max-width:860px; margin:0 auto; padding:24px 28px 70px;}
+#sidenav{position:sticky; top:76px; width:208px; flex-shrink:0; background:#fff;
+  border-right:1px solid var(--line); padding:16px 12px; margin:0;
+  display:flex; flex-direction:column; gap:2px; align-self:stretch; min-height:calc(100vh - 60px);}
 #sidenav button{display:flex; align-items:center; gap:10px; width:100%; text-align:left;
-  border:none; background:transparent; padding:11px 13px; font-size:14px; border-radius:12px;
-  box-shadow:none; color:var(--ink); position:relative;}
-#sidenav button.on{background:var(--accent-soft); color:var(--accent-dark);}
+  border:none; background:transparent; padding:10px 14px; font-size:14px; border-radius:8px;
+  box-shadow:none; color:var(--body); position:relative;}
+#sidenav button:hover{background:var(--gray-bg);}
+#sidenav button.on{background:var(--nav-active); color:var(--ink); font-weight:700;}
 #sidenav button span{font-weight:600;}
 .nbadge{position:absolute; top:6px; right:8px; min-width:20px; height:20px; padding:0 6px;
   background:var(--orange); color:#fff; font-size:11px; font-weight:800; font-style:normal;
@@ -140,7 +147,7 @@ details summary{font-weight:600;}
   margin:12px 0; padding:4px 2px;}
 .msg{max-width:88%; padding:11px 15px; border-radius:16px; font-size:14px; line-height:1.65;
   word-break:break-word; white-space:pre-wrap;}
-.msg.user{align-self:flex-end; background:linear-gradient(135deg,var(--accent),var(--accent-dark));
+.msg.user{align-self:flex-end; background:var(--black);
   color:#fff; border-bottom-right-radius:6px;}
 .msg.bot{align-self:flex-start; background:var(--gray-bg); color:var(--ink); border-bottom-left-radius:6px;}
 .msg.bot.typing{opacity:.55;}
@@ -160,16 +167,58 @@ details summary{font-weight:600;}
   main{padding-bottom:120px !important;}
   #meInfo{display:none;}
 }
+
+/* ---- 百炼风首页 ---- */
+.hero{background:linear-gradient(120deg,#e8f1ff 0%,#f0eaff 55%,#e6fbff 100%);
+  border:1px solid var(--line); border-radius:20px; padding:36px 36px; margin-bottom:16px;
+  position:relative; overflow:hidden;}
+.hero::after{content:""; position:absolute; right:-60px; top:-60px; width:240px; height:240px;
+  background:radial-gradient(circle, rgba(22,119,255,.18), transparent 70%); pointer-events:none;}
+.hero h1{font-size:28px; font-weight:700; margin:0 0 10px; letter-spacing:.3px;}
+.hero h1 .grad{background:linear-gradient(90deg,#1677ff,#7c3aed); -webkit-background-clip:text;
+  background-clip:text; color:transparent;}
+.hero p{font-size:14px; color:var(--body); margin:0 0 20px; line-height:1.8;}
+.hero-actions{display:flex; gap:10px; flex-wrap:wrap;}
+.card-title{font-size:16px; font-weight:700; margin-bottom:14px; display:flex; align-items:baseline; gap:10px;}
+.card-desc{font-size:12px; color:var(--muted); font-weight:400;}
+.steps{display:flex; flex-direction:column;}
+.step{display:flex; gap:14px; padding:14px 4px; border-bottom:1px solid var(--gray-bg); align-items:flex-start;}
+.step:last-child{border-bottom:none;}
+.step .num{width:28px; height:28px; border-radius:50%; flex-shrink:0; display:flex;
+  align-items:center; justify-content:center; font-size:13px; font-weight:700;
+  background:var(--gray-bg); color:var(--muted);}
+.step.done .num{background:var(--green-bg); color:var(--green);}
+.step .st-t{font-size:14px; font-weight:600;}
+.step .st-d{font-size:12px; color:var(--muted); margin-top:2px;}
+.step .st-act{margin-left:auto; flex-shrink:0; align-self:center;}
+.step .st-act button{font-size:12px; padding:7px 16px;}
+.quicklinks{display:grid; grid-template-columns:repeat(4,1fr); gap:12px; margin-bottom:16px;}
+.qlink{background:#fff; border:1px solid var(--line); border-radius:var(--radius);
+  padding:16px 14px; cursor:pointer; text-align:left; transition:border-color .15s;}
+.qlink:hover{border-color:var(--blue); background:#fff;}
+.qlink .e{font-size:22px;}
+.qlink .t{font-size:13px; font-weight:600; margin-top:6px;}
+.qlink .n{font-size:20px; font-weight:700; margin-top:2px;}
+.qlink .u{font-size:11px; color:var(--muted);}
+.page-h{margin:4px 0 16px;}
+.page-h h2{font-size:22px; font-weight:700; margin:0 0 4px;}
+.page-h p{font-size:13px; color:var(--muted); margin:0;}
+@media (max-width:760px){
+  .hero{padding:26px 22px;}
+  .hero h1{font-size:22px;}
+  .quicklinks{grid-template-columns:repeat(2,1fr);}
+  main{padding:16px 14px 120px !important;}
+}
 </style>
 </head>
 <body>
 <header>
-  <h1>Applai</h1>
+  <h1>Applai<span class="dot">.</span></h1>
   <span class="sub">求职控制台</span>
   <span style="flex:1"></span>
   <span id="llmBadge" class="badge llm-off">LLM …</span>
-  <span id="meInfo" style="font-size:13px;opacity:.85;font-weight:600">…</span>
-  <button id="logoutBtn" style="background:rgba(255,255,255,.14);border:1px solid rgba(255,255,255,.25);color:#fff;font-size:12px;padding:7px 14px;box-shadow:none">退出</button>
+  <span id="meInfo" class="meinfo">…</span>
+  <button id="logoutBtn" class="btn-black-sm">退出</button>
 </header>
 <div class="layout">
 <nav id="sidenav">
@@ -187,6 +236,21 @@ details summary{font-weight:600;}
   <div id="toast" class="toast"></div>
 
   <section class="page on" id="page-home">
+    <div class="hero">
+      <div class="hero-text">
+        <h1>全自动求职投递<span class="grad">，每天 8 点开工</span></h1>
+        <p>Applai 是你的 AI 求职助手：按画像全网发现职位、智能打分排序、自动填表投递。<br>你只需要传一份简历，剩下的交给它。</p>
+        <div class="hero-actions">
+          <button class="primary" id="heroProfile">上传简历</button>
+          <button id="heroSchedule">开启自动投递</button>
+        </div>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-title">新手教程 <span class="card-desc">跟着走完这 4 步，投递就全自动了</span></div>
+      <div id="tutorialSteps" class="steps"><div class="loading">加载中…</div></div>
+    </div>
+    <div class="quicklinks" id="quickLinks"></div>
     <div class="stats" id="stats"></div>
     <div class="card chat-card">
       <div class="chat-head">💬 求职助手 <span class="hint" style="margin:0">问我投递进展、职位分析、面试建议</span></div>
@@ -200,7 +264,8 @@ details summary{font-weight:600;}
   </section>
 
   <section class="page" id="page-profile">
-    <div class="sec-head"><h2 style="margin:0">👤 求职画像</h2><button id="pfEditBtn">编辑</button></div>
+    <div class="page-h"><h2>求职画像</h2><p>你的简历与求职偏好，是职位匹配的基础。AI 会按画像生成搜索关键词。</p></div>
+    <div class="sec-head"><span></span><button id="pfEditBtn">编辑</button></div>
     <div class="card" style="margin-top:12px">
       <div id="pfView" class="pf-view"><div class="loading">加载中…</div></div>
       <div id="pfForm" class="pf-form" style="display:none"></div>
@@ -213,7 +278,8 @@ details summary{font-weight:600;}
   </section>
 
   <section class="page" id="page-sources">
-    <h2>🏢 职位来源</h2>
+    <div class="page-h"><h2>职位来源</h2><p>智能模式每天自动抓取；也可手动添加关注的公司招聘页。</p></div>
+    <div class="card-title">职位来源</div>
     <div class="card">
       <div class="hint" style="margin:0 0 10px">💡 <b>智能模式已开启</b>：每天自动按你的画像生成搜索关键词，抓取 <b>Job Bank（加拿大官方）</b> + <b>14 家多伦多/加拿大公司</b>（Wealthsimple、1Password、StackAdapt…）+ 全网聚合源。下面是额外手动添加的公司（可选）。</div>
       <div class="hint" style="margin:0 0 10px" id="kwNote"></div>
@@ -236,26 +302,30 @@ details summary{font-weight:600;}
   </section>
 
   <section class="page" id="page-queue">
-    <div class="sec-head"><h2 style="margin:0">📋 今日队列</h2><span class="count" id="queueCount"></span><button id="refreshBtn">刷新</button></div>
+    <div class="page-h"><h2>今日队列</h2><p>按匹配分数排序的待投递职位，每天定时任务自动投递。</p></div>
+    <div class="sec-head"><span class="count" id="queueCount"></span><button id="refreshBtn">刷新</button></div>
     <div id="queue" style="margin-top:12px"><div class="loading">加载中…</div></div>
   </section>
 
   <section class="page" id="page-manual">
-    <h2>⚠️ 待人工处理 <span class="count" id="manualCount"></span></h2>
+    <div class="page-h"><h2>待人工处理</h2><p>遇到验证码或需要注册的职位，在这里手动完成投递。</p></div>
+    <div class="card-title">待人工处理 <span class="count" id="manualCount"></span></div>
     <div id="manual"><div class="loading">加载中…</div></div>
   </section>
 
   <section class="page" id="page-history">
-    <h2>🗂️ 申请历史</h2>
+    <div class="page-h"><h2>申请历史</h2><p>所有投递记录与状态变更。</p></div>
+    <div class="card-title">申请历史</div>
     <div id="history"><div class="loading">加载中…</div></div>
   </section>
 
   <section class="page" id="page-schedule">
-    <h2>⏰ 定时投递</h2>
+    <div class="page-h"><h2>定时与通知</h2><p>投递计划与手机推送都在这里配置，插件自动同步。</p></div>
+    <div class="card-title">定时投递</div>
     <div class="card">
       <div class="hint" style="margin:0 0 10px">在这里调整，插件会自动同步（保持 Chrome 开着即可）。</div>
       <label class="check" style="display:flex;align-items:center;gap:10px;font-size:15px;font-weight:600;margin:6px 0 14px">
-        <input type="checkbox" id="schEnabled" style="width:20px;height:20px;accent-color:var(--accent)"> 每天自动投递
+        <input type="checkbox" id="schEnabled" style="width:20px;height:20px;accent-color:var(--blue)"> 每天自动投递
       </label>
       <div style="display:flex;gap:16px;flex-wrap:wrap">
         <label style="font-size:13px;color:var(--muted);font-weight:600">开始时间<br>
@@ -266,7 +336,7 @@ details summary{font-weight:600;}
       <div class="actions"><button class="primary" id="schSave">保存设置</button></div>
       <div class="hint" id="schStatus"></div>
     </div>
-    <h2>🔔 手机通知</h2>
+    <div class="card-title" style="margin-top:4px">手机通知</div>
     <div class="card">
       <div class="hint" style="margin:0 0 10px">不用装 App：点一下订阅，有验证码需要处理时手机浏览器直接弹窗提醒（iPhone 需先"添加到主屏幕"）。</div>
       <div class="actions" style="margin-top:0"><button class="primary" id="pushBtn">开启手机通知</button></div>
@@ -275,7 +345,8 @@ details summary{font-weight:600;}
   </section>
 
   <section class="page" id="page-connect">
-    <h2>🔌 连接插件</h2>
+    <div class="page-h"><h2>连接插件</h2><p>把账号与 Chrome 插件绑定，插件才能代你填表投递。</p></div>
+    <div class="card-title">连接插件</div>
     <div class="card">
       <div class="hint" style="margin:0 0 10px">点一下，Token 自动传进已安装的 Chrome 插件，无需复制粘贴。</div>
       <div class="actions" style="margin-top:0">
@@ -291,7 +362,7 @@ details summary{font-weight:600;}
         </div>
       </details>
     </div>
-    <h2>📦 认领旧数据</h2>
+    <div class="card-title" style="margin-top:4px">认领旧数据</div>
     <div class="card">
       <div class="hint" style="margin:0 0 8px">如果你之前用插件（无账号时代）投过，旧数据存在旧用户 ID 下。在插件 popup「设置」→「用户 ID」复制它，粘贴到这里认领到当前账号。</div>
       <div style="display:flex;gap:8px">
@@ -966,6 +1037,69 @@ try {
 loadSchedule();
 initPush();
 loadTokens();
+loadTutorial();
+loadQuickLinks();
+
+
+/* ---------- 首页 hero ---------- */
+$("heroProfile").onclick = () => showPage("profile");
+$("heroSchedule").onclick = () => showPage("schedule");
+
+/* ---------- 新手教程（真实状态） ---------- */
+async function loadTutorial() {
+  const box = $("tutorialSteps");
+  let profile = null, tokens = [], sched = {};
+  try { profile = await api("/api/v1/profile"); } catch (e) {}
+  try { tokens = (await api("/api/v1/tokens")).tokens || []; } catch (e) {}
+  try { sched = await api("/api/v1/settings"); } catch (e) {}
+  const hasProfile = !!(profile && (profile.name || profile.email));
+  const hasToken = tokens.length > 0;
+  const hasSched = !!sched.schedule_enabled;
+  const steps = [
+    { done: hasProfile, t: "完善求职画像", d: "上传简历自动识别，或手动填写目标职位、薪资、地区",
+      act: hasProfile ? "" : ["profile", "去完善"] },
+    { done: hasToken, t: "连接 Chrome 插件", d: "一键连接后，插件才能在招聘网站上自动填表",
+      act: hasToken ? "" : ["connect", "去连接"] },
+    { done: hasSched, t: "开启定时投递", d: "设置每天几点、投几份，之后全自动运行",
+      act: hasSched ? "" : ["schedule", "去开启"] },
+    { done: hasProfile && hasToken && hasSched, t: "坐等投递", d: "每天自动发现职位、打分、投递；验证码会推送到你手机",
+      act: "" },
+  ];
+  box.innerHTML = steps.map((s, i) => `
+    <div class="step${s.done ? " done" : ""}">
+      <div class="num">${s.done ? "✓" : (i + 1)}</div>
+      <div><div class="st-t">${esc(s.t)}</div><div class="st-d">${esc(s.d)}</div></div>
+      ${s.act ? `<div class="st-act"><button class="primary" data-goto="${s.act[0]}">${esc(s.act[1])}</button></div>` : ""}
+    </div>`).join("");
+  box.querySelectorAll("button[data-goto]").forEach((b) =>
+    b.addEventListener("click", () => showPage(b.dataset.goto)));
+}
+$("tutorialSteps").addEventListener("click", () => {});
+
+/* ---------- 快捷入口 ---------- */
+async function loadQuickLinks() {
+  let stats = {}, manualN = 0;
+  try {
+    const uid = encodeURIComponent(userId());
+    stats = (await api(`/api/v1/stats?user_id=${uid}`)).stats || {};
+    const apps = (await api(`/api/v1/applications?user_id=${uid}`)).applications || [];
+    manualN = apps.filter((a) => a.status === "needs_manual").length;
+  } catch (e) {}
+  const items = [
+    { e: "📋", t: "今日队列", n: stats.queued || 0, u: "待投递", p: "queue" },
+    { e: "⚠️", t: "待人工", n: manualN, u: "需处理", p: "manual" },
+    { e: "✅", t: "已投递", n: stats.submitted || 0, u: "累计", p: "history" },
+    { e: "⏰", t: "定时设置", n: "", u: "去配置", p: "schedule" },
+  ];
+  $("quickLinks").innerHTML = items.map((x) => `
+    <button class="qlink" data-goto="${x.p}">
+      <div class="e">${x.e}</div><div class="t">${x.t}</div>
+      ${x.n !== "" ? `<div class="n">${x.n}</div>` : ""}
+      <div class="u">${x.u}</div>
+    </button>`).join("");
+  $("quickLinks").querySelectorAll("button[data-goto]").forEach((b) =>
+    b.addEventListener("click", () => showPage(b.dataset.goto)));
+}
 
 </script>
 </body>
