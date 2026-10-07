@@ -151,6 +151,24 @@ details summary{font-weight:600;}
 
   <div class="stats" id="stats"></div>
 
+  <h2>🏢 职位来源</h2>
+  <div class="card">
+    <div class="hint" style="margin:0 0 10px">添加公司招聘页，Applai 会每天自动抓取新职位并打分。Greenhouse 填 board 名（如在 <span style="font-family:monospace">boards.greenhouse.io/<b>openai</b></span> 中就是 openai）；Lever 填公司名（如 <span style="font-family:monospace"><b>lever</b>.co</span> 子域名）。</div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap">
+      <select id="srcType" style="font-size:14px;padding:9px 10px;border:1px solid var(--line);border-radius:12px">
+        <option value="greenhouse">Greenhouse</option>
+        <option value="lever">Lever</option>
+      </select>
+      <input id="srcKey" placeholder="board 名 / 公司名" style="flex:1;min-width:140px;font-size:14px;padding:9px 12px;border:1px solid var(--line);border-radius:12px">
+      <button class="primary" id="srcAddBtn">添加</button>
+    </div>
+    <div id="srcList" style="margin-top:6px"><div class="loading">加载中…</div></div>
+    <div class="actions" style="margin-top:10px">
+      <button class="primary" id="srcFetchBtn">立即抓取新职位</button>
+    </div>
+    <div class="hint" id="srcStatus"></div>
+  </div>
+
   <h2>📋 今日队列 <span class="count" id="queueCount"></span></h2>
   <div id="queue"><div class="loading">加载中…</div></div>
 
@@ -320,8 +338,61 @@ $("refreshBtn").onclick = () => loadAll();
 async function loadAll() {
   clearErr();
   if (!userId()) return;
-  await Promise.all([loadHealth(), loadProfile(), loadQueue(), loadApps()]);
+  await Promise.all([loadHealth(), loadProfile(), loadSources(), loadQueue(), loadApps()]);
 }
+
+/* ---------- 职位来源 ---------- */
+async function loadSources() {
+  const box = $("srcList");
+  try {
+    const d = await api("/api/v1/sources");
+    const ss = d.sources || [];
+    box.innerHTML = ss.length ? ss.map((s) =>
+      `<div class="row" style="display:flex;align-items:center;gap:8px;padding:7px 0;border-bottom:1px solid var(--gray-bg)">
+        <span class="st ${s.type === "greenhouse" ? "st-filled" : "st-queued"}">${esc(s.type)}</span>
+        <div style="flex:1;font-size:14px;font-family:monospace">${esc(s.key)}</div>
+        <button data-sid="${s.id}" style="font-size:13px;padding:6px 12px">删除</button>
+      </div>`).join("")
+      : `<div class="hint" style="margin:6px 0">还没有来源，先添加一两个你感兴趣的公司。</div>`;
+  } catch (e) { box.innerHTML = `<div class="empty">加载失败：${esc(e.message)}</div>`; }
+}
+$("srcAddBtn").onclick = async () => {
+  clearErr();
+  const key = $("srcKey").value.trim();
+  if (!key) { toast("请填写 board 名 / 公司名"); return; }
+  try {
+    await api("/api/v1/sources", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ type: $("srcType").value, key })
+    });
+    $("srcKey").value = "";
+    toast("已添加 ✓");
+    await loadSources();
+  } catch (e) { showErr("添加失败：" + e.message); }
+};
+$("srcList").addEventListener("click", async (ev) => {
+  const b = ev.target.closest("button[data-sid]");
+  if (!b || !confirm("删除这个来源？")) return;
+  try {
+    await api(`/api/v1/sources/${b.dataset.sid}`, { method: "DELETE" });
+    await loadSources();
+  } catch (e) { showErr("删除失败：" + e.message); }
+});
+$("srcFetchBtn").onclick = async () => {
+  clearErr();
+  $("srcStatus").textContent = "正在抓取（职位多的话要几十秒）…";
+  try {
+    const d = await api("/api/v1/jobs/discover/auto", { method: "POST" });
+    $("srcStatus").textContent = d.note === "no sources configured"
+      ? "还没有配置来源，先添加。"
+      : `抓取完成：看到 ${d.seen} 个职位，新增 ${d.new} 个。`;
+    await loadQueue();
+    toast("抓取完成 ✓");
+  } catch (e) {
+    $("srcStatus").textContent = "";
+    showErr("抓取失败：" + e.message);
+  }
+};
 
 /* ---------- 求职画像 ---------- */
 const LIST_KEYS = ["targetTitles", "industries", "preferredLocations"];

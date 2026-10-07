@@ -128,18 +128,41 @@ def add_job(body: JobIn, user: dict = Depends(get_current_user)):
     return {"ok": True, **job, "score": s, "score_reasons": reasons, "score_via": via}
 
 
-@app.post("/api/v1/jobs/discover")
-def discover(body: DiscoverIn, user: dict = Depends(get_current_user)):
-    """从 ATS 公开 API 批量抓取职位，去重入库并打分。"""
-    uid = user["app_user_id"]
+class SourceIn(BaseModel):
+    type: str  # greenhouse | lever
+    key: str   # board token / 公司名
+
+
+@app.get("/api/v1/sources")
+def get_sources(user: dict = Depends(get_current_user)):
+    return {"sources": db.list_sources(user["app_user_id"])}
+
+
+@app.post("/api/v1/sources")
+def add_source(body: SourceIn, user: dict = Depends(get_current_user)):
+    try:
+        return db.add_source(user["app_user_id"], body.type, body.key)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+@app.delete("/api/v1/sources/{sid}")
+def delete_source(sid: int, user: dict = Depends(get_current_user)):
+    if not db.remove_source(user["app_user_id"], sid):
+        raise HTTPException(404, "source not found")
+    return {"ok": True}
+
+
+def _run_discover(uid: str, sources: list, limit: int = 100) -> dict:
+    """从来源抓取职位入库并打分，返回 {seen, new}。"""
     profile = db.get_profile(uid)
     if not profile:
         raise HTTPException(400, "profile not found, sync profile first")
     total_new, total_seen = 0, 0
-    for src in body.sources:
+    for src in sources:
         try:
-            postings = ingest.fetch_source(src, body.limit)
-        except Exception as e:
+            postings = ingest.fetch_source(src, limit)
+        except Exception:
             continue
         for p in postings:
             total_seen += 1
@@ -149,7 +172,24 @@ def discover(body: DiscoverIn, user: dict = Depends(get_current_user)):
             if job["is_new"]:
                 total_new += 1
                 score_and_store(uid, job["id"], profile)
-    return {"ok": True, "seen": total_seen, "new": total_new}
+    return {"seen": total_seen, "new": total_new}
+
+
+@app.post("/api/v1/jobs/discover/auto")
+def discover_auto(user: dict = Depends(get_current_user)):
+    """用已保存的职位来源自动抓取（供每天定时任务调用）。"""
+    uid = user["app_user_id"]
+    sources = [{"type": s["type"], "key": s["key"]} for s in db.list_sources(uid)]
+    if not sources:
+        return {"ok": True, "seen": 0, "new": 0, "note": "no sources configured"}
+    return {"ok": True, **_run_discover(uid, sources)}
+
+
+@app.post("/api/v1/jobs/discover")
+def discover(body: DiscoverIn, user: dict = Depends(get_current_user)):
+    """从 ATS 公开 API 批量抓取职位，去重入库并打分。"""
+    uid = user["app_user_id"]
+    return {"ok": True, **_run_discover(uid, body.sources, body.limit)}
 
 
 @app.get("/api/v1/queue")

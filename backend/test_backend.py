@@ -292,3 +292,37 @@ def test_llm_parse_resume_success(monkeypatch):
     monkeypatch.setattr(httpx, "post", lambda *a, **k: FakeResp())
     d = llm_mod.llm_parse_resume("some resume text here " * 10)
     assert d and d["firstName"] == "Alex" and d["email"] == "a@b.com"
+
+
+def test_job_sources():
+    c = _authed_client("srcqa")
+    # 非法类型
+    r = c.post("/api/v1/sources", json={"type": "weird", "key": "x"})
+    assert r.status_code == 400
+    # 添加
+    r = c.post("/api/v1/sources", json={"type": "greenhouse", "key": "openai"})
+    assert r.status_code == 200
+    sid = r.json()["id"]
+    # 重复
+    r = c.post("/api/v1/sources", json={"type": "greenhouse", "key": "openai"})
+    assert r.status_code == 400
+    # 列表
+    ss = c.get("/api/v1/sources").json()["sources"]
+    assert len(ss) == 1 and ss[0]["key"] == "openai"
+    # 隔离：别人看不到
+    c2 = _authed_client("srcqa2")
+    assert c2.get("/api/v1/sources").json()["sources"] == []
+    # 删除
+    assert c.delete(f"/api/v1/sources/{sid}").status_code == 200
+    assert c.get("/api/v1/sources").json()["sources"] == []
+    # 删别人的 → 404
+    r = c.post("/api/v1/sources", json={"type": "lever", "key": "acme"})
+    assert c2.delete(f"/api/v1/sources/{r.json()['id']}").status_code == 404
+
+
+def test_discover_auto_no_sources():
+    c = _authed_client("discauto")
+    c.put("/api/v1/profile", json={"user_id": "x", "profile": {"email": "d@d.com"}})
+    r = c.post("/api/v1/jobs/discover/auto")
+    assert r.status_code == 200
+    assert r.json()["note"] == "no sources configured"

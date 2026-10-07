@@ -43,6 +43,14 @@ CREATE TABLE IF NOT EXISTS applications (
 );
 CREATE INDEX IF NOT EXISTS idx_jobs_user ON jobs(user_id);
 CREATE INDEX IF NOT EXISTS idx_apps_user ON applications(user_id);
+CREATE TABLE IF NOT EXISTS job_sources (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id TEXT NOT NULL,
+  type TEXT NOT NULL,              -- greenhouse | lever
+  key TEXT NOT NULL,               -- board token / 公司名
+  created_at REAL NOT NULL,
+  UNIQUE(user_id, type, key)
+);
 """
 
 
@@ -373,3 +381,41 @@ def claim_old_data(new_app_user_id: str, old_app_user_id: str) -> dict:
         return {"ok": True}
     finally:
         conn.close()
+
+
+# ================= 职位来源 =================
+def add_source(user_id: str, type_: str, key: str) -> dict:
+    type_ = (type_ or "").strip().lower()
+    key = (key or "").strip()
+    if type_ not in ("greenhouse", "lever"):
+        raise ValueError("type 仅支持 greenhouse / lever")
+    if not key or len(key) > 128:
+        raise ValueError("key 无效")
+    conn = get_db()
+    try:
+        cur = conn.execute(
+            "INSERT INTO job_sources (user_id, type, key, created_at) VALUES (?,?,?,?)",
+            (user_id, type_, key, time.time()))
+        conn.commit()
+        return {"id": cur.lastrowid, "type": type_, "key": key}
+    except sqlite3.IntegrityError:
+        raise ValueError("该来源已添加")
+    finally:
+        conn.close()
+
+
+def list_sources(user_id: str) -> list:
+    conn = get_db()
+    rows = conn.execute(
+        "SELECT id, type, key, created_at FROM job_sources WHERE user_id=? ORDER BY id",
+        (user_id,)).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def remove_source(user_id: str, source_id: int) -> bool:
+    conn = get_db()
+    cur = conn.execute("DELETE FROM job_sources WHERE id=? AND user_id=?", (source_id, user_id))
+    conn.commit()
+    conn.close()
+    return cur.rowcount > 0

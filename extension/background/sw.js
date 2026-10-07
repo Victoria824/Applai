@@ -163,7 +163,9 @@ async function runDailyQueue(trigger) {
 
   let queue;
   try {
-    const data = await apiGet(`/api/v1/queue?user_id=${encodeURIComponent(userId)}&top_n=${s.dailyCount}`);
+    // 先按用户保存的来源自动抓取新职位（失败不影响本次投递）
+    try { await apiPost('/api/v1/jobs/discover/auto', {}); } catch (e) { /* best effort */ }
+    const data = await apiGet(`/api/v1/queue?top_n=${s.dailyCount}`);
     queue = data.jobs || [];
   } catch (e) {
     await pushViaNtfy('Applai：今日投递失败', `无法连接后端（${s.backendUrl}），请检查后端是否运行`);
