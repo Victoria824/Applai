@@ -111,6 +111,21 @@ async function scheduleDaily() {
   });
 }
 
+/* 定时配置以网页端为准：启动/每小时从后端同步一次，本地做兜底 */
+async function syncScheduleFromBackend() {
+  try {
+    const data = await apiGet('/api/v1/settings');
+    const s = await getSettings();
+    const mapped = {
+      scheduleEnabled: !!data.schedule_enabled,
+      scheduleTime: data.schedule_time || s.scheduleTime,
+      dailyCount: data.daily_count || s.dailyCount,
+    };
+    await chrome.storage.local.set({ aap_settings: { ...s, ...mapped } });
+    await scheduleDaily();
+  } catch (e) { /* 后端不可达时沿用本地配置 */ }
+}
+
 chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name === 'daily-apply') runDailyQueue('schedule');
 });
@@ -267,7 +282,13 @@ chrome.runtime.onInstalled.addListener(() => {
   chrome.storage.local.get(['aap_settings'], (cur) => {
     if (!cur.aap_settings) chrome.storage.local.set({ aap_settings: { ...DEFAULTS } });
   });
-  scheduleDaily();
+  syncScheduleFromBackend();
+  // 每小时同步一次网页端的定时配置
+  chrome.alarms.create('sync-settings', { periodInMinutes: 60 });
 });
 
-chrome.runtime.onStartup.addListener(() => scheduleDaily());
+chrome.runtime.onStartup.addListener(() => syncScheduleFromBackend());
+
+chrome.alarms.onAlarm.addListener((alarm) => {
+  if (alarm.name === 'sync-settings') syncScheduleFromBackend();
+});

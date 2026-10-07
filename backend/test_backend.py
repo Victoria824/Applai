@@ -325,4 +325,46 @@ def test_discover_auto_no_sources():
     c.put("/api/v1/profile", json={"user_id": "x", "profile": {"email": "d@d.com"}})
     r = c.post("/api/v1/jobs/discover/auto")
     assert r.status_code == 200
-    assert r.json()["note"] == "no sources configured"
+    d = r.json()
+    assert d["mode"] == "manual_only" and d["new"] == 0  # 无关键词→不抓取
+
+
+def test_settings():
+    c = _authed_client("setqa")
+    s = c.get("/api/v1/settings").json()
+    assert s["schedule_time"] == "08:00" and s["daily_count"] == 10
+    r = c.put("/api/v1/settings", json={"schedule_enabled": True, "schedule_time": "09:30", "daily_count": 5})
+    assert r.status_code == 200
+    s = c.get("/api/v1/settings").json()
+    assert s["schedule_enabled"] == 1 and s["schedule_time"] == "09:30" and s["daily_count"] == 5
+    # 非法时间
+    assert c.put("/api/v1/settings", json={"schedule_time": "nope"}).status_code == 400
+    # 隔离
+    c2 = _authed_client("setqa2")
+    assert c2.get("/api/v1/settings").json()["schedule_time"] == "08:00"
+
+
+def test_keywords_fallback_no_llm():
+    c = _authed_client("kwqa")
+    c.put("/api/v1/profile", json={"user_id": "x", "profile": {"targetTitles": ["AI Engineer", "ML Engineer"]}})
+    # 无 LLM key 时走画像兜底
+    r = c.get("/api/v1/settings/keywords")
+    assert r.status_code == 200
+    assert "AI Engineer" in r.json()["keywords"]
+
+
+def test_chat_validation():
+    c = _authed_client("chatqa")
+    assert c.post("/api/v1/chat", json={"message": ""}).status_code == 400
+
+
+def test_push_subscribe():
+    c = _authed_client("pushqa")
+    r = c.post("/api/v1/push/subscribe", json={
+        "endpoint": "https://fcm.googleapis.com/fcm/send/abc",
+        "p256dh": "k1", "auth": "a1"})
+    assert r.status_code == 200
+    # 非 https 拒绝
+    r = c.post("/api/v1/push/subscribe", json={
+        "endpoint": "http://x", "p256dh": "k", "auth": "a"})
+    assert r.status_code == 400

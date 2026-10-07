@@ -118,92 +118,189 @@ input:focus, select:focus, textarea:focus{outline:none; border-color:var(--accen
 details summary{font-weight:600;}
 #claimInput{transition:border-color .15s, box-shadow .15s;}
 @media (min-width:640px){ .stats{gap:14px;} main{padding:20px 20px 80px;} }
+
+.layout{display:flex; max-width:1060px; margin:0 auto; align-items:flex-start; gap:4px;}
+#sidenav{position:sticky; top:84px; width:196px; flex-shrink:0; background:var(--card);
+  border-radius:var(--radius); box-shadow:var(--shadow); padding:10px; margin:16px 0 0 16px;
+  display:flex; flex-direction:column; gap:2px;}
+#sidenav button{display:flex; align-items:center; gap:10px; width:100%; text-align:left;
+  border:none; background:transparent; padding:11px 13px; font-size:14px; border-radius:12px;
+  box-shadow:none; color:var(--ink); position:relative;}
+#sidenav button.on{background:var(--accent-soft); color:var(--accent-dark);}
+#sidenav button span{font-weight:600;}
+.nbadge{position:absolute; top:6px; right:8px; min-width:20px; height:20px; padding:0 6px;
+  background:var(--orange); color:#fff; font-size:11px; font-weight:800; font-style:normal;
+  border-radius:999px; display:flex; align-items:center; justify-content:center;}
+.page{display:none;}
+.page.on{display:block; animation:fadein .18s ease;}
+@keyframes fadein{from{opacity:0; transform:translateY(4px);} to{opacity:1; transform:none;}}
+.chat-card{overflow:hidden;}
+.chat-head{font-weight:800; font-size:15px; display:flex; align-items:center; gap:8px; margin-bottom:4px;}
+#chatMsgs{max-height:52vh; overflow-y:auto; display:flex; flex-direction:column; gap:10px;
+  margin:12px 0; padding:4px 2px;}
+.msg{max-width:88%; padding:11px 15px; border-radius:16px; font-size:14px; line-height:1.65;
+  word-break:break-word; white-space:pre-wrap;}
+.msg.user{align-self:flex-end; background:linear-gradient(135deg,var(--accent),var(--accent-dark));
+  color:#fff; border-bottom-right-radius:6px;}
+.msg.bot{align-self:flex-start; background:var(--gray-bg); color:var(--ink); border-bottom-left-radius:6px;}
+.msg.bot.typing{opacity:.55;}
+.chat-input{display:flex; gap:8px;}
+.chat-input input{flex:1; font-size:15px; padding:11px 14px; border:1px solid var(--line);
+  border-radius:999px; background:#f8fafc;}
+.chips{display:flex; gap:8px; flex-wrap:wrap; margin:2px 0 10px;}
+.chips button{font-size:12px; padding:7px 14px; box-shadow:none;}
+@media (max-width:760px){
+  .layout{display:block;}
+  #sidenav{position:fixed; bottom:0; left:0; right:0; top:auto; width:auto; margin:0;
+    border-radius:20px 20px 0 0; flex-direction:row; overflow-x:auto; padding:8px 6px calc(10px + env(safe-area-inset-bottom));
+    z-index:30; box-shadow:0 -8px 30px rgba(15,23,42,.15);}
+  #sidenav button{flex-direction:column; gap:3px; padding:8px 4px; min-width:62px; font-size:18px;}
+  #sidenav button span{font-size:10px;}
+  .nbadge{top:2px; right:12px;}
+  main{padding-bottom:120px !important;}
+  #meInfo{display:none;}
+}
 </style>
 </head>
 <body>
 <header>
   <h1>Applai</h1>
-  <span class="sub">投递控制台</span>
+  <span class="sub">求职控制台</span>
   <span style="flex:1"></span>
   <span id="llmBadge" class="badge llm-off">LLM …</span>
+  <span id="meInfo" style="font-size:13px;opacity:.85;font-weight:600">…</span>
+  <button id="logoutBtn" style="background:rgba(255,255,255,.14);border:1px solid rgba(255,255,255,.25);color:#fff;font-size:12px;padding:7px 14px;box-shadow:none">退出</button>
 </header>
+<div class="layout">
+<nav id="sidenav">
+  <button data-page="home" class="on">🏠<span>首页</span></button>
+  <button data-page="profile">👤<span>画像</span></button>
+  <button data-page="sources">🏢<span>来源</span></button>
+  <button data-page="queue">📋<span>队列</span></button>
+  <button data-page="manual">⚠️<span>待人工</span><i id="navManualBadge" class="nbadge" style="display:none"></i></button>
+  <button data-page="history">🗂️<span>历史</span></button>
+  <button data-page="schedule">⏰<span>定时</span></button>
+  <button data-page="connect">🔌<span>插件</span></button>
+</nav>
 <main>
   <div id="err" class="err"></div>
   <div id="toast" class="toast"></div>
 
-  <div class="bar">
-    <span id="meInfo" style="font-size:14px;color:var(--muted)">加载中…</span>
-    <span style="flex:1"></span>
-    <button id="refreshBtn" class="primary">刷新</button>
-    <button id="logoutBtn">退出</button>
-  </div>
-
-  <h2 class="sec-head">👤 求职画像 <button id="pfEditBtn">编辑</button></h2>
-  <div class="card">
-    <div id="pfView" class="pf-view"><div class="loading">加载中…</div></div>
-    <div id="pfForm" class="pf-form" style="display:none"></div>
-    <div class="actions" id="pfActions" style="display:none">
-      <button class="primary" id="pfSaveBtn">保存画像</button>
-      <button id="pfCancelBtn">取消</button>
-    </div>
-    <div class="hint" id="pfResumeHint"></div>
-  </div>
-
-  <div class="stats" id="stats"></div>
-
-  <h2>🏢 职位来源</h2>
-  <div class="card">
-    <div class="hint" style="margin:0 0 10px">添加公司招聘页，Applai 会每天自动抓取新职位并打分。Greenhouse 填 board 名（如在 <span style="font-family:monospace">boards.greenhouse.io/<b>openai</b></span> 中就是 openai）；Lever 填公司名（如 <span style="font-family:monospace"><b>lever</b>.co</span> 子域名）。</div>
-    <div style="display:flex;gap:8px;flex-wrap:wrap">
-      <select id="srcType" style="font-size:14px;padding:9px 10px;border:1px solid var(--line);border-radius:12px">
-        <option value="greenhouse">Greenhouse</option>
-        <option value="lever">Lever</option>
-      </select>
-      <input id="srcKey" placeholder="board 名 / 公司名" style="flex:1;min-width:140px;font-size:14px;padding:9px 12px;border:1px solid var(--line);border-radius:12px">
-      <button class="primary" id="srcAddBtn">添加</button>
-    </div>
-    <div id="srcList" style="margin-top:6px"><div class="loading">加载中…</div></div>
-    <div class="actions" style="margin-top:10px">
-      <button class="primary" id="srcFetchBtn">立即抓取新职位</button>
-    </div>
-    <div class="hint" id="srcStatus"></div>
-  </div>
-
-  <h2>📋 今日队列 <span class="count" id="queueCount"></span></h2>
-  <div id="queue"><div class="loading">加载中…</div></div>
-
-  <h2>⚠️ 待人工处理 <span class="count" id="manualCount"></span></h2>
-  <div id="manual"><div class="loading">加载中…</div></div>
-
-  <h2>🗂️ 申请历史</h2>
-  <div id="history"><div class="loading">加载中…</div></div>
-
-  <h2>🔌 连接插件</h2>
-  <div class="card">
-    <div class="hint" style="margin:0 0 10px">点一下，Token 自动传进已安装的 Chrome 插件，无需复制粘贴。</div>
-    <div class="actions" style="margin-top:0">
-      <button class="primary" id="oneClickConnect">一键连接插件</button>
-    </div>
-    <div class="hint" id="connectStatus"></div>
-    <details style="margin-top:10px">
-      <summary style="font-size:13px;color:var(--muted);cursor:pointer">手动方式（复制 Token）</summary>
-      <div style="margin-top:8px">
-        <div class="actions" style="margin-top:0"><button id="tokenNewBtn">新建 Token</button></div>
-        <div id="tokenNew" style="display:none;margin:8px 0"></div>
-        <div id="tokenList"><div class="loading">加载中…</div></div>
+  <section class="page on" id="page-home">
+    <div class="stats" id="stats"></div>
+    <div class="card chat-card">
+      <div class="chat-head">💬 求职助手 <span class="hint" style="margin:0">问我投递进展、职位分析、面试建议</span></div>
+      <div id="chatMsgs"></div>
+      <div class="chips" id="chatChips"></div>
+      <div class="chat-input">
+        <input id="chatInput" placeholder="比如：今天投了几个？待人工的那个职位要求什么？" maxlength="500">
+        <button class="primary" id="chatSend">发送</button>
       </div>
-    </details>
-  </div>
-
-  <h2>📦 认领旧数据</h2>
-  <div class="card">
-    <div class="hint" style="margin:0 0 8px">如果你之前用插件（无账号时代）投过，旧数据存在旧用户 ID 下。在插件 popup「设置」→「用户 ID」复制它，粘贴到这里认领到当前账号。</div>
-    <div style="display:flex;gap:8px">
-      <input id="claimInput" placeholder="旧用户 ID，如 u_ab12cd34" style="flex:1;font-size:14px;padding:9px 10px;border:1px solid var(--line);border-radius:10px">
-      <button class="primary" id="claimBtn">认领</button>
     </div>
-  </div>
+  </section>
+
+  <section class="page" id="page-profile">
+    <div class="sec-head"><h2 style="margin:0">👤 求职画像</h2><button id="pfEditBtn">编辑</button></div>
+    <div class="card" style="margin-top:12px">
+      <div id="pfView" class="pf-view"><div class="loading">加载中…</div></div>
+      <div id="pfForm" class="pf-form" style="display:none"></div>
+      <div class="actions" id="pfActions" style="display:none">
+        <button class="primary" id="pfSaveBtn">保存画像</button>
+        <button id="pfCancelBtn">取消</button>
+      </div>
+      <div class="hint" id="pfResumeHint"></div>
+    </div>
+  </section>
+
+  <section class="page" id="page-sources">
+    <h2>🏢 职位来源</h2>
+    <div class="card">
+      <div class="hint" style="margin:0 0 10px">💡 <b>智能模式已开启</b>：每天自动按你的画像生成搜索关键词，全网抓取匹配职位。下面是额外手动添加的公司（可选）。</div>
+      <div class="hint" style="margin:0 0 10px" id="kwNote"></div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <select id="srcType" style="font-size:14px;padding:9px 10px;border:1px solid var(--line);border-radius:12px">
+          <option value="greenhouse">Greenhouse</option>
+          <option value="lever">Lever</option>
+        </select>
+        <input id="srcKey" placeholder="board 名 / 公司名" style="flex:1;min-width:140px;font-size:14px;padding:9px 12px;border:1px solid var(--line);border-radius:12px">
+        <button class="primary" id="srcAddBtn">添加</button>
+      </div>
+      <div id="srcList" style="margin-top:6px"><div class="loading">加载中…</div></div>
+      <div class="actions" style="margin-top:10px">
+        <button class="primary" id="srcFetchBtn">立即抓取新职位</button>
+        <button id="kwRefreshBtn">重新生成关键词</button>
+      </div>
+      <div class="hint" id="srcStatus"></div>
+    </div>
+  </section>
+
+  <section class="page" id="page-queue">
+    <div class="sec-head"><h2 style="margin:0">📋 今日队列</h2><span class="count" id="queueCount"></span><button id="refreshBtn">刷新</button></div>
+    <div id="queue" style="margin-top:12px"><div class="loading">加载中…</div></div>
+  </section>
+
+  <section class="page" id="page-manual">
+    <h2>⚠️ 待人工处理 <span class="count" id="manualCount"></span></h2>
+    <div id="manual"><div class="loading">加载中…</div></div>
+  </section>
+
+  <section class="page" id="page-history">
+    <h2>🗂️ 申请历史</h2>
+    <div id="history"><div class="loading">加载中…</div></div>
+  </section>
+
+  <section class="page" id="page-schedule">
+    <h2>⏰ 定时投递</h2>
+    <div class="card">
+      <div class="hint" style="margin:0 0 10px">在这里调整，插件会自动同步（保持 Chrome 开着即可）。</div>
+      <label class="check" style="display:flex;align-items:center;gap:10px;font-size:15px;font-weight:600;margin:6px 0 14px">
+        <input type="checkbox" id="schEnabled" style="width:20px;height:20px;accent-color:var(--accent)"> 每天自动投递
+      </label>
+      <div style="display:flex;gap:16px;flex-wrap:wrap">
+        <label style="font-size:13px;color:var(--muted);font-weight:600">开始时间<br>
+          <input type="time" id="schTime" value="08:00" style="font-size:16px;padding:9px 12px;border:1px solid var(--line);border-radius:12px;margin-top:4px"></label>
+        <label style="font-size:13px;color:var(--muted);font-weight:600">每天份数<br>
+          <input type="number" id="schCount" value="10" min="1" max="30" style="font-size:16px;padding:9px 12px;border:1px solid var(--line);border-radius:12px;margin-top:4px;width:100px"></label>
+      </div>
+      <div class="actions"><button class="primary" id="schSave">保存设置</button></div>
+      <div class="hint" id="schStatus"></div>
+    </div>
+    <h2>🔔 手机通知</h2>
+    <div class="card">
+      <div class="hint" style="margin:0 0 10px">不用装 App：点一下订阅，有验证码需要处理时手机浏览器直接弹窗提醒（iPhone 需先"添加到主屏幕"）。</div>
+      <div class="actions" style="margin-top:0"><button class="primary" id="pushBtn">开启手机通知</button></div>
+      <div class="hint" id="pushStatus"></div>
+    </div>
+  </section>
+
+  <section class="page" id="page-connect">
+    <h2>🔌 连接插件</h2>
+    <div class="card">
+      <div class="hint" style="margin:0 0 10px">点一下，Token 自动传进已安装的 Chrome 插件，无需复制粘贴。</div>
+      <div class="actions" style="margin-top:0">
+        <button class="primary" id="oneClickConnect">一键连接插件</button>
+      </div>
+      <div class="hint" id="connectStatus"></div>
+      <details style="margin-top:10px">
+        <summary style="font-size:13px;color:var(--muted);cursor:pointer">手动方式（复制 Token）</summary>
+        <div style="margin-top:8px">
+          <div class="actions" style="margin-top:0"><button id="tokenNewBtn">新建 Token</button></div>
+          <div id="tokenNew" style="display:none;margin:8px 0"></div>
+          <div id="tokenList"><div class="loading">加载中…</div></div>
+        </div>
+      </details>
+    </div>
+    <h2>📦 认领旧数据</h2>
+    <div class="card">
+      <div class="hint" style="margin:0 0 8px">如果你之前用插件（无账号时代）投过，旧数据存在旧用户 ID 下。在插件 popup「设置」→「用户 ID」复制它，粘贴到这里认领到当前账号。</div>
+      <div style="display:flex;gap:8px">
+        <input id="claimInput" placeholder="旧用户 ID，如 u_ab12cd34" style="flex:1;font-size:14px;padding:9px 10px;border:1px solid var(--line);border-radius:10px">
+        <button class="primary" id="claimBtn">认领</button>
+      </div>
+    </div>
+  </section>
 </main>
+</div>
 
 <script>
 const $ = (id) => document.getElementById(id);
@@ -699,6 +796,176 @@ $("claimBtn").onclick = async () => {
   } catch (e) { showErr("认领失败：" + e.message); }
 };
 loadTokens();
+
+/* ---------- 侧边导航 ---------- */
+function showPage(name) {
+  document.querySelectorAll("#sidenav button[data-page]").forEach((b) =>
+    b.classList.toggle("on", b.dataset.page === name));
+  document.querySelectorAll(".page").forEach((p) =>
+    p.classList.toggle("on", p.id === "page-" + name));
+  window.scrollTo({ top: 0 });
+  try { localStorage.setItem("applai_page", name); } catch (e) {}
+}
+document.querySelectorAll("#sidenav button[data-page]").forEach((b) =>
+  b.addEventListener("click", () => showPage(b.dataset.page)));
+
+/* ---------- 聊天助手 ---------- */
+let chatHistory = [];
+const CHAT_SUGGEST = ["今天投了几个？", "待人工的职位是什么情况？", "队列里分数最高的职位要求什么？", "给我些面试建议"];
+function renderChips() {
+  $("chatChips").innerHTML = CHAT_SUGGEST.map((s) =>
+    `<button data-q="${esc(s)}">${esc(s)}</button>`).join("");
+}
+$("chatChips").addEventListener("click", (e) => {
+  const b = e.target.closest("button[data-q]");
+  if (b) { $("chatInput").value = b.dataset.q; sendChat(); }
+});
+function addMsg(role, text) {
+  const d = document.createElement("div");
+  d.className = "msg " + role;
+  d.textContent = text;
+  $("chatMsgs").appendChild(d);
+  $("chatMsgs").scrollTop = $("chatMsgs").scrollHeight;
+  return d;
+}
+async function sendChat() {
+  const input = $("chatInput");
+  const text = input.value.trim();
+  if (!text) return;
+  input.value = "";
+  addMsg("user", text);
+  const typing = addMsg("bot", "思考中…");
+  typing.classList.add("typing");
+  try {
+    const d = await api("/api/v1/chat", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ message: text, history: chatHistory.slice(-8) })
+    });
+    typing.classList.remove("typing");
+    typing.textContent = d.reply;
+    chatHistory.push({ role: "user", content: text }, { role: "assistant", content: d.reply });
+  } catch (e) {
+    typing.classList.remove("typing");
+    typing.textContent = "出错了：" + e.message;
+  }
+}
+$("chatSend").onclick = sendChat;
+$("chatInput").addEventListener("keydown", (e) => { if (e.key === "Enter") sendChat(); });
+
+/* ---------- 定时设置 ---------- */
+async function loadSchedule() {
+  try {
+    const s = await api("/api/v1/settings");
+    $("schEnabled").checked = !!s.schedule_enabled;
+    $("schTime").value = s.schedule_time || "08:00";
+    $("schCount").value = s.daily_count || 10;
+    const k = await api("/api/v1/settings/keywords").catch(() => null);
+    if (k && k.keywords && k.keywords.length) {
+      $("kwNote").innerHTML = "🧠 当前搜索关键词（按画像自动生成，每周更新）：<b>" +
+        k.keywords.map(esc).join("</b>、<b>") + "</b>" + (k.note ? `<br><span>${esc(k.note)}</span>` : "");
+    }
+  } catch (e) { /* 忽略 */ }
+}
+$("schSave").onclick = async () => {
+  clearErr();
+  try {
+    await api("/api/v1/settings", {
+      method: "PUT", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        schedule_enabled: $("schEnabled").checked,
+        schedule_time: $("schTime").value,
+        daily_count: Number($("schCount").value)
+      })
+    });
+    $("schStatus").textContent = "已保存，插件下次启动时自动同步 ✓";
+    toast("定时设置已保存 ✓");
+  } catch (e) { showErr("保存失败：" + e.message); }
+};
+$("kwRefreshBtn").onclick = async () => {
+  clearErr();
+  $("srcStatus").textContent = "正在按画像重新生成关键词…";
+  try {
+    const k = await api("/api/v1/settings/keywords/refresh", { method: "POST" });
+    $("srcStatus").textContent = "";
+    toast("关键词已更新 ✓");
+    await loadSchedule();
+  } catch (e) { $("srcStatus").textContent = ""; showErr("生成失败：" + e.message); }
+};
+
+/* ---------- 手机通知（Web Push） ---------- */
+function urlB64ToU8(s) {
+  const pad = "=".repeat((4 - (s.length % 4)) % 4);
+  const b64 = (s + pad).replace(/-/g, "+").replace(/_/g, "/");
+  const raw = atob(b64);
+  return Uint8Array.from([...raw].map((c) => c.charCodeAt(0)));
+}
+async function initPush() {
+  if (!("serviceWorker" in navigator) || !("PushManager" in window)) {
+    $("pushStatus").textContent = "当前浏览器不支持推送（请用 Chrome / Edge / Safari 16.4+）";
+    $("pushBtn").style.display = "none";
+    return;
+  }
+  try {
+    const reg = await navigator.serviceWorker.register("/dashboard/sw.js", { scope: "/dashboard/" });
+    const sub = await reg.pushManager.getSubscription();
+    if (sub) {
+      $("pushBtn").textContent = "已开启 ✓（点此关闭）";
+      $("pushBtn").onclick = async () => {
+        await api("/api/v1/push/unsubscribe", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ endpoint: sub.endpoint })
+        }).catch(() => {});
+        await sub.unsubscribe();
+        location.reload();
+      };
+      return;
+    }
+  } catch (e) { $("pushStatus").textContent = "ServiceWorker 注册失败：" + e.message; return; }
+  $("pushBtn").onclick = async () => {
+    try {
+      const { publicKey } = await api("/api/v1/push/vapid-public-key");
+      const reg = await navigator.serviceWorker.ready;
+      const sub = await reg.pushManager.subscribe({
+        userVisibleOnly: true, applicationServerKey: urlB64ToU8(publicKey)
+      });
+      const kj = sub.toJSON().keys;
+      await api("/api/v1/push/subscribe", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ endpoint: sub.endpoint, p256dh: kj.p256dh, auth: kj.auth })
+      });
+      toast("手机通知已开启 ✓");
+      location.reload();
+    } catch (e) {
+      $("pushStatus").textContent = "开启失败：" + e.message + "（请允许通知权限后重试）";
+    }
+  };
+}
+
+// 待人工 badge
+const _origLoadApps = loadApps;
+loadApps = async function () {
+  await _origLoadApps();
+  try {
+    const uid = encodeURIComponent(userId());
+    const apps = (await api(`/api/v1/applications?user_id=${uid}`)).applications || [];
+    const n = apps.filter((a) => a.status === "needs_manual").length;
+    const b = $("navManualBadge");
+    b.style.display = n ? "flex" : "none";
+    b.textContent = n > 99 ? "99+" : n;
+  } catch (e) {}
+};
+
+// 初始化
+renderChips();
+addMsg("bot", "你好！我是你的求职助手 💼\n我知道你的画像、投递进度和所有 JD。可以问我：今天投了几个？待人工的职位什么情况？队列里最高分的职位要求什么？");
+try {
+  const savedPage = localStorage.getItem("applai_page");
+  if (savedPage && document.getElementById("page-" + savedPage)) showPage(savedPage);
+} catch (e) {}
+loadSchedule();
+initPush();
+loadTokens();
+
 </script>
 </body>
 </html>

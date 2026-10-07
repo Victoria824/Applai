@@ -3,6 +3,7 @@
 运行：cd backend && pip install -r requirements.txt && uvicorn app:app --port 8000
 """
 import os
+import re
 import time
 from pathlib import Path
 
@@ -153,6 +154,22 @@ def delete_source(sid: int, user: dict = Depends(get_current_user)):
     return {"ok": True}
 
 
+def _keywords_for(uid: str, profile: dict) -> tuple[list, str]:
+    """获取搜索关键词：缓存有效直接用，否则 LLM 生成，失败用画像目标职位兜底。"""
+    st = db.get_settings(uid)
+    kws, note, updated = st.get("job_keywords") or [], st.get("keywords_note") or "", st.get("keywords_updated") or 0
+    if kws and time.time() - updated < 7 * 86400:
+        return kws, note
+    import llm as llm_mod
+    gen = llm_mod.llm_job_keywords(profile)
+    if gen and gen.get("keywords"):
+        db.update_settings(uid, job_keywords=gen["keywords"],
+                           keywords_note=gen.get("note", ""), keywords_updated=time.time())
+        return gen["keywords"], gen.get("note", "")
+    fallback = [t for t in (profile.get("targetTitles") or []) if t]
+    return fallback, ""
+
+
 def _run_discover(uid: str, sources: list, limit: int = 100) -> dict:
     """从来源抓取职位入库并打分，返回 {seen, new}。"""
     profile = db.get_profile(uid)
@@ -175,14 +192,89 @@ def _run_discover(uid: str, sources: list, limit: int = 100) -> dict:
     return {"seen": total_seen, "new": total_new}
 
 
+def _run_smart_discover(uid: str, limit: int = 60) -> dict:
+    """智能模式：LLM 按画像生成关键词 → 免费聚合源全网搜索 → 入库打分。手动来源照常抓取。"""
+    profile = db.get_profile(uid)
+    if not profile:
+        raise HTTPException(400, "profile not found, sync profile first")
+    manual = [{"type": s["type"], "key": s["key"]} for s in db.list_sources(uid)]
+    out = _run_discover(uid, manual, limit) if manual else {"seen": 0, "new": 0}
+    kws, note = _keywords_for(uid, profile)
+    if not kws:
+        return {**out, "keywords": [], "mode": "manual_only"}
+    agg_new, agg_seen = 0, 0
+    for fetcher in (ingest.fetch_arbeitnow, ingest.fetch_remotive):
+        try:
+            postings = fetcher(kws, limit)
+        except Exception:
+            continue
+        for p in postings:
+            agg_seen += 1
+            job = db.add_job(uid, p["url"], p["title"], p["company"],
+                             p["location"], source=p["source"], raw=p["raw"],
+                             description=p.get("description", ""))
+            if job["is_new"]:
+                agg_new += 1
+                score_and_store(uid, job["id"], profile)
+    return {"seen": out["seen"] + agg_seen, "new": out["new"] + agg_new,
+            "keywords": kws, "note": note, "mode": "smart"}
+
+
 @app.post("/api/v1/jobs/discover/auto")
 def discover_auto(user: dict = Depends(get_current_user)):
-    """用已保存的职位来源自动抓取（供每天定时任务调用）。"""
+    """智能抓取（供每天定时任务调用）：手动来源 + LLM 关键词全网聚合源。"""
     uid = user["app_user_id"]
-    sources = [{"type": s["type"], "key": s["key"]} for s in db.list_sources(uid)]
-    if not sources:
-        return {"ok": True, "seen": 0, "new": 0, "note": "no sources configured"}
-    return {"ok": True, **_run_discover(uid, sources)}
+    return {"ok": True, **_run_smart_discover(uid)}
+
+
+@app.get("/api/v1/settings")
+def get_user_settings(user: dict = Depends(get_current_user)):
+    st = db.get_settings(user["app_user_id"])
+    st.pop("job_keywords", None)  # 关键词走专属接口
+    return st
+
+
+class SettingsIn(BaseModel):
+    schedule_enabled: bool | None = None
+    schedule_time: str | None = None
+    daily_count: int | None = None
+
+
+@app.put("/api/v1/settings")
+def put_user_settings(body: SettingsIn, user: dict = Depends(get_current_user)):
+    kw = {}
+    if body.schedule_enabled is not None:
+        kw["schedule_enabled"] = body.schedule_enabled
+    if body.schedule_time is not None:
+        if not re.match(r"^\d{2}:\d{2}$", body.schedule_time):
+            raise HTTPException(400, "schedule_time 格式应为 HH:MM")
+        kw["schedule_time"] = body.schedule_time
+    if body.daily_count is not None:
+        kw["daily_count"] = max(1, min(30, int(body.daily_count)))
+    st = db.update_settings(user["app_user_id"], **kw)
+    st.pop("job_keywords", None)
+    return st
+
+
+@app.get("/api/v1/settings/keywords")
+def get_keywords(user: dict = Depends(get_current_user)):
+    uid = user["app_user_id"]
+    kws, note = _keywords_for(uid, db.get_profile(uid) or {})
+    return {"keywords": kws, "note": note}
+
+
+@app.post("/api/v1/settings/keywords/refresh")
+def refresh_keywords(user: dict = Depends(get_current_user)):
+    """强制重新生成关键词（画像大改后调用）。"""
+    uid = user["app_user_id"]
+    import llm as llm_mod
+    profile = db.get_profile(uid) or {}
+    gen = llm_mod.llm_job_keywords(profile)
+    if gen and gen.get("keywords"):
+        db.update_settings(uid, job_keywords=gen["keywords"],
+                           keywords_note=gen.get("note", ""), keywords_updated=time.time())
+        return {"keywords": gen["keywords"], "note": gen.get("note", "")}
+    raise HTTPException(502, "关键词生成失败，请稍后重试")
 
 
 @app.post("/api/v1/jobs/discover")
@@ -213,7 +305,15 @@ def get_queue(user: dict = Depends(get_current_user), top_n: int = 10):
 def post_application(body: ApplicationIn, user: dict = Depends(get_current_user)):
     if body.status not in ("queued", "filled", "submitted", "needs_manual", "failed", "skipped"):
         raise HTTPException(400, "invalid status")
-    db.record_application(user["app_user_id"], body.job_id, body.status, body.detail)
+    uid = user["app_user_id"]
+    db.record_application(uid, body.job_id, body.status, body.detail)
+    if body.status == "needs_manual":
+        try:
+            job = db.get_job(body.job_id) or {}
+            send_web_push(uid, "Applai：有职位需要人工处理",
+                          f"{job.get('title', '')} @ {job.get('company', '')} — {body.detail[:80]}")
+        except Exception:
+            pass
     return {"ok": True}
 
 
@@ -334,6 +434,130 @@ async def resume_parse(file: UploadFile = File(...), user: dict = Depends(get_cu
     return {"fields": out, "chars": len(text)}
 
 
+# ---------- 聊天助手 ----------
+class ChatIn(BaseModel):
+    message: str
+    history: list = Field(default_factory=list)  # [{role, content}]
+
+
+CHAT_SYSTEM = """你是 Applai 的求职助手，一个友好、专业的 AI 顾问。
+你掌握用户求职画像、职位匹配队列、投递进度和职位描述（JD）全文。
+职责：
+1. 回答投递进展问题（如"今天投了几个""哪些要人工处理"），用下面的实时数据回答，不要编造。
+2. 结合 JD 回答更广泛的问题：分析职位要求、对比多个职位、给面试/简历建议、评估匹配度。
+3. 回答简洁，中文为主，关键信息用条列。不要输出 JSON。
+4. 数据里没有的信息要承认不知道，不要 hallucinate。"""
+
+MAX_CTX = 12000
+
+
+@app.post("/api/v1/chat")
+def chat(body: ChatIn, user: dict = Depends(get_current_user)):
+    import llm as llm_mod
+    uid = user["app_user_id"]
+    msg = (body.message or "").strip()[:2000]
+    if not msg:
+        raise HTTPException(400, "message 为空")
+    profile = db.get_profile(uid) or {}
+    stats = db.stats(uid)
+    apps = db.list_applications(uid, 30)
+
+    ctx = []
+    ctx.append("【用户画像】" + llm_mod._profile_text(profile)[:800])
+    ctx.append("【统计】" + str(stats))
+    lines = []
+    for a in apps:
+        lines.append(f"- {a.get('title','?')} @ {a.get('company','?')}：{a.get('status','?')}（{a.get('detail','')[:60]}）")
+    ctx.append("【最近申请】\n" + ("\n".join(lines) if lines else "暂无"))
+
+    # JD 上下文：待人工 + 高分待投递，截断拼接到预算内
+    jd_parts, used = [], sum(len(c) for c in ctx)
+    manual = [a for a in apps if a.get("status") == "needs_manual"][:5]
+    queued_ids = set()
+    try:
+        q = db.list_jobs(uid, 500)
+        done = db.applied_job_ids(uid)
+        for j in sorted([x for x in q if x["id"] not in done],
+                        key=lambda x: x.get("score", 0), reverse=True)[:5]:
+            queued_ids.add(j["id"])
+    except Exception:
+        pass
+    want = {a.get("job_id") for a in manual} | queued_ids
+    for a in apps:
+        jid = a.get("job_id")
+        if jid in want:
+            want.discard(jid)
+            desc = (db.job_description(db.get_job(jid)) or "")[:1500]
+            if desc and used < MAX_CTX:
+                jd_parts.append(f"【JD】{a.get('title')} @ {a.get('company')}：\n{desc}")
+                used += len(jd_parts[-1])
+    if jd_parts:
+        ctx.append("\n\n".join(jd_parts))
+
+    history = []
+    for h in (body.history or [])[-8:]:
+        if isinstance(h, dict) and h.get("role") in ("user", "assistant") and h.get("content"):
+            history.append({"role": h["role"], "content": str(h["content"])[:1500]})
+    history.append({"role": "user", "content": msg})
+
+    reply = llm_mod.llm_chat(CHAT_SYSTEM + "\n\n实时数据：\n" + "\n".join(ctx)[:MAX_CTX], history)
+    if not reply:
+        raise HTTPException(502, "助手暂不可用，请稍后重试")
+    return {"reply": reply}
+
+
+# ---------- Web Push（手机浏览器通知，替代 ntfy App） ----------
+class PushSubIn(BaseModel):
+    endpoint: str
+    p256dh: str
+    auth: str
+
+
+@app.get("/api/v1/push/vapid-public-key")
+def vapid_public_key():
+    pub = os.environ.get("APPLAI_VAPID_PUBLIC_KEY", "").strip()
+    if not pub:
+        raise HTTPException(503, "push not configured")
+    return {"publicKey": pub}
+
+
+@app.post("/api/v1/push/subscribe")
+def push_subscribe(body: PushSubIn, user: dict = Depends(get_current_user)):
+    if not body.endpoint.startswith("https://"):
+        raise HTTPException(400, "endpoint 无效")
+    db.add_push_subscription(user["app_user_id"], body.endpoint, body.p256dh, body.auth)
+    return {"ok": True}
+
+
+@app.post("/api/v1/push/unsubscribe")
+def push_unsubscribe(body: dict, user: dict = Depends(get_current_user)):
+    db.remove_push_subscription(user["app_user_id"], (body or {}).get("endpoint", ""))
+    return {"ok": True}
+
+
+def send_web_push(user_id: str, title: str, body: str):
+    """验证码等事件发生时推送到用户手机浏览器。失败静默（best effort）。"""
+    priv = os.environ.get("APPLAI_VAPID_PRIVATE_KEY", "").strip()
+    if not priv:
+        return
+    try:
+        from pywebpush import webpush, WebPushException
+        import json as _json
+        for sub in db.list_push_subscriptions(user_id):
+            try:
+                webpush(
+                    subscription_info={"endpoint": sub["endpoint"],
+                                       "keys": {"p256dh": sub["p256dh"], "auth": sub["auth"]}},
+                    data=_json.dumps({"title": title, "body": body}),
+                    vapid_private_key=priv,
+                    vapid_claims={"sub": "mailto:applai@localhost"},
+                )
+            except Exception:
+                continue
+    except Exception:
+        pass
+
+
 @app.post("/api/v1/auth/claim")
 def claim_old(user: dict = Depends(get_current_user), body: ClaimIn = None):
     """把插件时代旧 user_id 下的数据迁移到当前账号。"""
@@ -361,6 +585,12 @@ def dashboard_page(request: Request):
         return RedirectResponse("/login")
     html = Path(__file__).parent / "dashboard.html"
     return HTMLResponse(html.read_text(encoding="utf-8"))
+
+
+@app.get("/dashboard/sw.js", include_in_schema=False)
+def dashboard_sw():
+    js = Path(__file__).parent / "dashboard-sw.js"
+    return Response(js.read_text(encoding="utf-8"), media_type="application/javascript")
 
 
 @app.get("/dashboard/manifest.json", include_in_schema=False)

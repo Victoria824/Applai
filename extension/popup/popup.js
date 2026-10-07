@@ -111,7 +111,7 @@ $('btn-run-now').addEventListener('click', async () => {
   });
 });
 
-/* ---------- 定时设置 ---------- */
+/* ---------- 定时设置（以网页端为准，这里修改会同步到后端） ---------- */
 async function saveSchedule() {
   const { aap_settings: s = {} } = await store.get(['aap_settings']);
   const next = {
@@ -122,6 +122,19 @@ async function saveSchedule() {
     backendUrl: $('set-backend').value.trim() || 'https://applai-backend.fly.dev',
   };
   await store.set({ aap_settings: next });
+  // 同步到后端（网页端是同一份配置）
+  try {
+    const r = await fetch(next.backendUrl + '/api/v1/settings', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + (next.apiToken || '') },
+      body: JSON.stringify({
+        schedule_enabled: next.scheduleEnabled,
+        schedule_time: next.scheduleTime,
+        daily_count: next.dailyCount,
+      }),
+    });
+    if (!r.ok) throw new Error('backend ' + r.status);
+  } catch (e) { /* 后端不可达时仅保存本地 */ }
   chrome.runtime.sendMessage({ type: 'AUTOAPPLY_RESCHEDULE' });
   if (next.scheduleEnabled) toast(`已开启：每天 ${next.scheduleTime} 自动投 ${next.dailyCount} 份`);
 }

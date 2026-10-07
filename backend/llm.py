@@ -145,3 +145,74 @@ def llm_parse_resume(text: str, timeout: int = 60) -> dict | None:
         return data if isinstance(data, dict) else None
     except Exception:
         return None
+
+
+KEYWORDS_PROMPT = """你是职业规划师。根据求职者画像，生成用于全网职位搜索的关键词。
+只返回 JSON，不要解释：
+{"keywords": ["具体的职位头衔或技能关键词", "..."], "note": "一句话职业方向总结"}
+
+要求：
+- 5-8 个英文关键词，覆盖目标职位头衔 + 核心技能（如 "AI Engineer", "LLM", "RAG", "PyTorch"）
+- 关键词要具体可搜索，避免过于宽泛的词
+- 参考画像的目标职位、技能、工作经历
+
+求职者画像：
+```
+{profile}
+```
+"""
+
+
+def llm_job_keywords(profile: dict, timeout: int = 60) -> dict | None:
+    """画像 → 搜索关键词；失败返回 None（调用方用画像 targetTitles 兜底）。"""
+    cfg = get_config()
+    if not cfg["api_key"]:
+        return None
+    try:
+        prof = _profile_text(profile)
+        if len(prof.strip()) < 20:
+            return None
+        r = httpx.post(
+            f"{cfg['base_url']}/chat/completions",
+            headers={"Authorization": f"Bearer {cfg['api_key']}", "Content-Type": "application/json"},
+            json={
+                "model": cfg["model"],
+                "messages": [{"role": "user", "content": KEYWORDS_PROMPT.replace("{profile}", prof[:3000])}],
+                "temperature": 0.3,
+                "max_tokens": 400,
+            },
+            timeout=timeout,
+        )
+        r.raise_for_status()
+        data = _extract_json(r.json()["choices"][0]["message"]["content"])
+        if not isinstance(data, dict):
+            return None
+        kws = [str(k) for k in (data.get("keywords") or []) if str(k).strip()][:8]
+        if not kws:
+            return None
+        return {"keywords": kws, "note": str(data.get("note") or "")}
+    except Exception:
+        return None
+
+
+def llm_chat(system: str, messages: list, timeout: int = 90) -> str | None:
+    """通用对话；失败返回 None。messages: [{role, content}]。"""
+    cfg = get_config()
+    if not cfg["api_key"]:
+        return None
+    try:
+        r = httpx.post(
+            f"{cfg['base_url']}/chat/completions",
+            headers={"Authorization": f"Bearer {cfg['api_key']}", "Content-Type": "application/json"},
+            json={
+                "model": cfg["model"],
+                "messages": [{"role": "system", "content": system}] + messages[-10:],
+                "temperature": 0.4,
+                "max_tokens": 1200,
+            },
+            timeout=timeout,
+        )
+        r.raise_for_status()
+        return r.json()["choices"][0]["message"]["content"].strip()
+    except Exception:
+        return None

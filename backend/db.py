@@ -43,6 +43,24 @@ CREATE TABLE IF NOT EXISTS applications (
 );
 CREATE INDEX IF NOT EXISTS idx_jobs_user ON jobs(user_id);
 CREATE INDEX IF NOT EXISTS idx_apps_user ON applications(user_id);
+CREATE TABLE IF NOT EXISTS user_settings (
+  user_id TEXT PRIMARY KEY,
+  job_keywords TEXT DEFAULT '[]',
+  keywords_note TEXT DEFAULT '',
+  keywords_updated REAL DEFAULT 0,
+  schedule_enabled INTEGER DEFAULT 0,
+  schedule_time TEXT DEFAULT '08:00',
+  daily_count INTEGER DEFAULT 10,
+  updated_at REAL NOT NULL
+);
+CREATE TABLE IF NOT EXISTS push_subscriptions (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id TEXT NOT NULL,
+  endpoint TEXT UNIQUE NOT NULL,
+  p256dh TEXT NOT NULL,
+  auth TEXT NOT NULL,
+  created_at REAL NOT NULL
+);
 CREATE TABLE IF NOT EXISTS job_sources (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   user_id TEXT NOT NULL,
@@ -416,6 +434,77 @@ def list_sources(user_id: str) -> list:
 def remove_source(user_id: str, source_id: int) -> bool:
     conn = get_db()
     cur = conn.execute("DELETE FROM job_sources WHERE id=? AND user_id=?", (source_id, user_id))
+    conn.commit()
+    conn.close()
+    return cur.rowcount > 0
+
+
+# ================= 用户设置 =================
+def get_settings(user_id: str) -> dict:
+    conn = get_db()
+    r = conn.execute("SELECT * FROM user_settings WHERE user_id=?", (user_id,)).fetchone()
+    if not r:
+        conn.execute("INSERT INTO user_settings (user_id, updated_at) VALUES (?,?)",
+                     (user_id, time.time()))
+        conn.commit()
+        r = conn.execute("SELECT * FROM user_settings WHERE user_id=?", (user_id,)).fetchone()
+    conn.close()
+    d = dict(r)
+    try:
+        d["job_keywords"] = json.loads(d.get("job_keywords") or "[]")
+    except Exception:
+        d["job_keywords"] = []
+    return d
+
+
+def update_settings(user_id: str, **kw) -> dict:
+    allowed = {"schedule_enabled", "schedule_time", "daily_count",
+               "job_keywords", "keywords_note", "keywords_updated"}
+    sets, vals = [], []
+    for k, v in kw.items():
+        if k not in allowed:
+            continue
+        if k == "job_keywords":
+            v = json.dumps(v or [])
+        if k == "schedule_enabled":
+            v = 1 if v else 0
+        sets.append(f"{k}=?")
+        vals.append(v)
+    if not sets:
+        return get_settings(user_id)
+    get_settings(user_id)  # 确保行存在
+    conn = get_db()
+    conn.execute(f"UPDATE user_settings SET {', '.join(sets)}, updated_at=? WHERE user_id=?",
+                 (*vals, time.time(), user_id))
+    conn.commit()
+    conn.close()
+    return get_settings(user_id)
+
+
+# ================= Web Push 订阅 =================
+def add_push_subscription(user_id: str, endpoint: str, p256dh: str, auth: str):
+    conn = get_db()
+    conn.execute(
+        "INSERT INTO push_subscriptions (user_id, endpoint, p256dh, auth, created_at)"
+        " VALUES (?,?,?,?,?) ON CONFLICT(endpoint) DO UPDATE SET"
+        " user_id=excluded.user_id, p256dh=excluded.p256dh, auth=excluded.auth",
+        (user_id, endpoint, p256dh, auth, time.time()))
+    conn.commit()
+    conn.close()
+
+
+def list_push_subscriptions(user_id: str) -> list:
+    conn = get_db()
+    rows = conn.execute("SELECT endpoint, p256dh, auth FROM push_subscriptions WHERE user_id=?",
+                        (user_id,)).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def remove_push_subscription(user_id: str, endpoint: str) -> bool:
+    conn = get_db()
+    cur = conn.execute("DELETE FROM push_subscriptions WHERE user_id=? AND endpoint=?",
+                       (user_id, endpoint))
     conn.commit()
     conn.close()
     return cur.rowcount > 0
