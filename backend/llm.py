@@ -31,7 +31,7 @@ def _profile_text(p: dict) -> str:
         f"工作年限：{p.get('yearsExperience') or '未填'} 年",
         f"期望地点：{', '.join(p.get('preferredLocations') or []) or '未填'}；远程偏好：{p.get('remotePreference') or 'any'}",
         f"行业偏好：{', '.join(p.get('industries') or []) or '未填'}",
-        f"期望薪资：{(p.get('salaryMin') or '?')}-{(p.get('salaryMax') or '?')} {p.get('salaryCurrency') or ''}".strip(),
+        f"期望薪资：{(p.get('salaryMin') or '?')}{(('-' + str(p.get('salaryMax'))) if p.get('salaryMax') else '+')} {p.get('salaryCurrency') or ''}({'annual' if p.get('salaryPeriod') == 'annual' else 'hourly'})".strip(),
         f"工作许可：{p.get('workAuth') or '未填'}；需签证担保：{'是' if p.get('needsSponsorship') else '否'}",
     ]
     return "\n".join(rows)

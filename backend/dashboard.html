@@ -601,9 +601,11 @@ const PF_FIELDS = [
    options:[["any","不限"],["remote","纯远程"],["hybrid","混合"],["onsite","坐班"]]},
   {k:"preferredLocations", t:"期望地点（逗号分隔）", list:1},
   {k:"salaryMin", t:"薪资下限", type:"number"},
-  {k:"salaryMax", t:"薪资上限", type:"number"},
+  {k:"salaryMax", t:"薪资上限（可空）", type:"number"},
   {k:"salaryCurrency", t:"币种", type:"select",
    options:[["CAD","CAD"],["USD","USD"],["CNY","CNY"]]},
+  {k:"salaryPeriod", t:"计薪周期", type:"select",
+   options:[["hourly","按小时 / Hourly"],["annual","按年 / Annual"]]},
   {k:"workAuth", t:"工作许可"},
   {k:"needsSponsorship", t:"需要雇主担保签证", type:"checkbox"},
   {k:"coverLetter", t:"通用求职信", type:"textarea"},
@@ -630,8 +632,9 @@ function renderPfView(p) {
     return;
   }
   const name = [p.firstName, p.lastName].filter(Boolean).join(" ");
+  const periodZh = p.salaryPeriod === "annual" ? "/年" : "/小时";
   const salary = (p.salaryMin || p.salaryMax)
-    ? `${p.salaryMin || "?"}–${p.salaryMax || "?"} ${p.salaryCurrency || ""}` : "";
+    ? `${p.salaryMin || "?"}${p.salaryMax ? "–" + p.salaryMax : "+"} ${p.salaryCurrency || ""}${periodZh}` : "";
   box.innerHTML =
     pfSummaryRow("姓名", name) +
     pfSummaryRow("邮箱 / 电话", [p.email, p.phone].filter(Boolean).join(" · ")) +
@@ -1130,8 +1133,8 @@ async function loadQuickLinks() {
 /* ---------- 简历识别后确认弹窗 ---------- */
 const CONFIRM_FIELDS = [
   {k:"preferredLocations", t:"期望地点", en:"Expected locations", list:1},
-  {k:"salaryMin", t:"薪资下限", en:"Min salary", type:"number"},
-  {k:"salaryMax", t:"薪资上限", en:"Max salary", type:"number"},
+  {k:"salaryMin", t:"期望薪资", en:"Expected salary", type:"number"},
+  {k:"salaryMax", t:"期望薪资", en:"Expected salary", type:"number"},
   {k:"remotePreference", t:"远程偏好", en:"Remote preference", type:"select",
    options:[["any","不限 / Any"],["remote","纯远程 / Remote"],["hybrid","混合 / Hybrid"],["onsite","坐班 / On-site"]]},
   {k:"industries", t:"行业偏好", en:"Industries", list:1},
@@ -1164,13 +1167,18 @@ function showParseConfirm(n) {
   else {
     box.innerHTML = fields.map((f) => {
       if (f.k === "salaryMin") {
-        return `<label>${f.t}<span class=\"en\">${f.en}</span></label>
-          <div style="display:flex;gap:8px;align-items:center">
-            <input type="number" id="cf_salaryMin" placeholder="下限 Min" value="${fieldVal("salaryMin")}">
+        const curPeriod = fieldVal("salaryPeriod") || "hourly";
+        return `<label>期望薪资<span class=\"en\">Expected salary</span></label>
+          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+            <input type="number" id="cf_salaryMin" placeholder="下限 Min" value="${fieldVal("salaryMin")}" style="flex:1;min-width:80px">
             <span style="color:var(--muted)">–</span>
-            <input type="number" id="cf_salaryMax" placeholder="上限 Max" value="${fieldVal("salaryMax")}">
-            <select id="cf_salaryCurrency" style="width:90px">
+            <input type="number" id="cf_salaryMax" placeholder="上限 Max（可空）" value="${fieldVal("salaryMax")}" style="flex:1;min-width:80px">
+            <select id="cf_salaryCurrency" style="width:80px">
               ${["CAD","USD","CNY"].map((c) => `<option${($("pf_salaryCurrency")||{}).value===c?" selected":""}>${c}</option>`).join("")}
+            </select>
+            <select id="cf_salaryPeriod" style="width:110px">
+              <option value="hourly"${curPeriod==="hourly"?" selected":""}>按小时 / hr</option>
+              <option value="annual"${curPeriod==="annual"?" selected":""}>按年 / yr</option>
             </select>
           </div>`;
       }
@@ -1193,10 +1201,11 @@ $("parseModalSave").onclick = () => {
     const c = $("cf_" + k), p = $("pf_" + k);
     if (c && p) p.value = c.value;
   });
-  const sm = $("cf_salaryMin"), sx = $("cf_salaryMax"), sc = $("cf_salaryCurrency");
+  const sm = $("cf_salaryMin"), sx = $("cf_salaryMax"), sc = $("cf_salaryCurrency"), sp = $("cf_salaryPeriod");
   if (sm && $("pf_salaryMin")) $("pf_salaryMin").value = sm.value;
   if (sx && $("pf_salaryMax")) $("pf_salaryMax").value = sx.value;
   if (sc && $("pf_salaryCurrency")) $("pf_salaryCurrency").value = sc.value;
+  if (sp && $("pf_salaryPeriod")) $("pf_salaryPeriod").value = sp.value;
   const rp = $("cf_remotePreference");
   if (rp && $("pf_remotePreference")) $("pf_remotePreference").value = rp.value;
   hideParseModal();
