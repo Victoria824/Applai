@@ -80,6 +80,24 @@ h2 .count{font-size:12px; color:var(--muted); font-weight:400;}
 .hint{font-size:12px; color:var(--muted); margin-top:6px;}
 .loading{color:var(--muted); font-size:14px; padding:16px; text-align:center;}
 @media (min-width:640px){ .stats{gap:12px;} }
+.pf-view{font-size:14px;}
+.pf-view .row{padding:5px 0; border-bottom:1px solid var(--gray-bg);}
+.pf-view .row:last-child{border-bottom:none;}
+.pf-view .k{color:var(--muted); font-size:12px;}
+.pf-form label{display:block; font-size:13px; color:var(--muted); margin:10px 0 2px;}
+.pf-form input[type=text], .pf-form input[type=email], .pf-form input[type=number],
+.pf-form select, .pf-form textarea{width:100%; font-size:15px; padding:9px 10px;
+  border:1px solid var(--line); border-radius:10px; background:#fff; color:var(--ink); font-family:inherit;}
+.pf-form textarea{resize:vertical;}
+.pf-form .grid2{display:grid; grid-template-columns:1fr 1fr; gap:0 12px;}
+.pf-form .grid3{display:grid; grid-template-columns:1fr 1fr 1fr; gap:0 12px;}
+.pf-form .check{display:flex; align-items:center; gap:8px; font-size:14px; color:var(--ink); margin-top:12px;}
+.pf-form .check input{width:18px; height:18px;}
+.toast{position:fixed; left:50%; bottom:24px; transform:translateX(-50%);
+  background:var(--accent); color:#fff; font-size:14px; padding:10px 18px;
+  border-radius:999px; display:none; z-index:50; box-shadow:0 4px 16px rgba(0,0,0,.2);}
+.sec-head{display:flex; align-items:center; gap:8px;}
+.sec-head button{margin-left:auto; font-size:13px; padding:7px 12px;}
 </style>
 </head>
 <body>
@@ -91,12 +109,24 @@ h2 .count{font-size:12px; color:var(--muted); font-weight:400;}
 </header>
 <main>
   <div id="err" class="err"></div>
+  <div id="toast" class="toast"></div>
 
   <div class="bar">
     <select id="userSel" aria-label="选择用户"></select>
     <button id="refreshBtn" class="primary">刷新</button>
   </div>
   <div class="hint">用户 ID 可在浏览器插件 popup 的「用户 ID」一栏复制。若下拉框已有，直接选择即可。</div>
+
+  <h2 class="sec-head">👤 求职画像 <button id="pfEditBtn">编辑</button></h2>
+  <div class="card">
+    <div id="pfView" class="pf-view"><div class="loading">加载中…</div></div>
+    <div id="pfForm" class="pf-form" style="display:none"></div>
+    <div class="actions" id="pfActions" style="display:none">
+      <button class="primary" id="pfSaveBtn">保存画像</button>
+      <button id="pfCancelBtn">取消</button>
+    </div>
+    <div class="hint" id="pfResumeHint"></div>
+  </div>
 
   <div class="stats" id="stats"></div>
 
@@ -253,8 +283,168 @@ $("refreshBtn").onclick = () => loadAll();
 async function loadAll() {
   clearErr();
   if (!userId()) return;
-  await Promise.all([loadHealth(), loadQueue(), loadApps()]);
+  await Promise.all([loadHealth(), loadProfile(), loadQueue(), loadApps()]);
 }
+
+/* ---------- 求职画像 ---------- */
+const LIST_KEYS = ["targetTitles", "industries", "preferredLocations"];
+const PF_FIELDS = [
+  {k:"firstName", t:"名"}, {k:"lastName", t:"姓"},
+  {k:"email", t:"邮箱", type:"email"}, {k:"phone", t:"电话"},
+  {k:"location", t:"现居地"},
+  {k:"linkedin", t:"LinkedIn"}, {k:"github", t:"GitHub"}, {k:"website", t:"个人网站"},
+  {k:"targetTitles", t:"目标职位（逗号分隔）", list:1},
+  {k:"industries", t:"行业（逗号分隔）", list:1},
+  {k:"yearsExperience", t:"工作年限", type:"number"},
+  {k:"remotePreference", t:"远程偏好", type:"select",
+   options:[["any","不限"],["remote","纯远程"],["hybrid","混合"],["onsite","坐班"]]},
+  {k:"preferredLocations", t:"期望地点（逗号分隔）", list:1},
+  {k:"salaryMin", t:"薪资下限", type:"number"},
+  {k:"salaryMax", t:"薪资上限", type:"number"},
+  {k:"salaryCurrency", t:"币种", type:"select",
+   options:[["CAD","CAD"],["USD","USD"],["CNY","CNY"]]},
+  {k:"workAuth", t:"工作许可"},
+  {k:"needsSponsorship", t:"需要雇主担保签证", type:"checkbox"},
+  {k:"coverLetter", t:"通用求职信", type:"textarea"},
+];
+let currentProfile = null;   // 后端现有画像（含 resumeFile）
+let pendingResume = null;    // 本次新上传的简历
+const toast = (msg) => {
+  const t = $("toast"); t.textContent = msg; t.style.display = "block";
+  clearTimeout(t._h); t._h = setTimeout(() => t.style.display = "none", 2200);
+};
+const splitList = (v) => String(v || "").split(/[,，]/).map((s) => s.trim()).filter(Boolean);
+
+function pfSummaryRow(k, v) {
+  if (v == null || v === "" || (Array.isArray(v) && !v.length)) return "";
+  const val = Array.isArray(v) ? v.map(esc).join("、") : esc(v);
+  return `<div class="row"><div class="k">${esc(k)}</div><div>${val}</div></div>`;
+}
+
+function renderPfView(p) {
+  const box = $("pfView");
+  if (!p) {
+    box.innerHTML = `<div class="empty">还没有画像，点击右上角「编辑」创建。</div>`;
+    $("pfResumeHint").textContent = "";
+    return;
+  }
+  const name = [p.firstName, p.lastName].filter(Boolean).join(" ");
+  const salary = (p.salaryMin || p.salaryMax)
+    ? `${p.salaryMin || "?"}–${p.salaryMax || "?"} ${p.salaryCurrency || ""}` : "";
+  box.innerHTML =
+    pfSummaryRow("姓名", name) +
+    pfSummaryRow("邮箱 / 电话", [p.email, p.phone].filter(Boolean).join(" · ")) +
+    pfSummaryRow("现居地", p.location) +
+    pfSummaryRow("目标职位", p.targetTitles) +
+    pfSummaryRow("工作年限", p.yearsExperience) +
+    pfSummaryRow("期望薪资", salary) +
+    pfSummaryRow("期望地点", p.preferredLocations) +
+    pfSummaryRow("远程偏好", {any:"不限", remote:"纯远程", hybrid:"混合", onsite:"坐班"}[p.remotePreference]) +
+    pfSummaryRow("工作许可", p.workAuth) +
+    (p.needsSponsorship ? pfSummaryRow("签证担保", "需要雇主担保") : "");
+  const rf = p.resumeFile;
+  $("pfResumeHint").textContent = rf && rf.name
+    ? `简历：${rf.name}（已上传）` : "简历：未上传（编辑时可上传 PDF）";
+}
+
+function renderPfForm(p) {
+  const f = $("pfForm");
+  p = p || {};
+  let h = "";
+  const val = (k) => {
+    const v = p[k];
+    if (LIST_KEYS.includes(k)) return esc((v || []).join(", "));
+    return esc(v == null ? "" : v);
+  };
+  PF_FIELDS.forEach((fd) => {
+    const id = "pf_" + fd.k;
+    if (fd.type === "select") {
+      const opts = fd.options.map(([v, t]) =>
+        `<option value="${v}"${String(p[fd.k] || "") === v ? " selected" : ""}>${esc(t)}</option>`).join("");
+      h += `<label>${esc(fd.t)}<select id="${id}">${opts}</select></label>`;
+    } else if (fd.type === "checkbox") {
+      h += `<label class="check"><input type="checkbox" id="${id}"${p[fd.k] ? " checked" : ""}> ${esc(fd.t)}</label>`;
+    } else if (fd.type === "textarea") {
+      h += `<label>${esc(fd.t)}<textarea id="${id}" rows="4">${val(fd.k)}</textarea></label>`;
+    } else {
+      h += `<label>${esc(fd.t)}<input type="${fd.type || "text"}" id="${id}" value="${val(fd.k)}"></label>`;
+    }
+  });
+  const rf = p.resumeFile;
+  h += `<label>简历 PDF <span style="font-size:12px">（${rf && rf.name ? "当前：" + esc(rf.name) + "，不选则保留" : "未上传"}）</span>
+    <input type="file" id="pf_resume" accept=".pdf,.doc,.docx"></label>
+    <div class="hint" id="pfResumeNew"></div>`;
+  f.innerHTML = h;
+  $("pf_resume").addEventListener("change", (e) => {
+    const file = e.target.files[0];
+    if (!file) { pendingResume = null; $("pfResumeNew").textContent = ""; return; }
+    if (file.size > 4 * 1024 * 1024) { toast("文件超过 4MB，请压缩后上传"); e.target.value = ""; return; }
+    const r = new FileReader();
+    r.onload = () => {
+      pendingResume = { name: file.name, size: file.size, dataUrl: r.result };
+      $("pfResumeNew").textContent = `已选择：${file.name}（保存后生效）`;
+    };
+    r.readAsDataURL(file);
+  });
+}
+
+async function loadProfile() {
+  try {
+    const d = await api(`/api/v1/profile?user_id=${encodeURIComponent(userId())}`);
+    currentProfile = d.profile || null;
+    renderPfView(currentProfile);
+  } catch (e) {
+    $("pfView").innerHTML = `<div class="empty">画像加载失败：${esc(e.message)}</div>`;
+  }
+}
+
+function openPfEdit() {
+  pendingResume = null;
+  renderPfForm(currentProfile);
+  $("pfView").style.display = "none";
+  $("pfForm").style.display = "block";
+  $("pfActions").style.display = "flex";
+  $("pfEditBtn").style.display = "none";
+}
+function closePfEdit() {
+  $("pfView").style.display = "block";
+  $("pfForm").style.display = "none";
+  $("pfActions").style.display = "none";
+  $("pfEditBtn").style.display = "";
+}
+
+async function saveProfile() {
+  clearErr();
+  const p = {};
+  PF_FIELDS.forEach((fd) => {
+    const el = $("pf_" + fd.k);
+    if (fd.type === "checkbox") { p[fd.k] = el.checked; return; }
+    if (LIST_KEYS.includes(fd.k)) { p[fd.k] = splitList(el.value); return; }
+    const v = el.value.trim();
+    p[fd.k] = (fd.type === "number") ? (v === "" ? null : Number(v)) : v;
+  });
+  if (!p.email) { toast("请填写邮箱"); return; }
+  if (pendingResume) p.resumeFile = pendingResume;
+  else if (currentProfile && currentProfile.resumeFile) p.resumeFile = currentProfile.resumeFile;
+  try {
+    await api("/api/v1/profile", {
+      method: "PUT",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({user_id: userId(), profile: p})
+    });
+    // 同步用户下拉框的标签
+    await loadUsers();
+    $("userSel").value = userId();
+    currentProfile = p;
+    renderPfView(p);
+    closePfEdit();
+    toast("画像已保存 ✓");
+  } catch (e) { showErr("保存失败：" + e.message); }
+}
+
+$("pfEditBtn").onclick = openPfEdit;
+$("pfCancelBtn").onclick = closePfEdit;
+$("pfSaveBtn").onclick = saveProfile;
 
 (async () => {
   try {
