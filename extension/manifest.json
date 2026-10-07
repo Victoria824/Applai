@@ -1,7 +1,12 @@
 {
   "action": {
     "default_popup": "popup/popup.html",
-    "default_title": "Applai"
+    "default_title": "Applai",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
   },
   "background": {
     "service_worker": "background/sw.js"
@@ -37,5 +42,10 @@
     "notifications",
     "alarms"
   ],
-  "version": "0.2.1"
+  "version": "0.2.1",
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  }
 }
