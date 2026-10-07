@@ -27,9 +27,9 @@ jobs:
             flyctl volumes create applai_data --region yyz --size 1 --yes -a applai-backend
           fi
         env:
-          FLY_API_TOKEN: ${{ secrets.DEPLOYTOKEN }}
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
 
       - name: Deploy
         run: flyctl deploy --remote-only -a applai-backend
         env:
-          FLY_API_TOKEN: ${{ secrets.DEPLOYTOKEN }}
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
