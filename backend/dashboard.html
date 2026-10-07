@@ -209,27 +209,39 @@ main{flex:1; min-width:0; max-width:860px; margin:0 auto; padding:24px 28px 70px
   .quicklinks{grid-template-columns:repeat(2,1fr);}
   main{padding:16px 14px 120px !important;}
 }
+
+/* ---- 中英双语 ---- */
+.en{display:block; font-size:.72em; color:var(--muted); font-weight:400; line-height:1.5; margin-top:1px;}
+h1 .en, h2 .en, .card-title .en{font-size:.62em;}
+button .en{font-size:10px; opacity:.72; margin-top:1px;}
+#sidenav button .en{font-size:10px;}
+.msg .en{font-size:.85em; opacity:.75;}
+
+.modal{position:fixed; inset:0; z-index:60; background:rgba(0,0,0,.45);
+  display:flex; align-items:center; justify-content:center; padding:20px;}
+.modal-box{background:#fff; border-radius:16px; padding:28px; width:100%; max-width:480px;
+  max-height:85vh; overflow-y:auto; box-shadow:0 24px 60px rgba(0,0,0,.25);}
 </style>
 </head>
 <body>
 <header>
   <h1>Applai<span class="dot">.</span></h1>
-  <span class="sub">求职控制台</span>
+  <span class="sub">求职控制台<span class="en">Job Console</span></span>
   <span style="flex:1"></span>
   <span id="llmBadge" class="badge llm-off">LLM …</span>
   <span id="meInfo" class="meinfo">…</span>
-  <button id="logoutBtn" class="btn-black-sm">退出</button>
+  <button id="logoutBtn" class="btn-black-sm">退出<span class="en">Log out</span></button>
 </header>
 <div class="layout">
 <nav id="sidenav">
-  <button data-page="home" class="on">🏠<span>首页</span></button>
-  <button data-page="profile">👤<span>画像</span></button>
-  <button data-page="sources">🏢<span>来源</span></button>
-  <button data-page="queue">📋<span>队列</span></button>
-  <button data-page="manual">⚠️<span>待人工</span><i id="navManualBadge" class="nbadge" style="display:none"></i></button>
-  <button data-page="history">🗂️<span>历史</span></button>
-  <button data-page="schedule">⏰<span>定时</span></button>
-  <button data-page="connect">🔌<span>插件</span></button>
+  <button data-page="home" class="on">🏠<span>首页<span class="en">Home</span></span></button>
+  <button data-page="profile">👤<span>画像<span class="en">Profile</span></span></button>
+  <button data-page="sources">🏢<span>来源<span class="en">Sources</span></span></button>
+  <button data-page="queue">📋<span>队列<span class="en">Queue</span></span></button>
+  <button data-page="manual">⚠️<span>待人工<span class="en">Manual</span></span><i id="navManualBadge" class="nbadge" style="display:none"></i></button>
+  <button data-page="history">🗂️<span>历史<span class="en">History</span></span></button>
+  <button data-page="schedule">⏰<span>定时<span class="en">Schedule</span></span></button>
+  <button data-page="connect">🔌<span>插件<span class="en">Extension</span></span></button>
 </nav>
 <main>
   <div id="err" class="err"></div>
@@ -238,50 +250,62 @@ main{flex:1; min-width:0; max-width:860px; margin:0 auto; padding:24px 28px 70px
   <section class="page on" id="page-home">
     <div class="hero">
       <div class="hero-text">
-        <h1>全自动求职投递<span class="grad">，每天 8 点开工</span></h1>
-        <p>Applai 是你的 AI 求职助手：按画像全网发现职位、智能打分排序、自动填表投递。<br>你只需要传一份简历，剩下的交给它。</p>
+        <h1>全自动求职投递<span class="grad">，每天 8 点开工</span><span class="en">Fully automated job applications, every day at 8 AM</span></h1>
+        <p>Applai 是你的 AI 求职助手：按画像全网发现职位、智能打分排序、自动填表投递。<br>你只需要传一份简历，剩下的交给它。<span class="en">Applai is your AI job-search assistant: it discovers jobs across the web, ranks them by fit, and auto-fills applications. You only need to upload a resume.</span></p>
         <div class="hero-actions">
-          <button class="primary" id="heroProfile">上传简历</button>
-          <button id="heroSchedule">开启自动投递</button>
+          <button class="primary" id="heroProfile">上传简历<span class="en">Upload resume</span></button>
+          <button id="heroSchedule">开启自动投递<span class="en">Enable auto-apply</span></button>
         </div>
       </div>
     </div>
     <div class="card">
-      <div class="card-title">新手教程 <span class="card-desc">跟着走完这 4 步，投递就全自动了</span></div>
+      <div class="card-title">新手教程<span class="en">Getting started</span> <span class="card-desc">跟着走完这 4 步，投递就全自动了<span class="en">Complete these 4 steps to go fully automatic</span></span></div>
       <div id="tutorialSteps" class="steps"><div class="loading">加载中…</div></div>
     </div>
     <div class="quicklinks" id="quickLinks"></div>
     <div class="stats" id="stats"></div>
     <div class="card chat-card">
-      <div class="chat-head">💬 求职助手 <span class="hint" style="margin:0">问我投递进展、职位分析、面试建议</span></div>
+      <div class="chat-head">💬 求职助手<span class="en">Job assistant</span> <span class="hint" style="margin:0">问我投递进展、职位分析、面试建议<span class="en">Ask about progress, job analysis, interview tips</span></span></div>
       <div id="chatMsgs"></div>
       <div class="chips" id="chatChips"></div>
       <div class="chat-input">
         <input id="chatInput" placeholder="比如：今天投了几个？待人工的那个职位要求什么？" maxlength="500">
-        <button class="primary" id="chatSend">发送</button>
+        <button class="primary" id="chatSend">发送<span class="en">Send</span></button>
       </div>
     </div>
   </section>
 
   <section class="page" id="page-profile">
-    <div class="page-h"><h2>求职画像</h2><p>你的简历与求职偏好，是职位匹配的基础。AI 会按画像生成搜索关键词。</p></div>
-    <div class="sec-head"><span></span><button id="pfEditBtn">编辑</button></div>
+    <div class="page-h"><h2>求职画像<span class="en">Profile</span></h2><p>你的简历与求职偏好，是职位匹配的基础。AI 会按画像生成搜索关键词。<span class="en">Your resume and preferences power job matching. AI generates search keywords from your profile.</span></p></div>
+    <div class="sec-head"><span></span><button id="pfEditBtn">编辑<span class="en">Edit</span></button></div>
     <div class="card" style="margin-top:12px">
       <div id="pfView" class="pf-view"><div class="loading">加载中…</div></div>
       <div id="pfForm" class="pf-form" style="display:none"></div>
       <div class="actions" id="pfActions" style="display:none">
-        <button class="primary" id="pfSaveBtn">保存画像</button>
-        <button id="pfCancelBtn">取消</button>
+        <button class="primary" id="pfSaveBtn">保存画像<span class="en">Save profile</span></button>
+        <button id="pfCancelBtn">取消<span class="en">Cancel</span></button>
       </div>
       <div class="hint" id="pfResumeHint"></div>
+    </div>
+    <div id="parseModal" class="modal" style="display:none">
+      <div class="modal-box">
+        <div class="card-title">简历识别完成 ✅<span class="en">Resume parsed</span></div>
+        <div class="hint" id="parseModalSummary" style="margin:0 0 12px"></div>
+        <div class="card-title" style="font-size:14px">以下信息简历里没有，补充后匹配更准<span class="en">Fill the gaps for better matching</span></div>
+        <div id="parseModalFields" class="pf-form"></div>
+        <div class="actions" style="margin-top:16px">
+          <button class="primary" id="parseModalSave">确认保存<span class="en">Confirm & save</span></button>
+          <button id="parseModalLater">稍后再说<span class="en">Later</span></button>
+        </div>
+      </div>
     </div>
   </section>
 
   <section class="page" id="page-sources">
-    <div class="page-h"><h2>职位来源</h2><p>智能模式每天自动抓取；也可手动添加关注的公司招聘页。</p></div>
-    <div class="card-title">职位来源</div>
+    <div class="page-h"><h2>职位来源<span class="en">Job sources</span></h2><p>智能模式每天自动抓取；也可手动添加关注的公司招聘页。<span class="en">Smart mode fetches daily; you can also add company career pages manually.</span></p></div>
+    <div class="card-title">职位来源<span class="en">Job sources</span></div>
     <div class="card">
-      <div class="hint" style="margin:0 0 10px">💡 <b>智能模式已开启</b>：每天自动按你的画像生成搜索关键词，抓取 <b>Job Bank（加拿大官方）</b> + <b>14 家多伦多/加拿大公司</b>（Wealthsimple、1Password、StackAdapt…）+ 全网聚合源。下面是额外手动添加的公司（可选）。</div>
+      <div class="hint" style="margin:0 0 10px">💡 <b>智能模式已开启</b><span class="en">Smart mode is ON</span>：每天自动按你的画像生成搜索关键词，抓取 <b>Job Bank（加拿大官方）</b> + <b>14 家多伦多/加拿大公司</b>（Wealthsimple、1Password、StackAdapt…）+ 全网聚合源。下面是额外手动添加的公司（可选）。<span class="en">Keywords are auto-generated from your profile daily, covering Job Bank (Government of Canada), 14 Toronto/Canadian companies, and aggregators. Add more companies below if you like (optional).</span></div>
       <div class="hint" style="margin:0 0 10px" id="kwNote"></div>
       <div style="display:flex;gap:8px;flex-wrap:wrap">
         <select id="srcType" style="font-size:14px;padding:9px 10px;border:1px solid var(--line);border-radius:12px">
@@ -289,85 +313,85 @@ main{flex:1; min-width:0; max-width:860px; margin:0 auto; padding:24px 28px 70px
           <option value="lever">Lever</option>
           <option value="ashby">Ashby</option>
         </select>
-        <input id="srcKey" placeholder="board 名 / 公司名" style="flex:1;min-width:140px;font-size:14px;padding:9px 12px;border:1px solid var(--line);border-radius:12px">
-        <button class="primary" id="srcAddBtn">添加</button>
+        <input id="srcKey" placeholder="board 名 / 公司名 / board or company" style="flex:1;min-width:140px;font-size:14px;padding:9px 12px;border:1px solid var(--line);border-radius:12px">
+        <button class="primary" id="srcAddBtn">添加<span class="en">Add</span></button>
       </div>
       <div id="srcList" style="margin-top:6px"><div class="loading">加载中…</div></div>
       <div class="actions" style="margin-top:10px">
-        <button class="primary" id="srcFetchBtn">立即抓取新职位</button>
-        <button id="kwRefreshBtn">重新生成关键词</button>
+        <button class="primary" id="srcFetchBtn">立即抓取新职位<span class="en">Fetch now</span></button>
+        <button id="kwRefreshBtn">重新生成关键词<span class="en">Regenerate keywords</span></button>
       </div>
       <div class="hint" id="srcStatus"></div>
     </div>
   </section>
 
   <section class="page" id="page-queue">
-    <div class="page-h"><h2>今日队列</h2><p>按匹配分数排序的待投递职位，每天定时任务自动投递。</p></div>
-    <div class="sec-head"><span class="count" id="queueCount"></span><button id="refreshBtn">刷新</button></div>
+    <div class="page-h"><h2>今日队列<span class="en">Today's queue</span></h2><p>按匹配分数排序的待投递职位，每天定时任务自动投递。<span class="en">Ranked jobs to apply, auto-submitted by the daily task.</span></p></div>
+    <div class="sec-head"><span class="count" id="queueCount"></span><button id="refreshBtn">刷新<span class="en">Refresh</span></button></div>
     <div id="queue" style="margin-top:12px"><div class="loading">加载中…</div></div>
   </section>
 
   <section class="page" id="page-manual">
-    <div class="page-h"><h2>待人工处理</h2><p>遇到验证码或需要注册的职位，在这里手动完成投递。</p></div>
-    <div class="card-title">待人工处理 <span class="count" id="manualCount"></span></div>
+    <div class="page-h"><h2>待人工处理<span class="en">Needs manual action</span></h2><p>遇到验证码或需要注册的职位，在这里手动完成投递。<span class="en">Jobs blocked by CAPTCHA or login — finish them here manually.</span></p></div>
+    <div class="card-title">待人工处理<span class="en">Needs manual action</span> <span class="count" id="manualCount"></span></div>
     <div id="manual"><div class="loading">加载中…</div></div>
   </section>
 
   <section class="page" id="page-history">
-    <div class="page-h"><h2>申请历史</h2><p>所有投递记录与状态变更。</p></div>
-    <div class="card-title">申请历史</div>
+    <div class="page-h"><h2>申请历史<span class="en">History</span></h2><p>所有投递记录与状态变更。<span class="en">All applications and status changes.</span></p></div>
+    <div class="card-title">申请历史<span class="en">History</span></div>
     <div id="history"><div class="loading">加载中…</div></div>
   </section>
 
   <section class="page" id="page-schedule">
-    <div class="page-h"><h2>定时与通知</h2><p>投递计划与手机推送都在这里配置，插件自动同步。</p></div>
-    <div class="card-title">定时投递</div>
+    <div class="page-h"><h2>定时与通知<span class="en">Schedule & notifications</span></h2><p>投递计划与手机推送都在这里配置，插件自动同步。<span class="en">Configure your plan and push notifications; the extension syncs automatically.</span></p></div>
+    <div class="card-title">定时投递<span class="en">Auto-apply schedule</span></div>
     <div class="card">
-      <div class="hint" style="margin:0 0 10px">在这里调整，插件会自动同步（保持 Chrome 开着即可）。</div>
+      <div class="hint" style="margin:0 0 10px">在这里调整，插件会自动同步（保持 Chrome 开着即可）。<span class="en">Changes sync to the extension automatically (keep Chrome open).</span></div>
       <label class="check" style="display:flex;align-items:center;gap:10px;font-size:15px;font-weight:600;margin:6px 0 14px">
-        <input type="checkbox" id="schEnabled" style="width:20px;height:20px;accent-color:var(--blue)"> 每天自动投递
+        <input type="checkbox" id="schEnabled" style="width:20px;height:20px;accent-color:var(--blue)"> 每天自动投递<span class="en">Auto-apply daily</span>
       </label>
       <div style="display:flex;gap:16px;flex-wrap:wrap">
-        <label style="font-size:13px;color:var(--muted);font-weight:600">开始时间<br>
+        <label style="font-size:13px;color:var(--muted);font-weight:600">开始时间<span class="en">Start time</span><br>
           <input type="time" id="schTime" value="08:00" style="font-size:16px;padding:9px 12px;border:1px solid var(--line);border-radius:12px;margin-top:4px"></label>
-        <label style="font-size:13px;color:var(--muted);font-weight:600">每天份数<br>
+        <label style="font-size:13px;color:var(--muted);font-weight:600">每天份数<span class="en">Jobs per day</span><br>
           <input type="number" id="schCount" value="10" min="1" max="30" style="font-size:16px;padding:9px 12px;border:1px solid var(--line);border-radius:12px;margin-top:4px;width:100px"></label>
       </div>
-      <div class="actions"><button class="primary" id="schSave">保存设置</button></div>
+      <div class="actions"><button class="primary" id="schSave">保存设置<span class="en">Save settings</span></button></div>
       <div class="hint" id="schStatus"></div>
     </div>
-    <div class="card-title" style="margin-top:4px">手机通知</div>
+    <div class="card-title" style="margin-top:4px">手机通知<span class="en">Phone notifications</span></div>
     <div class="card">
-      <div class="hint" style="margin:0 0 10px">不用装 App：点一下订阅，有验证码需要处理时手机浏览器直接弹窗提醒（iPhone 需先"添加到主屏幕"）。</div>
-      <div class="actions" style="margin-top:0"><button class="primary" id="pushBtn">开启手机通知</button></div>
+      <div class="hint" style="margin:0 0 10px">不用装 App：点一下订阅，有验证码需要处理时手机浏览器直接弹窗提醒（iPhone 需先"添加到主屏幕"）。<span class="en">No app needed: subscribe once, and your phone browser will notify you when manual action is needed (iPhone: add to Home Screen first).</span></div>
+      <div class="actions" style="margin-top:0"><button class="primary" id="pushBtn">开启手机通知<span class="en">Enable notifications</span></button></div>
       <div class="hint" id="pushStatus"></div>
     </div>
   </section>
 
   <section class="page" id="page-connect">
-    <div class="page-h"><h2>连接插件</h2><p>把账号与 Chrome 插件绑定，插件才能代你填表投递。</p></div>
-    <div class="card-title">连接插件</div>
+    <div class="page-h"><h2>连接插件<span class="en">Connect extension</span></h2><p>把账号与 Chrome 插件绑定，插件才能代你填表投递。<span class="en">Link your account to the Chrome extension so it can fill forms for you.</span></p></div>
+    <div class="card-title">连接插件<span class="en">Connect extension</span></div>
     <div class="card">
-      <div class="hint" style="margin:0 0 10px">点一下，Token 自动传进已安装的 Chrome 插件，无需复制粘贴。</div>
+      <div class="hint" style="margin:0 0 10px">点一下，Token 自动传进已安装的 Chrome 插件，无需复制粘贴。<span class="en">One click sends the token to your installed Chrome extension — no copy-paste needed.</span></div>
       <div class="actions" style="margin-top:0">
-        <button class="primary" id="oneClickConnect">一键连接插件</button>
+        <button class="primary" id="oneClickConnect">一键连接插件<span class="en">Connect in one click</span></button>
       </div>
       <div class="hint" id="connectStatus"></div>
       <details style="margin-top:10px">
-        <summary style="font-size:13px;color:var(--muted);cursor:pointer">手动方式（复制 Token）</summary>
+        <summary style="font-size:13px;color:var(--muted);cursor:pointer">手动方式（复制 Token）<span class="en">Manual (copy token)</span></summary>
         <div style="margin-top:8px">
-          <div class="actions" style="margin-top:0"><button id="tokenNewBtn">新建 Token</button></div>
+          <div class="actions" style="margin-top:0"><button id="tokenNewBtn">新建 Token<span class="en">New token</span></button></div>
           <div id="tokenNew" style="display:none;margin:8px 0"></div>
           <div id="tokenList"><div class="loading">加载中…</div></div>
         </div>
       </details>
     </div>
-    <div class="card-title" style="margin-top:4px">认领旧数据</div>
+    <div class="card-title" style="margin-top:4px">认领旧数据<span class="en">Claim old data</span></div>
     <div class="card">
-      <div class="hint" style="margin:0 0 8px">如果你之前用插件（无账号时代）投过，旧数据存在旧用户 ID 下。在插件 popup「设置」→「用户 ID」复制它，粘贴到这里认领到当前账号。</div>
+      <div class="hint" style="margin:0 0 8px">如果你之前用插件（无账号时代）投过，旧数据存在旧用户 ID 下。在插件 popup「设置」→「用户 ID」复制它，粘贴到这里认领到当前账号。<span class="en">If you applied with the extension before accounts existed, paste your old user ID here to claim that data.</span></div>
       <div style="display:flex;gap:8px">
-        <input id="claimInput" placeholder="旧用户 ID，如 u_ab12cd34" style="flex:1;font-size:14px;padding:9px 10px;border:1px solid var(--line);border-radius:10px">
-        <button class="primary" id="claimBtn">认领</button>
+        <input id="claimInput" placeholder="旧用户 ID / old user ID，如 u_ab12cd34" style="flex:1;font-size:14px;padding:9px 10px;border:1px solid var(--line);border-radius:10px">
+        <button class="primary" id="claimBtn">认领<span class="en">Claim</span></button>
       </div>
     </div>
   </section>
@@ -380,8 +404,8 @@ const esc = (s) => String(s == null ? "" : s)
   .replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;")
   .replace(/"/g,"&quot;").replace(/'/g,"&#39;");
 const STATUS_LABEL = {
-  queued:"待投递", filled:"已填写", submitted:"已投递",
-  needs_manual:"待人工", failed:"失败", skipped:"已跳过"
+  queued:"待投递<span class=\"en\">Pending</span>", filled:"已填写<span class=\"en\">Filled</span>", submitted:"已投递<span class=\"en\">Submitted</span>",
+  needs_manual:"待人工<span class=\"en\">Manual</span>", failed:"失败<span class=\"en\">Failed</span>", skipped:"已跳过<span class=\"en\">Skipped</span>"
 };
 const stBadge = (s) => `<span class="st st-${esc(s)}">${esc(STATUS_LABEL[s] || s)}</span>`;
 const fmtTime = (ts) => {
@@ -434,15 +458,15 @@ function jobCard(j) {
     </div></div>
     ${reasons ? `<ul class="reasons">${reasons}</ul>` : ""}
     <div class="actions">
-      ${j.url ? `<a href="${esc(j.url)}" target="_blank" rel="noopener">去投递 ↗</a>` : ""}
-      <button data-act="skip" data-job="${j.id}">跳过</button>
+      ${j.url ? `<a href="${esc(j.url)}" target="_blank" rel="noopener">去投递<span class=\"en\">Apply ↗</span></a>` : ""}
+      <button data-act="skip" data-job="${j.id}">跳过<span class=\"en\">Skip</span></button>
     </div></div>`;
 }
 
 function appCard(a, showActions) {
   const btns = showActions ? `<div class="actions">
-      ${a.url ? `<a href="${esc(a.url)}" target="_blank" rel="noopener">打开职位页 ↗</a>` : ""}
-      <button class="primary" data-act="submitted" data-job="${a.job_id}">已手动投递</button>
+      ${a.url ? `<a href="${esc(a.url)}" target="_blank" rel="noopener">打开职位页<span class=\"en\">Open job ↗</span></a>` : ""}
+      <button class="primary" data-act="submitted" data-job="${a.job_id}">已手动投递<span class=\"en\">Done manually</span></button>
       <button data-act="skipped" data-job="${a.job_id}">跳过</button>
     </div>` : "";
   return `<div class="card"><div class="top"><div>
@@ -459,8 +483,8 @@ async function loadQueue() {
     const d = await api(`/api/v1/queue?user_id=${encodeURIComponent(userId())}&top_n=10`);
     $("queueCount").textContent = `共 ${d.count} 个`;
     box.innerHTML = d.jobs.length ? d.jobs.map(jobCard).join("")
-      : `<div class="empty">今日队列为空。可能职位库还没有数据，先在插件里跑一次职位发现。</div>`;
-  } catch (e) { box.innerHTML = `<div class="empty">加载失败：${esc(e.message)}</div>`; }
+      : `<div class="empty">今日队列为空。可能职位库还没有数据，先点「来源」页抓取一次。<span class=\"en\">Queue is empty. Fetch jobs from the Sources page first.</span></div>`;
+  } catch (e) { box.innerHTML = `<div class="empty">加载失败<span class=\"en\">Load failed</span>：${esc(e.message)}</div>`; }
 }
 
 async function loadApps() {
@@ -472,16 +496,16 @@ async function loadApps() {
   const manual = apps.filter((a) => a.status === "needs_manual");
   $("manualCount").textContent = `共 ${manual.length} 个`;
   $("manual").innerHTML = manual.length ? manual.map((a) => appCard(a, true)).join("")
-    : `<div class="empty">没有需要人工处理的申请 🎉</div>`;
+    : `<div class="empty">没有需要人工处理的申请 🎉<span class=\"en\">Nothing needs manual action.</span></div>`;
 
   $("history").innerHTML = apps.length ? apps.map((a) => appCard(a, false)).join("")
-    : `<div class="empty">还没有申请记录。</div>`;
+    : `<div class="empty">还没有申请记录。<span class=\"en\">No applications yet.</span></div>`;
 
   // 统计
   let s = {};
   try { s = (await api(`/api/v1/stats?user_id=${uid}`)).stats || {}; } catch (e) {}
-  const defs = [["queued","待投递","#2563eb"],["submitted","已投递","#059669"],
-                ["needs_manual","待人工","#ea580c"],["skipped","已跳过","#64748b"]];
+  const defs = [["queued","待投递<span class=\"en\">Pending</span>","#2563eb"],["submitted","已投递<span class=\"en\">Submitted</span>","#059669"],
+                ["needs_manual","待人工<span class=\"en\">Manual</span>","#ea580c"],["skipped","已跳过<span class=\"en\">Skipped</span>","#64748b"]];
   $("stats").innerHTML = defs.map(([k, t, c]) =>
     `<div class="stat" style="--sc:${c}"><div class="n">${s[k] || 0}</div><div class="t">${t}</div></div>`).join("");
 }
@@ -520,32 +544,32 @@ async function loadSources() {
       `<div class="row" style="display:flex;align-items:center;gap:8px;padding:7px 0;border-bottom:1px solid var(--gray-bg)">
         <span class="st ${s.type === "greenhouse" ? "st-filled" : "st-queued"}">${esc(s.type)}</span>
         <div style="flex:1;font-size:14px;font-family:monospace">${esc(s.key)}</div>
-        <button data-sid="${s.id}" style="font-size:13px;padding:6px 12px">删除</button>
+        <button data-sid="${s.id}" style="font-size:13px;padding:6px 12px">删除<span class=\"en\">Delete</span></button>
       </div>`).join("")
-      : `<div class="hint" style="margin:6px 0">还没有来源，先添加一两个你感兴趣的公司。</div>`;
+      : `<div class="hint" style="margin:6px 0">还没有来源，先添加一两个你感兴趣的公司。<span class=\"en\">No sources yet — add a couple of companies you like.</span></div>`;
   } catch (e) { box.innerHTML = `<div class="empty">加载失败：${esc(e.message)}</div>`; }
 }
 $("srcAddBtn").onclick = async () => {
   clearErr();
   const key = $("srcKey").value.trim();
-  if (!key) { toast("请填写 board 名 / 公司名"); return; }
+  if (!key) { toast("请填写 board 名 / 公司名 / board or company name"); return; }
   try {
     await api("/api/v1/sources", {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ type: $("srcType").value, key })
     });
     $("srcKey").value = "";
-    toast("已添加 ✓");
+    toast("已添加 ✓ / Added");
     await loadSources();
-  } catch (e) { showErr("添加失败：" + e.message); }
+  } catch (e) { showErr("添加失败 / Add failed：" + e.message); }
 };
 $("srcList").addEventListener("click", async (ev) => {
   const b = ev.target.closest("button[data-sid]");
-  if (!b || !confirm("删除这个来源？")) return;
+  if (!b || !confirm("删除这个来源？\nDelete this source?")) return;
   try {
     await api(`/api/v1/sources/${b.dataset.sid}`, { method: "DELETE" });
     await loadSources();
-  } catch (e) { showErr("删除失败：" + e.message); }
+  } catch (e) { showErr("删除失败 / Delete failed：" + e.message); }
 });
 $("srcFetchBtn").onclick = async () => {
   clearErr();
@@ -556,10 +580,10 @@ $("srcFetchBtn").onclick = async () => {
       ? "还没有配置来源，先添加。"
       : `抓取完成：看到 ${d.seen} 个职位，新增 ${d.new} 个。`;
     await loadQueue();
-    toast("抓取完成 ✓");
+    toast("抓取完成 ✓ / Done");
   } catch (e) {
     $("srcStatus").textContent = "";
-    showErr("抓取失败：" + e.message);
+    showErr("抓取失败 / Fetch failed：" + e.message);
   }
 };
 
@@ -601,7 +625,7 @@ function pfSummaryRow(k, v) {
 function renderPfView(p) {
   const box = $("pfView");
   if (!p) {
-    box.innerHTML = `<div class="empty">还没有画像，点击右上角「编辑」创建。</div>`;
+    box.innerHTML = `<div class="empty">还没有画像，点击右上角「编辑」创建。<span class=\"en\">No profile yet — click Edit (top right) to create one.</span></div>`;
     $("pfResumeHint").textContent = "";
     return;
   }
@@ -621,7 +645,7 @@ function renderPfView(p) {
     (p.needsSponsorship ? pfSummaryRow("签证担保", "需要雇主担保") : "");
   const rf = p.resumeFile;
   $("pfResumeHint").textContent = rf && rf.name
-    ? `简历：${rf.name}（已上传）` : "简历：未上传（编辑时可上传 PDF）";
+    ? `简历：${rf.name}（已上传 / uploaded）` : "简历：未上传（编辑时可上传 PDF）<span class=\"en\">Resume: not uploaded (upload PDF in edit mode)</span>";
 }
 
 function renderPfForm(p) {
@@ -676,7 +700,8 @@ function renderPfForm(p) {
         .then((d) => {
           prefillProfileForm(d.fields || {});
           const n = Object.keys(d.fields || {}).length;
-          toast(n ? `已识别 ${n} 项信息，请确认修改 ✓` : "未识别出有效信息，请手动填写");
+          if (n) showParseConfirm(n);
+          else toast("未识别出有效信息，请手动填写 / Nothing recognized — please fill in manually");
           if (pendingResume) $("pfResumeNew").textContent = `已选择：${file.name}（保存后生效）`;
         })
         .catch((err) => {
@@ -702,7 +727,7 @@ async function loadProfile() {
     currentProfile = d.profile || null;
     renderPfView(currentProfile);
   } catch (e) {
-    $("pfView").innerHTML = `<div class="empty">画像加载失败：${esc(e.message)}</div>`;
+    $("pfView").innerHTML = `<div class="empty">画像加载失败<span class=\"en\">Failed to load profile</span>：${esc(e.message)}</div>`;
   }
 }
 
@@ -731,7 +756,7 @@ async function saveProfile() {
     const v = el.value.trim();
     p[fd.k] = (fd.type === "number") ? (v === "" ? null : Number(v)) : v;
   });
-  if (!p.email) { toast("请填写邮箱"); return; }
+  if (!p.email) { toast("请填写邮箱 / Email required"); return; }
   if (pendingResume) p.resumeFile = pendingResume;
   else if (currentProfile && currentProfile.resumeFile) p.resumeFile = currentProfile.resumeFile;
   try {
@@ -745,7 +770,7 @@ async function saveProfile() {
     renderPfView(p);
     closePfEdit();
     toast("画像已保存 ✓");
-  } catch (e) { showErr("保存失败：" + e.message); }
+  } catch (e) { showErr("保存失败 / Save failed：" + e.message); }
 }
 
 $("pfEditBtn").onclick = openPfEdit;
@@ -779,12 +804,12 @@ function extPing(timeoutMs = 1500) {
 $("oneClickConnect").onclick = async () => {
   clearErr();
   const st = $("connectStatus");
-  st.textContent = "正在检测插件…";
+  st.textContent = "正在检测插件… / Detecting extension…";
   if (!(await extPing())) {
-    st.textContent = "未检测到插件。请先安装 Chrome 插件，再点一次。";
+    st.textContent = "未检测到插件。请先安装 Chrome 插件，再点一次。/ Extension not found. Install it first, then retry.";
     return;
   }
-  st.textContent = "已找到插件，正在传送 Token…";
+  st.textContent = "已找到插件，正在传送 Token… / Found. Sending token…";
   let token;
   try {
     const d = await api("/api/v1/auth/tokens", {
@@ -792,7 +817,7 @@ $("oneClickConnect").onclick = async () => {
       body: JSON.stringify({ name: "一键连接 " + new Date().toLocaleDateString("zh-CN") })
     });
     token = d.token;
-  } catch (e) { st.textContent = "创建 Token 失败：" + e.message; return; }
+  } catch (e) { st.textContent = "创建 Token 失败 / Failed: " + e.message; return; }
   const ok = await new Promise((resolve) => {
     const h = (e) => {
       if (e.source === window && e.data && e.data.type === "APPLAI_CONNECT_RESULT") {
@@ -807,10 +832,10 @@ $("oneClickConnect").onclick = async () => {
   });
   if (ok) {
     st.textContent = "";
-    toast("插件已连接 ✓（Token 已自动保存到插件设置）");
+    toast("插件已连接 ✓ / Connected（Token 已自动保存 / saved）");
     await loadTokens();
   } else {
-    st.textContent = "传送失败，请用下面的手动方式复制 Token。";
+    st.textContent = "传送失败，请用下面的手动方式复制 Token。/ Failed — copy the token manually below.";
   }
 };
 
@@ -826,12 +851,12 @@ async function loadTokens() {
         <div class="hint" style="margin:0">创建于 ${esc(fmtTime(t.created_at))}${t.last_used ? " · 上次使用 " + esc(fmtTime(t.last_used)) : ""}</div></div>
         <button data-tid="${t.id}" style="font-size:13px;padding:6px 10px">撤销</button>
       </div>`).join("")
-      : `<div class="empty">还没有 Token，点右上角「新建 Token」。</div>`;
+      : `<div class="empty">还没有 Token，点「新建 Token」。<span class=\"en\">No tokens yet — click New token.</span></div>`;
   } catch (e) { box.innerHTML = `<div class="empty">加载失败：${esc(e.message)}</div>`; }
 }
 $("tokenNewBtn").onclick = async () => {
   clearErr();
-  const name = prompt("给这个 Token 起个名字（如：我的 Chrome 插件）", "") || "";
+  const name = prompt("给这个 Token 起个名字 / Name this token（如：我的 Chrome 插件）", "") || "";
   try {
     const d = await api("/api/v1/auth/tokens", {
       method: "POST", headers: {"Content-Type": "application/json"},
@@ -839,13 +864,13 @@ $("tokenNewBtn").onclick = async () => {
     });
     $("tokenNew").style.display = "block";
     $("tokenNew").innerHTML =
-      `<div class="detail" style="word-break:break-all"><b>复制保存，只显示一次：</b><br>${esc(d.token)}</div>`;
+      `<div class="detail" style="word-break:break-all"><b>复制保存，只显示一次<span class=\"en\">Copy now — shown only once</span>：</b><br>${esc(d.token)}</div>`;
     await loadTokens();
-  } catch (e) { showErr("创建失败：" + e.message); }
+  } catch (e) { showErr("创建失败 / Failed：" + e.message); }
 };
 $("tokenList").addEventListener("click", async (ev) => {
   const b = ev.target.closest("button[data-tid]");
-  if (!b || !confirm("确定撤销这个 Token？插件将立即断开。")) return;
+  if (!b || !confirm("确定撤销这个 Token？插件将立即断开。\nRevoke this token? The extension will disconnect.")) return;
   try {
     await api(`/api/v1/auth/tokens/${b.dataset.tid}`, { method: "DELETE" });
     await loadTokens();
@@ -862,10 +887,10 @@ $("claimBtn").onclick = async () => {
       method: "POST", headers: {"Content-Type": "application/json"},
       body: JSON.stringify({ old_user_id: oldId })
     });
-    toast("认领成功 ✓");
+    toast("认领成功 ✓ / Claimed");
     $("claimInput").value = "";
     await loadAll();
-  } catch (e) { showErr("认领失败：" + e.message); }
+  } catch (e) { showErr("认领失败 / Claim failed：" + e.message); }
 };
 loadTokens();
 
@@ -918,7 +943,7 @@ async function sendChat() {
     chatHistory.push({ role: "user", content: text }, { role: "assistant", content: d.reply });
   } catch (e) {
     typing.classList.remove("typing");
-    typing.textContent = "出错了：" + e.message;
+    typing.textContent = "出错了 / Error: " + e.message;
   }
 }
 $("chatSend").onclick = sendChat;
@@ -950,7 +975,7 @@ $("schSave").onclick = async () => {
       })
     });
     $("schStatus").textContent = "已保存，插件下次启动时自动同步 ✓";
-    toast("定时设置已保存 ✓");
+    toast("定时设置已保存 ✓ / Saved");
   } catch (e) { showErr("保存失败：" + e.message); }
 };
 $("kwRefreshBtn").onclick = async () => {
@@ -959,9 +984,9 @@ $("kwRefreshBtn").onclick = async () => {
   try {
     const k = await api("/api/v1/settings/keywords/refresh", { method: "POST" });
     $("srcStatus").textContent = "";
-    toast("关键词已更新 ✓");
+    toast("关键词已更新 ✓ / Updated");
     await loadSchedule();
-  } catch (e) { $("srcStatus").textContent = ""; showErr("生成失败：" + e.message); }
+  } catch (e) { $("srcStatus").textContent = ""; showErr("生成失败 / Generation failed：" + e.message); }
 };
 
 /* ---------- 手机通知（Web Push） ---------- */
@@ -1005,7 +1030,7 @@ async function initPush() {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ endpoint: sub.endpoint, p256dh: kj.p256dh, auth: kj.auth })
       });
-      toast("手机通知已开启 ✓");
+      toast("手机通知已开启 ✓ / Enabled");
       location.reload();
     } catch (e) {
       $("pushStatus").textContent = "开启失败：" + e.message + "（请允许通知权限后重试）";
@@ -1029,7 +1054,7 @@ loadApps = async function () {
 
 // 初始化
 renderChips();
-addMsg("bot", "你好！我是你的求职助手 💼\n我知道你的画像、投递进度和所有 JD。可以问我：今天投了几个？待人工的职位什么情况？队列里最高分的职位要求什么？");
+addMsg("bot", "你好！我是你的求职助手 \u0001F4BC\\nHi! I'm your job assistant \u2014 I know your profile, progress and all JDs.\\n可以问我：今天投了几个？待人工的职位什么情况？队列里最高分的职位要求什么？");
 try {
   const savedPage = localStorage.getItem("applai_page");
   if (savedPage && document.getElementById("page-" + savedPage)) showPage(savedPage);
@@ -1056,13 +1081,13 @@ async function loadTutorial() {
   const hasToken = tokens.length > 0;
   const hasSched = !!sched.schedule_enabled;
   const steps = [
-    { done: hasProfile, t: "完善求职画像", d: "上传简历自动识别，或手动填写目标职位、薪资、地区",
+    { done: hasProfile, t: "完善求职画像<span class=\"en\">Complete your profile</span>", d: "上传简历自动识别，或手动填写目标职位、薪资、地区<span class=\"en\">Upload resume for auto-fill, or enter target roles, salary, locations</span>",
       act: hasProfile ? "" : ["profile", "去完善"] },
-    { done: hasToken, t: "连接 Chrome 插件", d: "一键连接后，插件才能在招聘网站上自动填表",
+    { done: hasToken, t: "连接 Chrome 插件<span class=\"en\">Connect extension</span>", d: "一键连接后，插件才能在招聘网站上自动填表<span class=\"en\">One-click connect lets the extension auto-fill forms</span>",
       act: hasToken ? "" : ["connect", "去连接"] },
-    { done: hasSched, t: "开启定时投递", d: "设置每天几点、投几份，之后全自动运行",
+    { done: hasSched, t: "开启定时投递<span class=\"en\">Enable schedule</span>", d: "设置每天几点、投几份，之后全自动运行<span class=\"en\">Set time and daily count — then fully automatic</span>",
       act: hasSched ? "" : ["schedule", "去开启"] },
-    { done: hasProfile && hasToken && hasSched, t: "坐等投递", d: "每天自动发现职位、打分、投递；验证码会推送到你手机",
+    { done: hasProfile && hasToken && hasSched, t: "坐等投递<span class=\"en\">Sit back</span>", d: "每天自动发现职位、打分、投递；验证码会推送到你手机<span class=\"en\">Jobs are discovered, scored and applied daily; CAPTCHAs push to your phone</span>",
       act: "" },
   ];
   box.innerHTML = steps.map((s, i) => `
@@ -1100,6 +1125,84 @@ async function loadQuickLinks() {
   $("quickLinks").querySelectorAll("button[data-goto]").forEach((b) =>
     b.addEventListener("click", () => showPage(b.dataset.goto)));
 }
+
+
+/* ---------- 简历识别后确认弹窗 ---------- */
+const CONFIRM_FIELDS = [
+  {k:"preferredLocations", t:"期望地点", en:"Expected locations", list:1},
+  {k:"salaryMin", t:"薪资下限", en:"Min salary", type:"number"},
+  {k:"salaryMax", t:"薪资上限", en:"Max salary", type:"number"},
+  {k:"remotePreference", t:"远程偏好", en:"Remote preference", type:"select",
+   options:[["any","不限 / Any"],["remote","纯远程 / Remote"],["hybrid","混合 / Hybrid"],["onsite","坐班 / On-site"]]},
+  {k:"industries", t:"行业偏好", en:"Industries", list:1},
+  {k:"workAuth", t:"工作许可", en:"Work authorization"},
+];
+function fieldVal(k) {
+  const el = $("pf_" + k);
+  if (!el) return "";
+  return (el.value || "").trim();
+}
+function showParseConfirm(n) {
+  const missing = CONFIRM_FIELDS.filter((f) => {
+    if (f.k === "salaryMin" || f.k === "salaryMax") return !fieldVal("salaryMin") && !fieldVal("salaryMax");
+    return !fieldVal(f.k);
+  });
+  // 薪资只显示一次
+  const seen = new Set();
+  const fields = missing.filter((f) => {
+    if (f.k === "salaryMin" || f.k === "salaryMax") {
+      if (seen.has("salary")) return false;
+      seen.add("salary");
+    }
+    return true;
+  });
+  $("parseModalSummary").innerHTML =
+    `已识别 <b>${n}</b> 项信息 ✅<span class=\"en\">${n} fields recognized from your resume</span>` +
+    (fields.length ? "" : `<br>画像很完整，可以直接保存。<span class=\"en\">Your profile looks complete.</span>`);
+  const box = $("parseModalFields");
+  if (!fields.length) { box.innerHTML = ""; }
+  else {
+    box.innerHTML = fields.map((f) => {
+      if (f.k === "salaryMin") {
+        return `<label>${f.t}<span class=\"en\">${f.en}</span></label>
+          <div style="display:flex;gap:8px;align-items:center">
+            <input type="number" id="cf_salaryMin" placeholder="下限 Min" value="${fieldVal("salaryMin")}">
+            <span style="color:var(--muted)">–</span>
+            <input type="number" id="cf_salaryMax" placeholder="上限 Max" value="${fieldVal("salaryMax")}">
+            <select id="cf_salaryCurrency" style="width:90px">
+              ${["CAD","USD","CNY"].map((c) => `<option${($("pf_salaryCurrency")||{}).value===c?" selected":""}>${c}</option>`).join("")}
+            </select>
+          </div>`;
+      }
+      if (f.type === "select") {
+        return `<label>${f.t}<span class=\"en\">${f.en}</span></label>
+          <select id="cf_${f.k}">${f.options.map(([v,t]) =>
+            `<option value="${v}"${fieldVal(f.k)===v?" selected":""}>${t}</option>`).join("")}</select>`;
+      }
+      return `<label>${f.t}<span class=\"en\">${f.en}</span></label>
+        <input type="text" id="cf_${f.k}" value="${fieldVal(f.k).replace(/"/g,"&quot;")}">`;
+    }).join("");
+  }
+  $("parseModal").style.display = "flex";
+}
+function hideParseModal() { $("parseModal").style.display = "none"; }
+$("parseModalLater").onclick = hideParseModal;
+$("parseModalSave").onclick = () => {
+  // 把弹窗里的值写回表单
+  ["preferredLocations","industries","workAuth"].forEach((k) => {
+    const c = $("cf_" + k), p = $("pf_" + k);
+    if (c && p) p.value = c.value;
+  });
+  const sm = $("cf_salaryMin"), sx = $("cf_salaryMax"), sc = $("cf_salaryCurrency");
+  if (sm && $("pf_salaryMin")) $("pf_salaryMin").value = sm.value;
+  if (sx && $("pf_salaryMax")) $("pf_salaryMax").value = sx.value;
+  if (sc && $("pf_salaryCurrency")) $("pf_salaryCurrency").value = sc.value;
+  const rp = $("cf_remotePreference");
+  if (rp && $("pf_remotePreference")) $("pf_remotePreference").value = rp.value;
+  hideParseModal();
+  saveProfile();
+};
+$("parseModal").addEventListener("click", (e) => { if (e.target.id === "parseModal") hideParseModal(); });
 
 </script>
 </body>
