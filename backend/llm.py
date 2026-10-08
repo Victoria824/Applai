@@ -163,6 +163,90 @@ KEYWORDS_PROMPT = """你是职业规划师。根据求职者画像，生成用�
 """
 
 
+EMAIL_PROMPT = """你是求职邮件分类器。判断这封邮件是不是求职相关的，并分类。
+
+只返回 JSON，不要任何解释：
+{"kind": "interview|rejection|other", "company": "公司名（没有就空）", "job_title": "职位名（没有就空）", "summary": "一句话中文摘要（20字内）"}
+
+分类标准：
+- interview：面试邀请、OA/笔试邀请、HR 约电话、offer 相关
+- rejection：拒信、"unfortunately"、"not moving forward"、"已招到合适人选"
+- other：其他（广告、newsletter、非求职邮件）
+
+发件人：{sender}
+主题：{subject}
+正文：
+```
+{body}
+```
+"""
+
+
+def llm_classify_email(sender: str, subject: str, body: str, timeout: int = 30) -> dict | None:
+    """返回 {kind, company, job_title, summary}；失败返回 None。"""
+    cfg = get_config()
+    if not cfg["api_key"]:
+        return None
+    prompt = EMAIL_PROMPT.format(sender=sender[:200], subject=subject[:200], body=(body or "")[:1500])
+    try:
+        r = httpx.post(
+            f"{cfg['base_url']}/chat/completions",
+            headers={"Authorization": f"Bearer {cfg['api_key']}", "Content-Type": "application/json"},
+            json={"model": cfg["model"],
+                  "messages": [{"role": "user", "content": prompt}],
+                  "temperature": 0.1, "max_tokens": 200},
+            timeout=timeout,
+        )
+        r.raise_for_status()
+        data = _extract_json(r.json()["choices"][0]["message"]["content"])
+        if not data or data.get("kind") not in ("interview", "rejection", "other"):
+            return None
+        return {"kind": data["kind"], "company": str(data.get("company", ""))[:100],
+                "job_title": str(data.get("job_title", ""))[:100],
+                "summary": str(data.get("summary", ""))[:200]}
+    except Exception:
+        return None
+
+
+ACTION_PROMPT = """判断用户是不是想让助手执行操作。只返回 JSON，不要解释。
+
+可执行的操作：
+- add_to_queue: 把职位加入投递队列。需要 "jobs": ["职位名 @ 公司名", ...]
+- pause_schedule: 暂停自动投递
+- resume_schedule: 恢复自动投递
+- mark_applied: 标记已手动投递。需要 "jobs": ["职位名 @ 公司名", ...]
+
+如果不是操作意图，返回 {"action": "none"}。
+如果是，返回 {"action": "add_to_queue", "jobs": [...]} 等。
+
+用户消息：{msg}
+"""
+
+
+def llm_detect_action(msg: str, timeout: int = 20) -> dict | None:
+    """检测 chatbot 操作意图。返回 {"action": ..., ...} 或 None。"""
+    cfg = get_config()
+    if not cfg["api_key"]:
+        return None
+    try:
+        r = httpx.post(
+            f"{cfg['base_url']}/chat/completions",
+            headers={"Authorization": f"Bearer {cfg['api_key']}", "Content-Type": "application/json"},
+            json={"model": cfg["model"],
+                  "messages": [{"role": "user", "content": ACTION_PROMPT.format(msg=msg[:500])}],
+                  "temperature": 0.1, "max_tokens": 200},
+            timeout=timeout,
+        )
+        r.raise_for_status()
+        data = _extract_json(r.json()["choices"][0]["message"]["content"])
+        if not data or data.get("action") not in (
+                "none", "add_to_queue", "pause_schedule", "resume_schedule", "mark_applied"):
+            return None
+        return data
+    except Exception:
+        return None
+
+
 def llm_job_keywords(profile: dict, timeout: int = 60) -> dict | None:
     """画像 → 搜索关键词；失败返回 None（调用方用画像 targetTitles 兜底）。"""
     cfg = get_config()

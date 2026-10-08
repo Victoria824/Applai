@@ -266,6 +266,7 @@ button .en{font-size:10px; opacity:.72; margin-top:1px;}
   <button data-page="queue">📋<span>队列<span class="en">Queue</span></span></button>
   <button data-page="manual">⚠️<span>待人工<span class="en">Manual</span></span><i id="navManualBadge" class="nbadge" style="display:none"></i></button>
   <button data-page="history">🗂️<span>历史<span class="en">History</span></span></button>
+  <button data-page="review">📊<span>复盘<span class="en">Review</span></span></button>
   <button data-page="schedule">⏰<span>定时<span class="en">Schedule</span></span></button>
   <button data-page="connect">🔌<span>插件<span class="en">Extension</span></span></button>
 </nav>
@@ -381,6 +382,18 @@ button .en{font-size:10px; opacity:.72; margin-top:1px;}
     <div class="page-h"><h2>申请历史<span class="en">History</span></h2><p>所有投递记录与状态变更。<span class="en">All applications and status changes.</span></p></div>
     <div class="card-title">申请历史<span class="en">History</span></div>
     <div id="history"><div class="loading">加载中…</div></div>
+  <section class="page" id="page-review">
+    <div class="page-h"><h2>求职复盘<span class="en">Review</span></h2><p>投递数据、邮件动态与 AI 优化建议。<span class="en">Stats, email updates and AI suggestions.</span></p></div>
+    <div class="card-title">本周数据<span class="en">This week</span></div>
+    <div class="card"><div id="reviewStats"><div class="loading">加载中…</div></div></div>
+    <div class="card-title">邮件动态<span class="en">Email updates</span></div>
+    <div class="card"><div id="reviewEvents"><div class="loading">加载中…</div></div></div>
+    <div class="card-title">AI 建议<span class="en">AI suggestions</span></div>
+    <div class="card">
+      <div class="actions" style="margin-top:0"><button class="primary" id="adviceBtn">生成建议<span class="en">Get advice</span></button></div>
+      <div id="adviceBox" style="margin-top:10px"></div>
+    </div>
+  </section>
     <div id="snapModal" class="modal" style="display:none">
       <div class="modal-box" style="max-width:640px">
         <div class="card-title">投递快照<span class="en">Application snapshot</span>
@@ -441,6 +454,11 @@ button .en{font-size:10px; opacity:.72; margin-top:1px;}
         <button class="primary" id="claimBtn">认领<span class="en">Claim</span></button>
       </div>
     </div>
+    <div class="card-title" style="margin-top:4px">连接 Gmail<span class="en">Connect Gmail</span></div>
+    <div class="card">
+      <div class="hint" style="margin:0 0 8px">只读权限：Applai 每 4 小时扫一次求职邮件，自动识别面试邀请/拒信并更新申请状态。不会发邮件、不会删邮件。<span class="en">Read-only: Applai checks job emails every 4 hours and auto-updates status. Never sends or deletes.</span></div>
+      <div id="gmailBox"><div class="loading">加载中…</div></div>
+    </div>
     <div class="card-title" style="margin-top:4px">邀请朋友<span class="en">Invite friends</span></div>
     <div class="card">
       <div class="hint" style="margin:0 0 8px">生成邀请链接发给朋友：对方注册时自动关联，画像/简历/插件三步走完即可用。你可以在这里看到每个人卡在哪一步。<span class="en">Share an invite link; track each friend's setup progress below.</span></div>
@@ -458,6 +476,7 @@ const esc = (s) => String(s == null ? "" : s)
   .replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;")
   .replace(/"/g,"&quot;").replace(/'/g,"&#39;");
 const STATUS_LABEL = {
+  interviewing: ["面试中", "#7c3aed"], rejected: ["已拒", "#dc2626"],
   queued:"待投递<span class=\"en\">Pending</span>", filled:"已填写<span class=\"en\">Filled</span>", submitted:"已投递<span class=\"en\">Submitted</span>",
   needs_manual:"待人工<span class=\"en\">Manual</span>", failed:"失败<span class=\"en\">Failed</span>", skipped:"已跳过<span class=\"en\">Skipped</span>"
 };
@@ -981,6 +1000,7 @@ $("claimBtn").onclick = async () => {
 };
 loadTokens();
 loadInvites();
+loadGmail();
 
 /* ---------- 侧边导航 ---------- */
 function showPage(name) {
@@ -990,6 +1010,7 @@ function showPage(name) {
     p.classList.toggle("on", p.id === "page-" + name));
   window.scrollTo({ top: 0 });
   try { localStorage.setItem("applai_page", name); } catch (e) {}
+  if (name === "review") loadReview();
 }
 document.querySelectorAll("#sidenav button[data-page]").forEach((b) =>
   b.addEventListener("click", () => showPage(b.dataset.page)));
@@ -1472,6 +1493,81 @@ $("deleteAcctBtn").onclick = async () => {
     await api("/api/v1/account", { method: "DELETE" });
     location.href = "/";
   } catch (e) { toast("删除失败 / Delete failed: " + e.message); }
+};
+
+
+/* ---------- Gmail ---------- */
+async function loadGmail() {
+  const box = $("gmailBox");
+  try {
+    const d = await api("/api/v1/gmail/status");
+    if (!d.configured) {
+      box.innerHTML = '<div class="hint">管理员尚未配置 Gmail 接入。<span class=\"en\">Not configured yet.</span></div>';
+      return;
+    }
+    if (d.connected) {
+      box.innerHTML = `<div class="detail">已连接 ✅ ${esc(d.email)}
+        <span class="hint">（上次同步：${d.last_sync ? fmtTime(d.last_sync) : "尚未"}）</span></div>
+        <div class="actions" style="margin-top:8px"><button id="gmailOff">断开<span class=\"en\">Disconnect</span></button></div>`;
+      $("gmailOff").onclick = async () => {
+        if (!confirm("断开 Gmail？不再自动识别邮件状态。/ Disconnect Gmail?")) return;
+        await api("/api/v1/gmail/disconnect", { method: "POST" });
+        loadGmail();
+      };
+    } else {
+      box.innerHTML = `<div class="actions" style="margin-top:0">
+        <button class="primary" id="gmailOn">连接 Gmail<span class=\"en\">Connect Gmail</span></button></div>`;
+      $("gmailOn").onclick = async () => {
+        try {
+          const r = await api("/api/v1/gmail/auth-url");
+          location.href = r.url;
+        } catch (e) { toast("失败 / Failed: " + e.message); }
+      };
+    }
+  } catch (e) { box.innerHTML = `<div class="empty">加载失败：${esc(e.message)}</div>`; }
+}
+// OAuth 回调提示
+(function () {
+  const g = new URLSearchParams(location.search).get("gmail");
+  if (g === "ok") toast("Gmail 已连接 ✅ / Connected");
+  else if (g === "error") toast("Gmail 连接失败 / Failed");
+  else if (g === "norefresh") toast("请重新授权（需要离线访问）/ Re-auth needed");
+  if (g) history.replaceState(null, "", location.pathname);
+})();
+
+
+/* ---------- 复盘 ---------- */
+async function loadReview() {
+  try {
+    const d = await api("/api/v1/reports/digest?period=weekly");
+    const st = d.by_status || {};
+    const row = (label, v, color) =>
+      `<div class="stat" style="--sc:${color}"><div class="n">${v}</div><div class="t">${label}</div></div>`;
+    $("reviewStats").innerHTML = `<div class="stats">` +
+      row("投递<span class=\"en\">Sent</span>", d.submitted, "#2563eb") +
+      row("面试中<span class=\"en\">Interviewing</span>", d.interviewing, "#7c3aed") +
+      row("被拒<span class=\"en\">Rejected</span>", d.rejected, "#dc2626") +
+      row("回复率<span class=\"en\">Response</span>", d.response_rate + "%", "#059669") +
+      `</div><div class="hint" style="margin-top:8px">近 ${d.days} 天共 ${d.total} 条申请动态</div>`;
+    const evs = d.events || [];
+    $("reviewEvents").innerHTML = evs.length ? evs.map((e) => {
+      const icon = e.kind === "interview" ? "🎉" : e.kind === "rejection" ? "💔" : "📧";
+      return `<div class="detail" style="margin-bottom:6px">${icon} <b>${esc(e.company || "")}</b> ${esc(e.job_title || "")}<br>
+        <span style="color:var(--muted);font-size:12px">${esc(e.summary || e.subject || "")} · ${esc(fmtTime(e.created_at))}</span></div>`;
+    }).join("") : '<div class="hint">暂无邮件动态。连接 Gmail 后自动识别。<span class=\"en\">No email updates yet.</span></div>';
+  } catch (e) {
+    $("reviewStats").innerHTML = `<div class="empty">加载失败：${esc(e.message)}</div>`;
+  }
+}
+$("adviceBtn").onclick = async () => {
+  $("adviceBox").innerHTML = '<div class="loading">AI 分析中…</div>';
+  try {
+    const d = await api("/api/v1/reports/advice", { method: "POST" });
+    const list = d.advice || [];
+    $("adviceBox").innerHTML = list.length
+      ? "<ul>" + list.map((a) => `<li>${esc(a)}</li>`).join("") + "</ul>"
+      : '<div class="hint">暂无建议</div>';
+  } catch (e) { $("adviceBox").innerHTML = `<div class="empty">失败：${esc(e.message)}</div>`; }
 };
 
 </script>

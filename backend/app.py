@@ -13,6 +13,8 @@ from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from pydantic import BaseModel, Field
 
 import db
+import email_sync
+import gmail
 import ingest
 import matcher
 
@@ -545,6 +547,129 @@ def create_my_invite(body: InviteIn, user: dict = Depends(get_current_user)):
     return {**inv, "link": f"https://applai-backend.fly.dev/?invite={inv['code']}"}
 
 
+@app.get("/api/v1/gmail/status")
+def gmail_status(user: dict = Depends(get_current_user)):
+    uid = user["app_user_id"]
+    t = db.get_gmail_token(uid)
+    return {"connected": bool(t), "email": (t or {}).get("email", ""),
+            "last_sync": (t or {}).get("last_sync", 0),
+            "configured": gmail.is_configured()}
+
+
+@app.get("/api/v1/gmail/auth-url")
+def gmail_auth_url(user: dict = Depends(get_current_user)):
+    if not gmail.is_configured():
+        raise HTTPException(400, "Gmail 未配置（需要 GOOGLE_CLIENT_ID/SECRET）")
+    import secrets as _secrets
+    state = _secrets.token_urlsafe(24)
+    db.save_gmail_state(state, user["app_user_id"])
+    return {"url": gmail.auth_url(state)}
+
+
+@app.get("/api/v1/gmail/callback")
+def gmail_callback(code: str = "", state: str = "", error: str = ""):
+    if error:
+        return RedirectResponse("/dashboard?gmail=error", status_code=302)
+    uid = db.consume_gmail_state(state)
+    if not uid or not code:
+        return RedirectResponse("/dashboard?gmail=error", status_code=302)
+    try:
+        toks = gmail.exchange_code(code)
+        access = toks.get("access_token", "")
+        refresh = toks.get("refresh_token", "")
+        if not refresh:
+            # 用户之前授权过没给 refresh_token：提示重连
+            return RedirectResponse("/dashboard?gmail=norefresh", status_code=302)
+        email = gmail.get_profile_email(access)
+        db.save_gmail_token(uid, email, refresh)
+    except Exception:
+        return RedirectResponse("/dashboard?gmail=error", status_code=302)
+    return RedirectResponse("/dashboard?gmail=ok", status_code=302)
+
+
+@app.post("/api/v1/gmail/disconnect")
+def gmail_disconnect(user: dict = Depends(get_current_user)):
+    db.delete_gmail_token(user["app_user_id"])
+    return {"ok": True}
+
+
+@app.post("/api/v1/admin/email-sync")
+def admin_email_sync(request: Request):
+    """每 4 小时跑一次的邮件同步（cron）。用 CRON_TOKEN 保护。"""
+    token = os.environ.get("APPLAI_CRON_TOKEN", "")
+    if not token or request.headers.get("x-cron-token") != token:
+        raise HTTPException(403, "forbidden")
+    result = email_sync.sync_all(push_fn=send_web_push)
+    return {"ok": True, **result}
+
+
+@app.get("/api/v1/reports/digest")
+def report_digest(period: str = "weekly", user: dict = Depends(get_current_user)):
+    """投递复盘数据。period=daily|weekly。"""
+    uid = user["app_user_id"]
+    days = 1 if period == "daily" else 7
+    cutoff = time.time() - days * 86400
+    apps = [a for a in db.list_applications(uid, limit=1000) if a.get("updated_at", 0) >= cutoff]
+    by_status = {}
+    for a in apps:
+        by_status[a["status"]] = by_status.get(a["status"], 0) + 1
+    submitted = by_status.get("submitted", 0)
+    interviewing = by_status.get("interviewing", 0)
+    rejected = by_status.get("rejected", 0)
+    responded = interviewing + rejected
+    # 来源分析：从 jobs 表按 source 聚合面试数
+    by_source = {}
+    for a in apps:
+        if a["status"] in ("interviewing", "submitted"):
+            src_name = "unknown"
+            by_source[src_name] = by_source.get(src_name, 0) + 1
+    events = [e for e in db.list_email_events(uid, limit=20) if e.get("created_at", 0) >= cutoff]
+    return {"period": period, "days": days,
+            "total": len(apps), "by_status": by_status,
+            "submitted": submitted, "interviewing": interviewing,
+            "rejected": rejected,
+            "response_rate": round(responded / submitted * 100, 1) if submitted else 0,
+            "events": events}
+
+
+@app.post("/api/v1/reports/advice")
+def report_advice(user: dict = Depends(get_current_user)):
+    """AI 复盘建议。"""
+    uid = user["app_user_id"]
+    apps = db.list_applications(uid, limit=200)
+    prof = db.get_profile(uid) or {}
+    if not llm.is_configured():
+        raise HTTPException(400, "AI 未配置")
+    # 汇总数据给 AI
+    by_status = {}
+    for a in apps:
+        by_status[a["status"]] = by_status.get(a["status"], 0) + 1
+    prompt = f"""你是求职顾问。根据以下投递数据，给出 3 条具体可执行的优化建议（中文，每条 30 字内）。
+
+画像目标职位：{(prof.get("targetTitles") or [])}
+投递总数：{len(apps)}
+状态分布：{by_status}
+
+只返回 JSON：{{"advice": ["建议1", "建议2", "建议3"]}}"""
+    try:
+        import httpx as _hx
+        cfg = llm.get_config()
+        r = _hx.post(f"{cfg['base_url']}/chat/completions",
+            headers={"Authorization": f"Bearer {cfg['api_key']}", "Content-Type": "application/json"},
+            json={"model": cfg["model"], "messages": [{"role": "user", "content": prompt}],
+                  "temperature": 0.3, "max_tokens": 300}, timeout=30)
+        r.raise_for_status()
+        data = llm._extract_json(r.json()["choices"][0]["message"]["content"])
+        return {"advice": (data or {}).get("advice", [])[:3]}
+    except Exception as e:
+        raise HTTPException(500, str(e)[:200])
+
+
+@app.get("/api/v1/email-events")
+def email_events(user: dict = Depends(get_current_user)):
+    return {"events": db.list_email_events(user["app_user_id"])}
+
+
 @app.get("/api/v1/account/export")
 def account_export(user: dict = Depends(get_current_user)):
     """导出本账号全部数据（JSON 下载）。"""
@@ -742,12 +867,70 @@ def chat(body: ChatIn, user: dict = Depends(get_current_user)):
                 history.append({"role": h["role"], "content": str(h["content"])[:1500]})
     history.append({"role": "user", "content": msg})
 
+    # Chatbot actions：先检测操作意图，执行后再让 LLM 回复
+    action_result = ""
+    try:
+        act = llm_mod.llm_detect_action(msg)
+    except Exception:
+        act = None
+    if act and act.get("action") not in (None, "none"):
+        try:
+            _q = queued
+        except NameError:
+            _q = []
+        action_result = _run_chat_action(uid, act, _q)
+        if action_result:
+            ctx.append("【刚才执行的操作】\n" + action_result)
+
     reply = llm_mod.llm_chat(CHAT_SYSTEM + "\n\n实时数据：\n" + "\n".join(ctx)[:MAX_CTX], history)
     if not reply:
         raise HTTPException(502, "助手暂不可用，请稍后重试")
     if cid and db.get_conversation(uid, cid):
         db.add_chat_message(uid, cid, "assistant", reply)
     return {"reply": reply, "conversation_id": cid}
+
+
+def _run_chat_action(uid: str, act: dict, queued: list) -> str:
+    """执行 chatbot 操作，返回中文结果描述。"""
+    action = act.get("action")
+    if action == "pause_schedule":
+        db.update_settings(uid, schedule_enabled=0)
+        return "已暂停自动投递 ✅"
+    if action == "resume_schedule":
+        db.update_settings(uid, schedule_enabled=1)
+        return "已恢复自动投递 ✅"
+    if action in ("add_to_queue", "mark_applied"):
+        wants = act.get("jobs") or []
+        if not wants:
+            return "没识别出是哪个职位，请说具体一点（比如：把 XX 公司那个加进去）"
+        # 在最近职位里模糊匹配
+        jobs = db.list_jobs(uid, limit=200) if hasattr(db, "list_jobs") else []
+        done, missed = [], []
+        for w in wants:
+            wl = str(w).lower()
+            hit = None
+            for j in jobs:
+                jl = f"{j.get('title','')} @ {j.get('company','')}".lower()
+                if wl in jl or jl in wl:
+                    hit = j
+                    break
+            if not hit:
+                missed.append(w)
+                continue
+            if action == "add_to_queue":
+                # 加入手动队列：插到 applications 为 queued
+                db.record_application(uid, hit["id"], "queued", "chatbot 手动加入")
+            else:
+                db.record_application(uid, hit["id"], "submitted", "chatbot 标记已手动投递")
+            done.append(f"{hit.get('title')} @ {hit.get('company')}")
+        parts = []
+        if done:
+            verb = "已加入投递队列 ✅" if action == "add_to_queue" else "已标记为已投递 ✅"
+            parts.append(verb + "：" + "、".join(done))
+        if missed:
+            parts.append("没找到：" + "、".join(missed))
+        return "\n".join(parts)
+    return ""
 
 
 # ---------- Web Push（手机浏览器通知，替代 ntfy App） ----------

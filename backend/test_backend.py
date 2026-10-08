@@ -527,3 +527,50 @@ def test_export_and_delete():
     c2 = TestClient(app.app)
     r = c2.post("/api/v1/auth/login", json={"username": "expdelqa", "password": "password123"})
     assert r.status_code == 401
+
+
+def test_gmail_oauth_flow():
+    c = _authed_client("gmailqa")
+    # 未配置时
+    s = c.get("/api/v1/gmail/status").json()
+    assert "connected" in s and "configured" in s
+    # state 存取消耗
+    import db as dbmod
+    dbmod.save_gmail_state("teststate123", "u_test123")
+    assert dbmod.consume_gmail_state("teststate123") == "u_test123"
+    assert dbmod.consume_gmail_state("teststate123") is None  # 一次性
+    # token 存取
+    dbmod.save_gmail_token("u_test123", "test@gmail.com", "refresh_xyz")
+    t = dbmod.get_gmail_token("u_test123")
+    assert t["email"] == "test@gmail.com"
+    assert len(dbmod.gmail_users()) >= 1
+    dbmod.delete_gmail_token("u_test123")
+    assert dbmod.get_gmail_token("u_test123") is None
+
+
+def test_email_events():
+    import db as dbmod
+    assert dbmod.add_email_event("u_ev1", "msg1", "interview", "Acme", "Engineer", "Interview!", "面试邀请")
+    assert not dbmod.add_email_event("u_ev1", "msg1", "interview", "Acme", "Engineer", "Interview!", "x")  # 去重
+    evs = dbmod.list_email_events("u_ev1")
+    assert len(evs) == 1 and evs[0]["kind"] == "interview"
+
+
+def test_reports():
+    c = _authed_client("repqa")
+    d = c.get("/api/v1/reports/digest?period=weekly").json()
+    assert d["period"] == "weekly" and "response_rate" in d
+    d2 = c.get("/api/v1/reports/digest?period=daily").json()
+    assert d2["days"] == 1
+
+
+def test_chat_actions():
+    c = _authed_client("actqa")
+    # 暂停/恢复投递（不需要 LLM，用直接调用测试 action 执行器）
+    import app as appmod
+    r = appmod._run_chat_action("u_actqa", {"action": "pause_schedule"}, [])
+    assert "已暂停" in r
+    r = appmod._run_chat_action("u_actqa", {"action": "resume_schedule"}, [])
+    assert "已恢复" in r
+    r = appmod._run_chat_action("u_actqa", {"action": "add_to_queue", "jobs": []}, [])
+    assert "没识别" in r or "具体" in r

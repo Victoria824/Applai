@@ -226,6 +226,32 @@ CREATE TABLE IF NOT EXISTS invites (
   used_at REAL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_invites_creator ON invites(created_by, created_at DESC);
+CREATE TABLE IF NOT EXISTS gmail_tokens (
+  user_id TEXT PRIMARY KEY,
+  email TEXT DEFAULT '',
+  refresh_token TEXT NOT NULL,
+  connected_at REAL NOT NULL,
+  last_sync REAL DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS gmail_oauth_states (
+  state TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL,
+  created_at REAL NOT NULL
+);
+CREATE TABLE IF NOT EXISTS email_events (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id TEXT NOT NULL,
+  gmail_msg_id TEXT NOT NULL,
+  kind TEXT NOT NULL,              -- interview | rejection | other
+  company TEXT DEFAULT '',
+  job_title TEXT DEFAULT '',
+  subject TEXT DEFAULT '',
+  summary TEXT DEFAULT '',
+  job_id INTEGER DEFAULT 0,       -- 关联到的 application/job
+  created_at REAL NOT NULL,
+  UNIQUE(user_id, gmail_msg_id)
+);
+CREATE INDEX IF NOT EXISTS idx_email_events_user ON email_events(user_id, created_at DESC);
 """
 
 def get_db():
@@ -593,6 +619,95 @@ def get_job_by_url(user_id: str, url: str):
     r = conn.execute("SELECT * FROM jobs WHERE user_id=? AND url=?", (user_id, url)).fetchone()
     conn.close()
     return dict(r) if r else None
+
+
+def save_gmail_state(state: str, user_id: str):
+    conn = get_db()
+    conn.execute("INSERT INTO gmail_oauth_states(state, user_id, created_at) VALUES(?,?,?)",
+                 (state, user_id, time.time()))
+    # 清理过期（1小时前）
+    conn.execute("DELETE FROM gmail_oauth_states WHERE created_at < ?", (time.time() - 3600,))
+    conn.commit()
+    conn.close()
+
+
+def consume_gmail_state(state: str):
+    conn = get_db()
+    r = conn.execute("SELECT user_id FROM gmail_oauth_states WHERE state=?", (state,)).fetchone()
+    if r:
+        conn.execute("DELETE FROM gmail_oauth_states WHERE state=?", (state,))
+        conn.commit()
+    conn.close()
+    return r["user_id"] if r else None
+
+
+def save_gmail_token(user_id: str, email: str, refresh_token: str):
+    conn = get_db()
+    conn.execute(
+        """INSERT INTO gmail_tokens(user_id, email, refresh_token, connected_at, last_sync)
+           VALUES(?,?,?,?,?)
+           ON CONFLICT(user_id) DO UPDATE SET email=excluded.email,
+           refresh_token=excluded.refresh_token, connected_at=excluded.connected_at""",
+        (user_id, email, refresh_token, time.time(), 0))
+    conn.commit()
+    conn.close()
+
+
+def get_gmail_token(user_id: str):
+    conn = get_db()
+    r = conn.execute("SELECT * FROM gmail_tokens WHERE user_id=?", (user_id,)).fetchone()
+    conn.close()
+    return dict(r) if r else None
+
+
+def delete_gmail_token(user_id: str):
+    conn = get_db()
+    conn.execute("DELETE FROM gmail_tokens WHERE user_id=?", (user_id,))
+    conn.commit()
+    conn.close()
+
+
+def touch_gmail_sync(user_id: str):
+    conn = get_db()
+    conn.execute("UPDATE gmail_tokens SET last_sync=? WHERE user_id=?", (time.time(), user_id))
+    conn.commit()
+    conn.close()
+
+
+def gmail_users() -> list:
+    """所有连了 Gmail 的用户（cron 用）。"""
+    conn = get_db()
+    rows = conn.execute("SELECT user_id, email, refresh_token FROM gmail_tokens").fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def add_email_event(user_id: str, msg_id: str, kind: str, company: str,
+                    job_title: str, subject: str, summary: str, job_id: int = 0) -> bool:
+    """返回 True=新事件，False=已存在。"""
+    conn = get_db()
+    try:
+        conn.execute(
+            """INSERT INTO email_events(user_id, gmail_msg_id, kind, company, job_title,
+               subject, summary, job_id, created_at)
+               VALUES(?,?,?,?,?,?,?,?,?)""",
+            (user_id, msg_id, kind, company or "", job_title or "", subject or "",
+             summary or "", job_id or 0, time.time()))
+        conn.commit()
+        is_new = True
+    except _IntegrityError:
+        is_new = False
+    conn.close()
+    return is_new
+
+
+def list_email_events(user_id: str, limit: int = 50) -> list:
+    conn = get_db()
+    rows = conn.execute(
+        "SELECT * FROM email_events WHERE user_id=? ORDER BY created_at DESC LIMIT ?",
+        (user_id, limit)).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
 
 
 def update_job_score(job_id: int, score: float, reasons: list, via: str = "rules"):
