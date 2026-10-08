@@ -9,6 +9,9 @@ jobs:
     steps:
       - uses: superfly/flyctl-actions/setup-flyctl@master
       - run: |
+          echo "--- env check ---"
+          flyctl ssh console --app applai-backend --command "sh -c 'env | grep -c DATABASE_URL'" 2>&1 | tail -2
+          echo "--- migrate ---"
           flyctl ssh console --app applai-backend --command \
             "sh -c 'cd /srv && APPLAI_DB=/data/applai.db python3 migrate_sqlite_to_pg.py'" 2>&1 | tail -25
         env:
