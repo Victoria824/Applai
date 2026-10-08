@@ -12,7 +12,7 @@ jobs:
       - uses: superfly/flyctl-actions/setup-flyctl@master
       - run: |
           curl -s --max-time 300 -X POST https://applai-backend.fly.dev/api/v1/admin/email-sync \
-            -H "x-cron-token: ${{ secrets.TEMP_CRON_TOKEN }}" | head -c 300
+            -H "x-cron-token: ${{ secrets.APPLAI_CRON_TOKEN }}" | head -c 300
           echo
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
