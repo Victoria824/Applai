@@ -1,0 +1,15 @@
+# 一次性：SQLite → Postgres 数据迁移。用完即删。
+name: pg-migrate-once
+on:
+  workflow_dispatch:
+
+jobs:
+  migrate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: superfly/flyctl-actions/setup-flyctl@master
+      - run: |
+          flyctl ssh console --app applai-backend --command \
+            "cd /app && APPLAI_DB=/data/applai.db python3 migrate_sqlite_to_pg.py" 2>&1 | tail -25
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
