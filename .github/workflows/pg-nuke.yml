@@ -9,7 +9,7 @@ jobs:
       - run: |
           set -eo pipefail
           echo "=== destroying ==="
-          flyctl postgres destroy --app applai-db --yes
+          flyctl postgres destroy applai-db --yes
           echo "=== waiting for destroy ==="
           for i in $(seq 1 30); do
             sleep 10
