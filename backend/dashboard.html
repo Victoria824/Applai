@@ -875,22 +875,24 @@ $("oneClickConnect").onclick = async () => {
     });
     token = d.token;
   } catch (e) { st.textContent = "创建 Token 失败 / Failed: " + e.message; return; }
-  const ok = await new Promise((resolve) => {
+  const res = await new Promise((resolve) => {
     const h = (e) => {
       if (e.source === window && e.data && e.data.type === "APPLAI_CONNECT_RESULT") {
         window.removeEventListener("message", h);
         clearTimeout(t);
-        resolve(!!e.data.ok);
+        resolve(e.data);
       }
     };
-    const t = setTimeout(() => { window.removeEventListener("message", h); resolve(false); }, 5000);
+    const t = setTimeout(() => { window.removeEventListener("message", h); resolve({ ok: false }); }, 5000);
     window.addEventListener("message", h);
     window.postMessage({ type: "APPLAI_CONNECT", token }, "*");
   });
-  if (ok) {
+  if (res.ok) {
     st.textContent = "";
     toast("插件已连接 ✓ / Connected（Token 已自动保存 / saved）");
     await loadTokens();
+  } else if (res.error === "context_invalidated") {
+    st.innerHTML = '插件刚更新过，请<b>刷新本页面</b>（F5）后再点一次一键连接。<span class=\"en\">Extension was reloaded — refresh this page (F5) and retry.</span>';
   } else {
     st.textContent = "传送失败，请用下面的手动方式复制 Token。/ Failed — copy the token manually below.";
   }

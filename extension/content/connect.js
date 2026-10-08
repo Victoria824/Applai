@@ -20,13 +20,26 @@
       return;
     }
     if (e.data.type === 'APPLAI_CONNECT' && typeof e.data.token === 'string') {
-      chrome.runtime.sendMessage(
-        { type: 'AUTOAPPLY_SAVE_TOKEN', token: e.data.token },
-        (resp) => {
-          const ok = !!(resp && resp.ok);
-          window.postMessage({ type: 'APPLAI_CONNECT_RESULT', ok }, '*');
-        }
-      );
+      // 插件刚被重新加载时，旧 tab 里的 content script 会失效
+      if (!chrome.runtime || !chrome.runtime.id) {
+        window.postMessage({ type: 'APPLAI_CONNECT_RESULT', ok: false, error: 'context_invalidated' }, '*');
+        return;
+      }
+      try {
+        chrome.runtime.sendMessage(
+          { type: 'AUTOAPPLY_SAVE_TOKEN', token: e.data.token },
+          (resp) => {
+            if (chrome.runtime.lastError) {
+              window.postMessage({ type: 'APPLAI_CONNECT_RESULT', ok: false, error: 'context_invalidated' }, '*');
+              return;
+            }
+            const ok = !!(resp && resp.ok);
+            window.postMessage({ type: 'APPLAI_CONNECT_RESULT', ok, error: resp && resp.error }, '*');
+          }
+        );
+      } catch (err) {
+        window.postMessage({ type: 'APPLAI_CONNECT_RESULT', ok: false, error: 'context_invalidated' }, '*');
+      }
     }
   });
 })();
