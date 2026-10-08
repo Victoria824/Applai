@@ -11,9 +11,6 @@ jobs:
     steps:
       - uses: superfly/flyctl-actions/setup-flyctl@master
       - run: |
-          # 首次运行时设置 CRON_TOKEN（之后复用）
-          flyctl secrets set --app applai-backend APPLAI_CRON_TOKEN="${{ secrets.TEMP_CRON_TOKEN }}" 2>&1 | tail -1 || true
-          sleep 30
           curl -s --max-time 300 -X POST https://applai-backend.fly.dev/api/v1/admin/email-sync \
             -H "x-cron-token: ${{ secrets.TEMP_CRON_TOKEN }}" | head -c 300
           echo
