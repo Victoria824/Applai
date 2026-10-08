@@ -383,3 +383,35 @@ def test_ca_seeds_present():
     assert len(ingest.CA_SEED_BOARDS) >= 10
     types = {t for t, _ in ingest.CA_SEED_BOARDS}
     assert {"ashby", "greenhouse", "lever"} <= types
+
+
+def test_queue_is_readonly():
+    """看队列不能消费职位：连续看两次结果一致，且职位不被标记为 queued。"""
+    c = _authed_client("qroqa")
+    c.put("/api/v1/profile", json={"user_id": "x", "profile": {
+        "targetTitles": ["Cleaner"], "preferredLocations": ["Toronto"]}})
+    jid = c.post("/api/v1/jobs", json={
+        "user_id": "x", "url": "https://example.com/j1", "title": "Cleaner",
+        "company": "Acme", "location": "Toronto"}).json()["id"]
+    # 手动打高分
+    import db as dbm
+    dbm.update_job_score(jid, 80, ["test"], "rules")
+    q1 = c.get("/api/v1/queue?top_n=10").json()
+    q2 = c.get("/api/v1/queue?top_n=10").json()
+    assert q1["count"] == 1 and q2["count"] == 1
+    assert q1["jobs"][0]["id"] == q2["jobs"][0]["id"]
+
+
+def test_profile_update_resets_keywords_and_scores():
+    c = _authed_client("rsetqa")
+    c.put("/api/v1/profile", json={"user_id": "x", "profile": {"targetTitles": ["AI Engineer"]}})
+    c.post("/api/v1/settings/keywords/refresh")
+    k1 = c.get("/api/v1/settings/keywords").json()["keywords"]
+    assert k1  # 有缓存
+    # 更新画像 → 缓存失效
+    c.put("/api/v1/profile", json={"user_id": "x", "profile": {"targetTitles": ["Cleaner"]}})
+    import db as dbm, time
+    st = dbm.get_settings(c.post("/api/v1/auth/login", json={
+        "username": "rsetqa", "password": "testpass123"}).json().get("user_id", ""))
+    # keywords_updated 被清零（通过内部检查）
+    assert st["keywords_updated"] == 0

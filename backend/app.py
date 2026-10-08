@@ -290,21 +290,55 @@ def discover(body: DiscoverIn, user: dict = Depends(get_current_user)):
     return {"ok": True, **_run_discover(uid, body.sources, body.limit)}
 
 
-@app.get("/api/v1/queue")
-def get_queue(user: dict = Depends(get_current_user), top_n: int = 10):
-    """今日投递队列：画像匹配 TopN，排除已处理过的职位。"""
-    uid = user["app_user_id"]
-    profile = db.get_profile(uid)
-    if not profile:
-        raise HTTPException(400, "profile not found, sync profile first")
+def _queue_jobs(uid: str, top_n: int = 10) -> list:
+    """待投递队列：用入库时的混合分数排序，排除已处理过的职位。"""
     jobs = db.list_jobs(uid, limit=500)
     done = db.applied_job_ids(uid)
-    fresh = [j for j in jobs if j["id"] not in done]
-    queue = matcher.build_queue(profile, fresh, top_n=top_n)
-    # 标记为 queued
-    for j in queue:
-        db.record_application(uid, j["id"], "queued", f"score {j['score']}")
+    fresh = [j for j in jobs
+             if j["id"] not in done and (j.get("score") or 0) >= 40]
+    fresh.sort(key=lambda j: (-j["score"], j.get("created_at", 0)))
+    return fresh[:top_n]
+
+
+@app.get("/api/v1/queue")
+def get_queue(user: dict = Depends(get_current_user), top_n: int = 10):
+    """今日投递队列：只读，无副作用。"""
+    uid = user["app_user_id"]
+    if not db.get_profile(uid):
+        raise HTTPException(400, "profile not found, sync profile first")
+    queue = _queue_jobs(uid, top_n)
     return {"user_id": uid, "count": len(queue), "jobs": queue}
+
+
+def _rescore_pending(uid: str):
+    """后台：画像变更后重打所有未处理职位。"""
+    try:
+        profile = db.get_profile(uid)
+        if not profile:
+            return
+        jobs = db.list_jobs(uid, limit=500)
+        done = db.applied_job_ids(uid)
+        for j in jobs:
+            if j["id"] in done or j.get("score") is not None:
+                continue
+            try:
+                score_and_store(uid, j["id"], profile)
+            except Exception:
+                continue
+    except Exception:
+        pass
+
+
+@app.put("/api/v1/profile")
+def put_profile(body: ProfileIn, user: dict = Depends(get_current_user)):
+    uid = user["app_user_id"]
+    db.upsert_profile(uid, body.profile)
+    # 画像变了：关键词缓存失效 + 未处理职位重打分（后台）
+    db.update_settings(uid, keywords_updated=0)
+    db.reset_scores(uid)
+    import threading
+    threading.Thread(target=_rescore_pending, args=(uid,), daemon=True).start()
+    return {"ok": True}
 
 
 @app.post("/api/v1/applications")
@@ -447,12 +481,14 @@ class ChatIn(BaseModel):
 
 
 CHAT_SYSTEM = """你是 Applai 的求职助手，一个友好、专业的 AI 顾问。
-你掌握用户求职画像、职位匹配队列、投递进度和职位描述（JD）全文。
+你掌握用户求职画像（含简历摘要）、职位匹配队列、投递进度和职位描述（JD）全文。
+关于职位来源，只说真话：Applai 通过以下渠道发现职位 —— 加拿大 Job Bank（联邦政府官方招聘站）、14 家多伦多/加拿大公司的官方招聘页（Wealthsimple、1Password、StackAdapt 等，通过 Greenhouse/Lever/Ashby 公开 API）、免费聚合源 Arbeitnow 和 Remotive，以及用户手动添加的公司。绝对不要提 Indeed、LinkedIn、Glassdoor 或"人工审核"，我们没有这些。
 职责：
 1. 回答投递进展问题（如"今天投了几个""哪些要人工处理"），用下面的实时数据回答，不要编造。
-2. 结合 JD 回答更广泛的问题：分析职位要求、对比多个职位、给面试/简历建议、评估匹配度。
-3. 回答简洁，中文为主，关键信息用条列。不要输出 JSON。
-4. 数据里没有的信息要承认不知道，不要 hallucinate。"""
+2. 结合 JD 回答更广泛的问题：分析职位要求、对比多个职位、给面试/简历建议、评估匹配度。用户问简历分析时，用画像里的简历摘要回答，不要说"没有简历数据"。
+3. 队列为空时，先看实时数据找原因（是从未抓取？还是抓到了但分数不够？），给出可操作的建议（如去"来源"页点"立即抓取"、检查画像关键词），不要说"市面上没有岗位"这种无法验证的话。
+4. 回答简洁，中文为主，关键信息用条列。不要输出 JSON。
+5. 数据里没有的信息要承认不知道，不要 hallucinate。"""
 
 MAX_CTX = 12000
 
@@ -470,18 +506,17 @@ def chat(body: ChatIn, user: dict = Depends(get_current_user)):
 
     ctx = []
     ctx.append("【用户画像】" + llm_mod._profile_text(profile)[:800])
+    if profile.get("summary"):
+        ctx.append("【简历摘要】" + str(profile["summary"])[:600])
     ctx.append("【统计】" + str(stats))
     lines = []
     for a in apps:
         lines.append(f"- {a.get('title','?')} @ {a.get('company','?')}：{a.get('status','?')}（{a.get('detail','')[:60]}）")
     ctx.append("【最近申请】\n" + ("\n".join(lines) if lines else "暂无"))
     try:
-        q = db.list_jobs(uid, 500)
-        done = db.applied_job_ids(uid)
-        queued = sorted([x for x in q if x["id"] not in done],
-                        key=lambda x: x.get("score", 0), reverse=True)
+        queued = _queue_jobs(uid, 15)
         ql = [f"- {j.get('title','?')} @ {j.get('company','?')}：{j.get('score',0)}分（{j.get('location','')}）"
-              for j in queued[:15]]
+              for j in queued]
         ctx.append("【待投递队列（按分数排序）】\n" + ("\n".join(ql) if ql else "队列为空"))
     except Exception:
         queued = []

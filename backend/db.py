@@ -161,6 +161,19 @@ def job_description(job: dict) -> str:
     return raw.get("description", "")
 
 
+def reset_scores(uid: str) -> int:
+    """画像变更后：未处理职位的分数清零，等待重打分。返回受影响行数。"""
+    conn = get_db()
+    cur = conn.execute(
+        """UPDATE jobs SET score=NULL, score_reasons=NULL, score_via=NULL WHERE user_id=?
+           AND id NOT IN (SELECT job_id FROM applications WHERE user_id=? AND status IN ('queued','filled','submitted','needs_manual'))""",
+        (uid, uid))
+    conn.commit()
+    n = cur.rowcount
+    conn.close()
+    return n
+
+
 def update_job_score(job_id: int, score: float, reasons: list, via: str = "rules"):
     conn = get_db()
     conn.execute("UPDATE jobs SET score=?, score_reasons=?, score_via=? WHERE id=?",
