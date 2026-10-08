@@ -7,11 +7,10 @@ jobs:
     steps:
       - uses: superfly/flyctl-actions/setup-flyctl@master
       - run: |
-          # 用 fly postgres connect（走内部信任）改 postgres 密码为已知值
-          echo "ALTER USER postgres PASSWORD '${{ secrets.TEMP_PG_PASS }}';" | \
-            flyctl postgres connect --app applai-db 2>&1 | tail -3
-          echo "=== password reset done ==="
-          # 确保业务库存在
-          echo "CREATE DATABASE applai;" | flyctl postgres connect --app applai-db 2>&1 | tail -2 || true
+          MID=$(flyctl machine list --app applai-db --json | python3 -c "import json,sys; ms=json.load(sys.stdin); print([m['id'] for m in ms if m['state']=='started'][0])")
+          echo "pg machine: $MID"
+          # secret 值在日志中自动脱敏，可直接内联
+          flyctl machine exec "$MID" --app applai-db -- sh -c 'psql -U postgres -c "ALTER USER postgres PASSWORD '"'"'${{ secrets.TEMP_PG_PASS }}'"'"';" 2>&1 | tail -3'
+          echo "=== password updated ==="
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
