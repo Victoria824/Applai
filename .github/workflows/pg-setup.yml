@@ -1,0 +1,30 @@
+# 一次性：创建 Fly Postgres 并 attach 到 applai-backend。用完即删。
+name: pg-setup-once
+on:
+  workflow_dispatch:
+
+jobs:
+  pg-setup:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: superfly/flyctl-actions/setup-flyctl@master
+      - run: |
+          # 已有则跳过创建
+          if flyctl postgres list --json 2>/dev/null | grep -q applai-db; then
+            echo "EXISTS=1" >> $GITHUB_ENV
+            echo "cluster already exists"
+          else
+            flyctl postgres create --name applai-db --region yyz \
+              --vm-size shared-cpu-1x --volume-size 1 --initial-cluster-size 1 \
+              --password "$(openssl rand -hex 16)"
+            echo "EXISTS=0" >> $GITHUB_ENV
+          fi
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+      - run: |
+          # attach（幂等：已 attach 会报错，忽略）
+          flyctl postgres attach --app applai-backend applai-db --yes 2>&1 | tail -3 || true
+          echo "--- app secrets ---"
+          flyctl secrets list --app applai-backend 2>&1 | head -10
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
