@@ -1,0 +1,15 @@
+name: pg-debug
+on:
+  workflow_dispatch:
+jobs:
+  d:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: superfly/flyctl-actions/setup-flyctl@master
+      - run: |
+          flyctl apps restart applai-backend 2>&1 | tail -2
+          sleep 30
+          MID=$(flyctl machine list --app applai-backend --json | python3 -c "import json,sys; ms=json.load(sys.stdin); print([m['id'] for m in ms if m['state']=='started'][0])")
+          flyctl machine exec --app applai-backend $MID "sh -c 'env | grep -i database | cut -c1-40'" 2>&1 | tail -3
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
