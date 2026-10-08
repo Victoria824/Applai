@@ -545,57 +545,6 @@ def create_my_invite(body: InviteIn, user: dict = Depends(get_current_user)):
     return {**inv, "link": f"https://applai-backend.fly.dev/?invite={inv['code']}"}
 
 
-@app.post("/api/v1/admin/migrate-sqlite")
-def admin_migrate_sqlite(request: Request):
-    """一次性：SQLite → PG 迁移。用完即删此接口。"""
-    token = os.environ.get("APPLAI_MIGRATE_TOKEN", "")
-    if not token or request.headers.get("x-migrate-token") != token:
-        raise HTTPException(403, "forbidden")
-    if not db.USE_PG:
-        raise HTTPException(400, "not on postgres")
-    import sqlite3 as _lite
-    lite_path = os.environ.get("APPLAI_DB", "/data/applai.db")
-    lite = _lite.connect(lite_path)
-    lite.row_factory = _lite.Row
-    # 复用迁移脚本的表定义
-    import importlib.util
-    spec = importlib.util.spec_from_file_location(
-        "mig", os.path.join(os.path.dirname(__file__), "migrate_sqlite_to_pg.py"))
-    mig = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mig)
-    pg = db.get_db()
-    total = 0
-    details = {}
-    for table, cols in mig.TABLES.items():
-        try:
-            rows = lite.execute(f"SELECT {', '.join(cols)} FROM {table}").fetchall()
-        except Exception:
-            continue
-        if not rows:
-            continue
-        placeholders = ", ".join(["?"] * len(cols))
-        col_list = ", ".join([f'"{c}"' for c in cols])
-        pk = cols[0]
-        sql = (f'INSERT INTO "{table}" ({col_list}) VALUES ({placeholders}) '
-               f'ON CONFLICT ("{pk}") DO NOTHING')
-        for r in rows:
-            pg.execute(sql, tuple(r[c] for c in cols))
-        pg.commit()
-        details[table] = len(rows)
-        total += len(rows)
-    for table in mig.SEQ_TABLES:
-        try:
-            seq_sql = ("SELECT setval(pg_get_serial_sequence('"" + table + ""', 'id'), "
-                       "COALESCE((SELECT MAX(id) FROM "" + table + ""), 0) + 1, false)")
-            pg.execute(seq_sql)
-            pg.commit()
-        except Exception:
-            pass
-    pg.close()
-    lite.close()
-    return {"ok": True, "total": total, "details": details}
-
-
 @app.get("/api/v1/account/export")
 def account_export(user: dict = Depends(get_current_user)):
     """导出本账号全部数据（JSON 下载）。"""
