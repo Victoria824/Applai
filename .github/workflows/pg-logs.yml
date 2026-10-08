@@ -1,0 +1,11 @@
+name: pg-logs
+on:
+  workflow_dispatch:
+jobs:
+  l:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: superfly/flyctl-actions/setup-flyctl@master
+      - run: flyctl logs --app applai-backend --no-tail 2>&1 | grep -iE "error|traceback|migrate" | tail -15
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
