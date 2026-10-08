@@ -1,0 +1,17 @@
+name: pg-fixpass
+on:
+  workflow_dispatch:
+jobs:
+  f:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: superfly/flyctl-actions/setup-flyctl@master
+      - run: |
+          # 用 fly postgres connect（走内部信任）改 postgres 密码为已知值
+          echo "ALTER USER postgres PASSWORD '${{ secrets.TEMP_PG_PASS }}';" | \
+            flyctl postgres connect --app applai-db 2>&1 | tail -3
+          echo "=== password reset done ==="
+          # 确保业务库存在
+          echo "CREATE DATABASE applai;" | flyctl postgres connect --app applai-db 2>&1 | tail -2 || true
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
