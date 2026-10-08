@@ -192,8 +192,14 @@ def _run_discover(uid: str, sources: list, limit: int = 100) -> dict:
     return {"seen": total_seen, "new": total_new}
 
 
-def _run_smart_discover(uid: str, limit: int = 60) -> dict:
+def _run_smart_discover(uid: str, limit: int = 60, progress=None) -> dict:
     """智能模式：LLM 按画像生成关键词 → 免费聚合源全网搜索 → 入库打分。手动来源照常抓取。"""
+    def pg(stage, done, total=100):
+        if progress:
+            try:
+                progress(stage, done, total)
+            except Exception:
+                pass
     profile = db.get_profile(uid)
     if not profile:
         raise HTTPException(400, "profile not found, sync profile first")
@@ -201,19 +207,22 @@ def _run_smart_discover(uid: str, limit: int = 60) -> dict:
     seen_keys = {(s["type"], s["key"]) for s in manual}
     seeds = [{"type": t, "key": k} for t, k in ingest.CA_SEED_BOARDS
              if (t, k) not in seen_keys]
+    pg("公司官网 / Company boards", 5)
     out = _run_discover(uid, manual + seeds, limit) if (manual or seeds) else {"seen": 0, "new": 0}
     kws, note = _keywords_for(uid, profile)
     if not kws:
         return {**out, "keywords": [], "mode": "seeds_only"}
     agg_new, agg_seen = 0, 0
-    agg_sources = [("jobbank", lambda: ingest.fetch_jobbank(kws, 40)),
-                   ("arbeitnow", lambda: ingest.fetch_arbeitnow(kws, limit)),
-                   ("remotive", lambda: ingest.fetch_remotive(kws, limit))]
-    for _name, fetcher in agg_sources:
+    stages = [("jobbank", "加拿大 Job Bank / Job Bank", lambda: ingest.fetch_jobbank(kws, 40)),
+              ("arbeitnow", "聚合源 Arbeitnow", lambda: ingest.fetch_arbeitnow(kws, limit)),
+              ("remotive", "聚合源 Remotive", lambda: ingest.fetch_remotive(kws, limit))]
+    for i, (_name, label, fetcher) in enumerate(stages):
+        pg(f"{label}（{i+1}/3）", 10 + i * 15)
         try:
             postings = fetcher()
         except Exception:
             continue
+        new_jobs = []
         for p in postings:
             agg_seen += 1
             job = db.add_job(uid, p["url"], p["title"], p["company"],
@@ -221,16 +230,57 @@ def _run_smart_discover(uid: str, limit: int = 60) -> dict:
                              description=p.get("description", ""))
             if job["is_new"]:
                 agg_new += 1
-                score_and_store(uid, job["id"], profile)
+                new_jobs.append(job["id"])
+        # AI 打分（只对新职位）
+        for j, jid in enumerate(new_jobs):
+            pg(f"AI 打分 / Scoring（{label} {j+1}/{len(new_jobs)}）", 10 + i * 15 + int(15 * j / max(1, len(new_jobs))))
+            try:
+                score_and_store(uid, jid, profile)
+            except Exception:
+                continue
+    pg("完成 / Done", 100)
     return {"seen": out["seen"] + agg_seen, "new": out["new"] + agg_new,
             "keywords": kws, "note": note, "mode": "smart"}
 
 
+import uuid as _uuid
+import threading as _threading
+DISCOVER_TASKS: dict = {}  # task_id -> {status, stage, done, total, new, seen, error}
+
+
+def _discover_task_set(task_id: str, **kw):
+    t = DISCOVER_TASKS.get(task_id)
+    if t:
+        t.update(kw)
+
+
+def _run_smart_discover_bg(uid: str, task_id: str):
+    try:
+        _discover_task_set(task_id, status="running", stage="公司官网 / Company boards", done=0, total=100)
+        res = _run_smart_discover(uid, progress=lambda s, d, t: _discover_task_set(task_id, stage=s, done=d, total=t))
+        _discover_task_set(task_id, status="done", stage="完成 / Done",
+                           done=100, total=100, new=res.get("new", 0), seen=res.get("seen", 0))
+    except Exception as e:
+        _discover_task_set(task_id, status="error", error=str(e)[:200])
+
+
 @app.post("/api/v1/jobs/discover/auto")
 def discover_auto(user: dict = Depends(get_current_user)):
-    """智能抓取（供每天定时任务调用）：手动来源 + LLM 关键词全网聚合源。"""
+    """智能抓取：立即返回任务 ID，后台执行，前端轮询进度。"""
     uid = user["app_user_id"]
-    return {"ok": True, **_run_smart_discover(uid)}
+    task_id = _uuid.uuid4().hex[:12]
+    DISCOVER_TASKS[task_id] = {"status": "running", "stage": "启动中 / Starting…",
+                               "done": 0, "total": 100, "new": 0, "seen": 0, "error": ""}
+    _threading.Thread(target=_run_smart_discover_bg, args=(uid, task_id), daemon=True).start()
+    return {"ok": True, "task_id": task_id, "status": "running"}
+
+
+@app.get("/api/v1/jobs/discover/status/{task_id}")
+def discover_status(task_id: str, user: dict = Depends(get_current_user)):
+    t = DISCOVER_TASKS.get(task_id)
+    if not t:
+        raise HTTPException(404, "task not found")
+    return {"ok": True, "task_id": task_id, **t}
 
 
 @app.get("/api/v1/settings")

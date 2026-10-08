@@ -185,11 +185,13 @@ def _jobbank_detail(url: str, timeout: int = 12) -> str:
 
 
 def fetch_jobbank(keywords: list, limit=60) -> list:
-    """加拿大 Job Bank RSS（联邦政府官方，免 key）。按关键词搜安省职位。"""
+    """加拿大 Job Bank RSS（联邦政府官方，免 key）。按关键词搜安省职位。详情页并行抓取。"""
     import xml.etree.ElementTree as ET
+    from concurrent.futures import ThreadPoolExecutor
     jobs, seen = [], set()
     queries = [k for k in (keywords or []) if k][:4] or [""]
     per_q = max(5, limit // max(1, len(queries)))
+    metas = []
     for q in queries:
         params = {"sort": "D", "rows": per_q, "fprov": "ON"}
         if q:
@@ -213,21 +215,32 @@ def fetch_jobbank(keywords: list, limit=60) -> list:
             loc_m = re.search(r"Location:</strong>\s*([^<]+)", summary)
             emp_m = re.search(r"Employer:</strong>\s*([^<]+)", summary)
             sal_m = re.search(r"Salary:</strong>\s*([^<]+)", summary)
-            location = (loc_m.group(1).strip() if loc_m else "")
-            employer = (emp_m.group(1).strip() if emp_m else "")
-            salary = (sal_m.group(1).strip() if sal_m else "")
-            desc = _jobbank_detail(url)
-            if salary:
-                desc = f"Salary: {salary}\n{desc}"
-            jobs.append({
-                "url": url,
-                "title": title,
-                "company": employer,
-                "location": location,
-                "source": "jobbank",
-                "raw": {},
-                "description": desc,
+            metas.append({
+                "url": url, "title": title,
+                "company": (emp_m.group(1).strip() if emp_m else ""),
+                "location": (loc_m.group(1).strip() if loc_m else ""),
+                "salary": (sal_m.group(1).strip() if sal_m else ""),
             })
-            if len(jobs) >= limit:
-                return jobs
+            if len(metas) >= limit:
+                break
+        if len(metas) >= limit:
+            break
+    # 详情页并行抓（IO 密集，8 线程）
+    urls = [m["url"] for m in metas]
+    descs = {}
+    try:
+        with ThreadPoolExecutor(max_workers=8) as ex:
+            for u, d in zip(urls, ex.map(_jobbank_detail, urls)):
+                descs[u] = d
+    except Exception:
+        pass
+    for m in metas:
+        desc = descs.get(m["url"], "")
+        if m["salary"]:
+            desc = f"Salary: {m['salary']}\n{desc}"
+        jobs.append({
+            "url": m["url"], "title": m["title"], "company": m["company"],
+            "location": m["location"], "source": "jobbank", "raw": {},
+            "description": desc,
+        })
     return jobs

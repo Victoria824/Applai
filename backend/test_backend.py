@@ -320,13 +320,23 @@ def test_job_sources():
     assert c2.delete(f"/api/v1/sources/{r.json()['id']}").status_code == 404
 
 
-def test_discover_auto_no_sources():
-    c = _authed_client("discauto")
+def test_discover_auto_async():
+    """discover/auto 立即返回 task_id，后台执行，轮询可查到 done。"""
+    import time as _time
+    c = _authed_client("discauto2")
     c.put("/api/v1/profile", json={"user_id": "x", "profile": {"email": "d@d.com"}})
     r = c.post("/api/v1/jobs/discover/auto")
     assert r.status_code == 200
     d = r.json()
-    assert d["mode"] == "seeds_only"  # 无关键词→只抓种子公司
+    assert d["status"] == "running" and d["task_id"]
+    # 轮询等完成（种子公司抓取较快）
+    for _ in range(60):
+        s = c.get(f"/api/v1/jobs/discover/status/{d['task_id']}").json()
+        if s["status"] in ("done", "error"):
+            break
+        _time.sleep(2)
+    assert s["status"] == "done", s.get("error")
+    assert s["seen"] >= 0 and "new" in s
 
 
 def test_settings():

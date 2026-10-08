@@ -239,6 +239,10 @@ button .en{font-size:10px; opacity:.72; margin-top:1px;}
   .conv-item{flex:none; border:1px solid var(--line); margin-bottom:0;}
   .conv-item .del{display:none;}
 }
+
+.prog{height:8px; background:#eee; border-radius:99px; overflow:hidden; margin-top:8px;}
+.prog-bar{height:100%; background:linear-gradient(90deg,#1677FF,#69b1ff); border-radius:99px; transition:width .4s;}
+#srcFetchBtn:disabled{opacity:.55; cursor:wait;}
 </style>
 </head>
 <body>
@@ -597,15 +601,41 @@ $("srcList").addEventListener("click", async (ev) => {
 });
 $("srcFetchBtn").onclick = async () => {
   clearErr();
-  $("srcStatus").textContent = "正在抓取（职位多的话要几十秒）…";
+  const btn = $("srcFetchBtn");
+  btn.disabled = true;
+  $("srcStatus").innerHTML = `<div class="prog"><div class="prog-bar" id="discBar" style="width:2%"></div></div>
+    <div class="hint" id="discStage" style="margin-top:6px">启动中…</div>`;
   try {
-    const d = await api("/api/v1/jobs/discover/auto", { method: "POST" });
-    $("srcStatus").textContent = d.note === "no sources configured"
-      ? "还没有配置来源，先添加。"
-      : `抓取完成：看到 ${d.seen} 个职位，新增 ${d.new} 个。`;
-    await loadQueue();
-    toast("抓取完成 ✓ / Done");
+    const t = await api("/api/v1/jobs/discover/auto", { method: "POST" });
+    const taskId = t.task_id;
+    const poll = setInterval(async () => {
+      try {
+        const s = await api(`/api/v1/jobs/discover/status/${taskId}`);
+        const pct = s.total ? Math.min(99, Math.round(s.done / s.total * 100)) : 2;
+        const bar = $("discBar"), stage = $("discStage");
+        if (bar) bar.style.width = pct + "%";
+        if (stage) stage.textContent = s.stage || "";
+        if (s.status === "done" || s.status === "error") {
+          clearInterval(poll);
+          btn.disabled = false;
+          if (s.status === "done") {
+            $("srcStatus").innerHTML = `抓取完成：看到 ${s.seen} 个职位，新增 ${s.new} 个。<span class=\"en\">Done: ${s.seen} seen, ${s.new} new.</span>`;
+            await loadQueue();
+            toast("抓取完成 ✓ / Done");
+          } else {
+            $("srcStatus").textContent = "";
+            showErr("抓取失败 / Fetch failed：" + (s.error || "未知错误"));
+          }
+        }
+      } catch (e) {
+        clearInterval(poll);
+        btn.disabled = false;
+        $("srcStatus").textContent = "";
+        showErr("抓取失败 / Fetch failed：" + e.message);
+      }
+    }, 2000);
   } catch (e) {
+    btn.disabled = false;
     $("srcStatus").textContent = "";
     showErr("抓取失败 / Fetch failed：" + e.message);
   }

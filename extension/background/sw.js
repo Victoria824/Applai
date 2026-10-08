@@ -178,8 +178,19 @@ async function runDailyQueue(trigger) {
 
   let queue;
   try {
-    // 先按用户保存的来源自动抓取新职位（失败不影响本次投递）
-    try { await apiPost('/api/v1/jobs/discover/auto', {}); } catch (e) { /* best effort */ }
+    // 先按用户保存的来源自动抓取新职位（异步任务，轮询等完成，最多等 6 分钟）
+    try {
+      const t = await apiPost('/api/v1/jobs/discover/auto', {});
+      if (t && t.task_id) {
+        for (let i = 0; i < 72; i++) {
+          await sleep(5000);
+          try {
+            const st = await apiGet(`/api/v1/jobs/discover/status/${t.task_id}`);
+            if (st.status === 'done' || st.status === 'error') break;
+          } catch (e) { break; }
+        }
+      }
+    } catch (e) { /* best effort */ }
     const data = await apiGet(`/api/v1/queue?top_n=${s.dailyCount}`);
     queue = data.jobs || [];
   } catch (e) {
