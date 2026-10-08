@@ -169,7 +169,21 @@ async function sha256hex(str) {
   return Array.from(new Uint8Array(buf)).map((b) => b.toString(16).padStart(2, '0')).join('');
 }
 
-async function recordSnapshot(userId, job, fillResult, profile) {
+async function getResumeForJob(jobId, profile) {
+  // 问后端该用哪版简历（画像开了改写 → 改写版 PDF；否则母版）
+  try {
+    const r = await apiGet(`/api/v1/resume/for-job?job_id=${jobId}`);
+    if (r.tailored && r.pdf_hash) {
+      const blob = await apiGet(`/api/v1/resume-blob/${r.pdf_hash}`);
+      return { name: r.filename, dataUrl: blob.data_url, versionId: r.version_id,
+               tailored: true, hash: r.pdf_hash };
+    }
+  } catch (e) { /* 降级用母版 */ }
+  const rf = (profile && profile.resumeFile) || {};
+  return { name: rf.name || "", dataUrl: rf.dataUrl || "", versionId: 0, tailored: false };
+}
+
+async function recordSnapshot(userId, job, fillResult, profile, resumeInfo) {
   try {
     const r = fillResult || {};
     const filled = (r.filled || []).filter((f) => !SNAPSHOT_PII.has(f.intent));
@@ -179,7 +193,10 @@ async function recordSnapshot(userId, job, fillResult, profile) {
     const prof = profile || {};
     const resumeFile = prof.resumeFile || {};
     let resumeHash = '', resumeDataUrl = '';
-    if (resumeFile.dataUrl) {
+    if (resumeInfo && resumeInfo.dataUrl) {
+      resumeHash = resumeInfo.hash || await sha256hex(resumeInfo.dataUrl);
+      resumeDataUrl = resumeInfo.dataUrl;
+    } else if (resumeFile.dataUrl) {
       resumeHash = await sha256hex(resumeFile.dataUrl);
       resumeDataUrl = resumeFile.dataUrl;
     }
@@ -191,9 +208,11 @@ async function recordSnapshot(userId, job, fillResult, profile) {
       filled_fields: filled.map((f) => ({ intent: f.intent, label: f.label, value: f.value })),
       salary_info: salaryParts.join('; '),
       cover_letter: prof.coverLetter || '',
-      resume_name: resumeFile.name || '',
-      resume_hash: resumeHash,
-      resume_data_url: resumeDataUrl,
+      resume_name: (resumeInfo && resumeInfo.name) || resumeFile.name || '',
+      resume_hash: (resumeInfo && resumeInfo.hash) || resumeHash,
+      resume_data_url: (resumeInfo && resumeInfo.dataUrl) || resumeDataUrl,
+      resume_version_id: (resumeInfo && resumeInfo.versionId) || 0,
+      resume_tailored: !!((resumeInfo && resumeInfo.tailored)),
     });
   } catch (e) { /* 快照失败不影响主流程 */ }
 }
@@ -256,11 +275,16 @@ async function runDailyQueue(trigger) {
       await sleep(rand(1500, 3500)); // 等动态表单渲染
 
       const { aap_profile: profile } = await chrome.storage.local.get(['aap_profile']);
-      const fill = await sendToTab(tab.id, { type: 'AUTOAPPLY_FILL', profile: profile || {}, options: {} }, 90000);
+      // 取该岗位该用的简历（画像开了改写 → 改写版；否则母版）
+      const resumeInfo = await getResumeForJob(job.id, profile);
+      if (resumeInfo.dataUrl) {
+        profile.resumeFile = { name: resumeInfo.name, dataUrl: resumeInfo.dataUrl };
+      }
+      const fill = await sendToTab(tab.id, { type: 'AUTOAPPLY_FILL', profile: profile || {}, options: {} }, 120000);
       if (!fill.ok) throw new Error('fill failed: ' + (fill.error || ''));
       const r = fill.result;
       // 投递留痕：填了什么先存下来（PII 已过滤）
-      await recordSnapshot(userId, job, r, profile);
+      await recordSnapshot(userId, job, r, profile, resumeInfo);
 
       if (r.captcha && r.captcha.present) {
         await recordApp(userId, job.id, 'needs_manual', `验证码（${r.captcha.type}）`);

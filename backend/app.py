@@ -17,6 +17,7 @@ import email_sync
 import gmail
 import ingest
 import matcher
+import resume_pdf
 
 SESSION_COOKIE = "aap_session"
 
@@ -118,6 +119,53 @@ def put_profile(body: ProfileIn, user: dict = Depends(get_current_user)):
 def get_profile(user: dict = Depends(get_current_user)):
     uid = user["app_user_id"]
     return {"user_id": uid, "profile": db.get_profile(uid)}
+
+
+class ProfileCreateIn(BaseModel):
+    name: str
+    profile: dict = Field(default_factory=dict)
+
+
+@app.get("/api/v1/profiles")
+def list_profiles(user: dict = Depends(get_current_user)):
+    return {"profiles": db.list_profiles(user["app_user_id"])}
+
+
+@app.post("/api/v1/profiles")
+def create_profile(body: ProfileCreateIn, user: dict = Depends(get_current_user)):
+    try:
+        return db.create_profile(user["app_user_id"], body.name, body.profile)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+@app.put("/api/v1/profiles/{pid}")
+def update_profile(pid: int, body: dict, user: dict = Depends(get_current_user)):
+    db.update_profile(pid, user["app_user_id"],
+                      profile=body.get("profile"),
+                      name=body.get("name"),
+                      tailor_enabled=body.get("tailor_enabled"))
+    return {"ok": True}
+
+
+@app.delete("/api/v1/profiles/{pid}")
+def delete_profile(pid: int, user: dict = Depends(get_current_user)):
+    try:
+        db.delete_profile(pid, user["app_user_id"])
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return {"ok": True}
+
+
+@app.post("/api/v1/profiles/{pid}/activate")
+def activate_profile(pid: int, user: dict = Depends(get_current_user)):
+    db.activate_profile(pid, user["app_user_id"])
+    # 激活后关键词缓存失效（画像变了）
+    try:
+        db.update_settings(user["app_user_id"], keywords_updated=0)
+    except Exception:
+        pass
+    return {"ok": True}
 
 
 @app.get("/api/v1/jobs/lookup")
@@ -663,6 +711,124 @@ def report_advice(user: dict = Depends(get_current_user)):
         return {"advice": (data or {}).get("advice", [])[:3]}
     except Exception as e:
         raise HTTPException(500, str(e)[:200])
+
+
+def _resume_text_from_profile(profile: dict) -> str:
+    """从画像的简历 PDF 提取文本。"""
+    rf = profile.get("resumeFile") or {}
+    data_url = rf.get("dataUrl") or ""
+    if not data_url or "," not in data_url:
+        return ""
+    try:
+        import base64 as _b64
+        from pypdf import PdfReader
+        import io as _io
+        raw = _b64.b64decode(data_url.split(",", 1)[1])
+        reader = PdfReader(_io.BytesIO(raw))
+        return "\n".join((p.extract_text() or "") for p in reader.pages)[:8000]
+    except Exception:
+        return ""
+
+
+@app.post("/api/v1/resume/tailor")
+def tailor_resume(body: dict, user: dict = Depends(get_current_user)):
+    """按岗位改写简历。body: {job_id, profile_id?}。返回版本信息。"""
+    uid = user["app_user_id"]
+    job_id = body.get("job_id")
+    if not job_id:
+        raise HTTPException(400, "job_id 必填")
+    pid = body.get("profile_id")
+    if pid:
+        profs = [p for p in db.list_profiles(uid) if p["id"] == pid]
+        if not profs:
+            raise HTTPException(404, "画像不存在")
+        ap = profs[0]
+        profile = ap["profile"]
+    else:
+        ap = db.get_active_profile(uid)
+        profile = ap.get("profile", {})
+        pid = ap.get("id", 0)
+    # 已有改写版本直接返回（幂等）
+    existing = db.get_resume_version(uid, pid, job_id)
+    if existing:
+        return {"version_id": existing["id"], "pdf_hash": existing["pdf_hash"], "cached": True}
+    # 取 JD 和简历文本
+    job = db.get_job(job_id) or {}
+    jd = db.job_description(job) or ""
+    resume_text = _resume_text_from_profile(profile)
+    if not resume_text:
+        raise HTTPException(400, "画像里没有可解析的简历 PDF")
+    if not jd:
+        raise HTTPException(400, "岗位没有描述，无法改写")
+    tailored = llm.llm_tailor_resume(resume_text, jd)
+    if not tailored:
+        raise HTTPException(502, "AI 改写失败，请稍后重试")
+    # 生成 PDF 并存储
+    import base64 as _b64
+    import hashlib as _hl
+    pdf_bytes = resume_pdf.generate_pdf(tailored, profile)
+    pdf_b64 = "data:application/pdf;base64," + _b64.b64encode(pdf_bytes).decode()
+    pdf_hash = _hl.sha256(pdf_b64.encode()).hexdigest()
+    db.save_resume_blob(pdf_hash, f"tailored-{job_id}.pdf", pdf_b64)
+    vid = db.save_resume_version(uid, pid, job_id, "tailored", tailored, pdf_hash)
+    return {"version_id": vid, "pdf_hash": pdf_hash, "cached": False}
+
+
+@app.get("/api/v1/resume/for-job")
+def resume_for_job(job_id: int, user: dict = Depends(get_current_user)):
+    """投递时取该用的简历：画像开了改写 → 返回改写版 PDF；否则返回母版。
+    返回 {pdf_hash, filename, version_id(0=母版), tailored: bool}。
+    插件再用 pdf_hash 下载。"""
+    uid = user["app_user_id"]
+    ap = db.get_active_profile(uid)
+    pid = ap.get("id", 0)
+    profile = ap.get("profile", {})
+    if ap.get("tailor_enabled"):
+        v = db.get_resume_version(uid, pid, job_id)
+        if not v:
+            # 现场生成（约 20-40 秒）
+            try:
+                job = db.get_job(job_id) or {}
+                jd = db.job_description(job) or ""
+                resume_text = _resume_text_from_profile(profile)
+                tailored = llm.llm_tailor_resume(resume_text, jd) if (resume_text and jd) else None
+                if tailored:
+                    import base64 as _b64
+                    import hashlib as _hl
+                    pdf_bytes = resume_pdf.generate_pdf(tailored, profile)
+                    pdf_b64 = "data:application/pdf;base64," + _b64.b64encode(pdf_bytes).decode()
+                    pdf_hash = _hl.sha256(pdf_b64.encode()).hexdigest()
+                    db.save_resume_blob(pdf_hash, f"tailored-{job_id}.pdf", pdf_b64)
+                    vid = db.save_resume_version(uid, pid, job_id, "tailored", tailored, pdf_hash)
+                    v = {"id": vid, "pdf_hash": pdf_hash}
+            except Exception:
+                v = None
+        if v:
+            return {"pdf_hash": v["pdf_hash"], "filename": f"tailored-{job_id}.pdf",
+                    "version_id": v["id"], "tailored": True}
+    # 母版
+    rf = profile.get("resumeFile") or {}
+    return {"pdf_hash": "", "filename": rf.get("name", ""),
+            "version_id": 0, "tailored": False,
+            "data_url": rf.get("dataUrl", "")}
+
+
+@app.get("/api/v1/resume/versions")
+def list_resume_versions(profile_id: int = 0, user: dict = Depends(get_current_user)):
+    """列出某画像的简历版本。"""
+    uid = user["app_user_id"]
+    conn = db.get_db()
+    if profile_id:
+        rows = conn.execute(
+            "SELECT id, job_id, kind, created_at FROM resume_versions "
+            "WHERE user_id=? AND profile_id=? ORDER BY id DESC LIMIT 50",
+            (uid, profile_id)).fetchall()
+    else:
+        rows = conn.execute(
+            "SELECT id, job_id, kind, created_at FROM resume_versions "
+            "WHERE user_id=? ORDER BY id DESC LIMIT 50", (uid,)).fetchall()
+    conn.close()
+    return {"versions": [dict(r) for r in rows]}
 
 
 @app.get("/api/v1/email-events")

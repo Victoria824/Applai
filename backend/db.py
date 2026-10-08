@@ -252,6 +252,29 @@ CREATE TABLE IF NOT EXISTS email_events (
   UNIQUE(user_id, gmail_msg_id)
 );
 CREATE INDEX IF NOT EXISTS idx_email_events_user ON email_events(user_id, created_at DESC);
+CREATE TABLE IF NOT EXISTS profiles (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id TEXT NOT NULL,
+  name TEXT NOT NULL,
+  profile_json TEXT NOT NULL DEFAULT '{}',
+  is_active INTEGER DEFAULT 0,
+  tailor_enabled INTEGER DEFAULT 0,   -- 是否按岗位自动优化简历
+  created_at REAL NOT NULL,
+  updated_at REAL NOT NULL,
+  UNIQUE(user_id, name)
+);
+CREATE INDEX IF NOT EXISTS idx_profiles_user ON profiles(user_id);
+CREATE TABLE IF NOT EXISTS resume_versions (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id TEXT NOT NULL,
+  profile_id INTEGER NOT NULL,
+  job_id INTEGER DEFAULT 0,
+  kind TEXT DEFAULT 'master',          -- master | tailored
+  content_json TEXT NOT NULL DEFAULT '{}',
+  pdf_hash TEXT DEFAULT '',
+  created_at REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_resume_ver ON resume_versions(user_id, profile_id, job_id);
 """
 
 def get_db():
@@ -268,6 +291,15 @@ def get_db():
         if "score_via" not in cols:
             pg.execute("ALTER TABLE jobs ADD COLUMN score_via TEXT DEFAULT 'rules'")
             pg.commit()
+        # Phase 4: 快照表加简历版本列
+        scols = {r["column_name"] for r in pg.execute(
+            "SELECT column_name FROM information_schema.columns WHERE table_name='application_snapshots'").fetchall()}
+        if "resume_version_id" not in scols:
+            pg.execute("ALTER TABLE application_snapshots ADD COLUMN resume_version_id INTEGER DEFAULT 0")
+            pg.commit()
+        if "resume_tailored" not in scols:
+            pg.execute("ALTER TABLE application_snapshots ADD COLUMN resume_tailored INTEGER DEFAULT 0")
+            pg.commit()
         pg.commit()
         return pg
     conn = sqlite3.connect(DB_PATH)
@@ -279,27 +311,25 @@ def get_db():
     if "score_via" not in cols:
         conn.execute("ALTER TABLE jobs ADD COLUMN score_via TEXT DEFAULT 'rules'")
         conn.commit()
+    # Phase 4: 快照表加简历版本列
+    scols = {r[1] for r in conn.execute("PRAGMA table_info(application_snapshots)").fetchall()}
+    if "resume_version_id" not in scols:
+        conn.execute("ALTER TABLE application_snapshots ADD COLUMN resume_version_id INTEGER DEFAULT 0")
+    if "resume_tailored" not in scols:
+        conn.execute("ALTER TABLE application_snapshots ADD COLUMN resume_tailored INTEGER DEFAULT 0")
+    conn.commit()
     return conn
 
 
 def upsert_profile(user_id: str, profile: dict):
-    conn = get_db()
-    now = time.time()
-    conn.execute(
-        """INSERT INTO users(user_id, profile_json, created_at, updated_at)
-           VALUES(?,?,?,?)
-           ON CONFLICT(user_id) DO UPDATE SET profile_json=excluded.profile_json, updated_at=excluded.updated_at""",
-        (user_id, json.dumps(profile, ensure_ascii=False), now, now),
-    )
-    conn.commit()
-    conn.close()
+    """向后兼容：更新当前激活画像的内容。"""
+    ap = get_active_profile(user_id)
+    update_profile(ap["id"], user_id, profile=profile)
 
 
 def get_profile(user_id: str) -> dict:
-    conn = get_db()
-    row = conn.execute("SELECT profile_json FROM users WHERE user_id=?", (user_id,)).fetchone()
-    conn.close()
-    return json.loads(row["profile_json"]) if row else {}
+    """向后兼容：返回当前激活画像的内容。"""
+    return get_active_profile(user_id).get("profile", {})
 
 
 def add_job(user_id: str, url: str, title="", company="", location="", source="manual",
@@ -451,16 +481,19 @@ def save_snapshot(uid: str, job_id: int, snap: dict):
     now = time.time()
     conn.execute(
         """INSERT INTO application_snapshots(user_id, job_id, job_url, site, jd_text, filled_fields,
-           salary_info, cover_letter, resume_hash, resume_name, created_at)
-           VALUES(?,?,?,?,?,?,?,?,?,?,?)
+           salary_info, cover_letter, resume_hash, resume_name,
+           resume_version_id, resume_tailored, created_at)
+           VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)
            ON CONFLICT(user_id, job_id) DO UPDATE SET job_url=excluded.job_url, site=excluded.site,
            jd_text=excluded.jd_text, filled_fields=excluded.filled_fields, salary_info=excluded.salary_info,
            cover_letter=excluded.cover_letter, resume_hash=excluded.resume_hash,
-           resume_name=excluded.resume_name, created_at=excluded.created_at""",
+           resume_name=excluded.resume_name, resume_version_id=excluded.resume_version_id,
+           resume_tailored=excluded.resume_tailored, created_at=excluded.created_at""",
         (uid, job_id, snap.get("job_url", ""), snap.get("site", ""), snap.get("jd_text", "")[:8000],
          json.dumps(snap.get("filled_fields", []), ensure_ascii=False)[:20000],
          snap.get("salary_info", "")[:500], snap.get("cover_letter", "")[:8000],
-         snap.get("resume_hash", ""), snap.get("resume_name", ""), now))
+         snap.get("resume_hash", ""), snap.get("resume_name", ""),
+         snap.get("resume_version_id", 0), 1 if snap.get("resume_tailored") else 0, now))
     conn.commit()
     conn.close()
 
@@ -710,6 +743,158 @@ def list_email_events(user_id: str, limit: int = 50) -> list:
     return [dict(r) for r in rows]
 
 
+def _ensure_default_profile(user_id: str) -> dict:
+    """没有画像时，从旧 users 表迁移一个默认画像。"""
+    conn = get_db()
+    r = conn.execute("SELECT id FROM profiles WHERE user_id=? LIMIT 1", (user_id,)).fetchone()
+    if r:
+        conn.close()
+        return {"id": r["id"]}
+    # 从旧表迁移
+    old = conn.execute("SELECT profile_json FROM users WHERE user_id=?", (user_id,)).fetchone()
+    profile_json = old["profile_json"] if old else "{}"
+    now = time.time()
+    cur = conn.execute(
+        "INSERT INTO profiles(user_id, name, profile_json, is_active, created_at, updated_at) "
+        "VALUES(?,?,?,?,?,?)",
+        (user_id, "默认画像", profile_json, 1, now, now))
+    pid = cur.lastrowid
+    conn.commit()
+    conn.close()
+    return {"id": pid}
+
+
+def list_profiles(user_id: str) -> list:
+    _ensure_default_profile(user_id)
+    conn = get_db()
+    rows = conn.execute(
+        "SELECT id, name, profile_json, is_active, tailor_enabled, created_at, updated_at "
+        "FROM profiles WHERE user_id=? ORDER BY is_active DESC, id", (user_id,)).fetchall()
+    out = []
+    for r in rows:
+        d = dict(r)
+        try:
+            d["profile"] = json.loads(d.pop("profile_json") or "{}")
+        except Exception:
+            d["profile"] = {}
+        d["is_active"] = bool(d["is_active"])
+        d["tailor_enabled"] = bool(d["tailor_enabled"])
+        out.append(d)
+    conn.close()
+    return out
+
+
+def get_active_profile(user_id: str) -> dict:
+    """返回 {id, name, profile, tailor_enabled}。"""
+    _ensure_default_profile(user_id)
+    conn = get_db()
+    r = conn.execute(
+        "SELECT id, name, profile_json, tailor_enabled FROM profiles "
+        "WHERE user_id=? AND is_active=1 LIMIT 1", (user_id,)).fetchone()
+    conn.close()
+    if not r:
+        return {"id": 0, "name": "", "profile": {}, "tailor_enabled": False}
+    d = dict(r)
+    try:
+        d["profile"] = json.loads(d.pop("profile_json") or "{}")
+    except Exception:
+        d["profile"] = {}
+    d["tailor_enabled"] = bool(d["tailor_enabled"])
+    return d
+
+
+def create_profile(user_id: str, name: str, profile: dict = None) -> dict:
+    _ensure_default_profile(user_id)
+    conn = get_db()
+    now = time.time()
+    try:
+        cur = conn.execute(
+            "INSERT INTO profiles(user_id, name, profile_json, is_active, created_at, updated_at) "
+            "VALUES(?,?,?,?,?,?)",
+            (user_id, name[:50], json.dumps(profile or {}, ensure_ascii=False), 0, now, now))
+        pid = cur.lastrowid
+        conn.commit()
+    except _IntegrityError:
+        conn.close()
+        raise ValueError("同名画像已存在")
+    conn.close()
+    return {"id": pid}
+
+
+def update_profile(profile_id: int, user_id: str, profile: dict = None,
+                   name: str = None, tailor_enabled: bool = None):
+    conn = get_db()
+    sets, vals = [], []
+    if profile is not None:
+        sets.append("profile_json=?")
+        vals.append(json.dumps(profile, ensure_ascii=False))
+    if name:
+        sets.append("name=?")
+        vals.append(name[:50])
+    if tailor_enabled is not None:
+        sets.append("tailor_enabled=?")
+        vals.append(1 if tailor_enabled else 0)
+    if sets:
+        sets.append("updated_at=?")
+        vals.append(time.time())
+        vals.extend([profile_id, user_id])
+        conn.execute(f"UPDATE profiles SET {', '.join(sets)} WHERE id=? AND user_id=?", vals)
+        conn.commit()
+    conn.close()
+
+
+def activate_profile(profile_id: int, user_id: str):
+    conn = get_db()
+    conn.execute("UPDATE profiles SET is_active=0 WHERE user_id=?", (user_id,))
+    conn.execute("UPDATE profiles SET is_active=1 WHERE id=? AND user_id=?", (profile_id, user_id))
+    conn.commit()
+    conn.close()
+
+
+def delete_profile(profile_id: int, user_id: str):
+    conn = get_db()
+    r = conn.execute("SELECT is_active FROM profiles WHERE id=? AND user_id=?",
+                     (profile_id, user_id)).fetchone()
+    if r and r["is_active"]:
+        conn.close()
+        raise ValueError("不能删除正在使用的画像")
+    conn.execute("DELETE FROM profiles WHERE id=? AND user_id=?", (profile_id, user_id))
+    conn.commit()
+    conn.close()
+
+
+def save_resume_version(user_id: str, profile_id: int, job_id: int,
+                        kind: str, content: dict, pdf_hash: str = "") -> int:
+    conn = get_db()
+    cur = conn.execute(
+        "INSERT INTO resume_versions(user_id, profile_id, job_id, kind, content_json, pdf_hash, created_at) "
+        "VALUES(?,?,?,?,?,?,?)",
+        (user_id, profile_id, job_id, kind, json.dumps(content, ensure_ascii=False),
+         pdf_hash, time.time()))
+    vid = cur.lastrowid
+    conn.commit()
+    conn.close()
+    return vid
+
+
+def get_resume_version(user_id: str, profile_id: int, job_id: int):
+    """取某画像针对某岗位的改写版本（没有返回 None）。"""
+    conn = get_db()
+    r = conn.execute(
+        "SELECT * FROM resume_versions WHERE user_id=? AND profile_id=? AND job_id=? "
+        "AND kind='tailored' ORDER BY id DESC LIMIT 1",
+        (user_id, profile_id, job_id)).fetchone()
+    conn.close()
+    if not r:
+        return None
+    d = dict(r)
+    try:
+        d["content"] = json.loads(d.get("content_json") or "{}")
+    except Exception:
+        d["content"] = {}
+    return d
+
+
 def update_job_score(job_id: int, score: float, reasons: list, via: str = "rules"):
     conn = get_db()
     conn.execute("UPDATE jobs SET score=?, score_reasons=?, score_via=? WHERE id=?",
@@ -938,15 +1123,24 @@ def claim_old_data(new_app_user_id: str, old_app_user_id: str) -> dict:
     conn = get_db()
     try:
         has = conn.execute("SELECT 1 FROM users WHERE user_id=?", (old_app_user_id,)).fetchone()
-        if not has:
+        has_p = conn.execute("SELECT 1 FROM profiles WHERE user_id=?", (old_app_user_id,)).fetchone()
+        if not has and not has_p:
             raise ValueError("找不到该旧用户 ID 的数据")
         # 职位 URL 冲突时保留新账号的（新账号刚注册通常为空）
         conn.execute("DELETE FROM jobs WHERE user_id=? AND url IN "
                      "(SELECT url FROM jobs WHERE user_id=?)",
                      (old_app_user_id, new_app_user_id))
         conn.execute("UPDATE users SET user_id=? WHERE user_id=?", (new_app_user_id, old_app_user_id))
+        # 新账号的自动默认画像是空的，删掉再接管旧画像（避免同名冲突）
+        if has_p:
+            conn.execute("DELETE FROM profiles WHERE user_id=?", (new_app_user_id,))
+        conn.execute("UPDATE profiles SET user_id=? WHERE user_id=?", (new_app_user_id, old_app_user_id))
         conn.execute("UPDATE jobs SET user_id=? WHERE user_id=?", (new_app_user_id, old_app_user_id))
         conn.execute("UPDATE applications SET user_id=? WHERE user_id=?",
+                     (new_app_user_id, old_app_user_id))
+        conn.execute("UPDATE resume_versions SET user_id=? WHERE user_id=?",
+                     (new_app_user_id, old_app_user_id))
+        conn.execute("UPDATE application_snapshots SET user_id=? WHERE user_id=?",
                      (new_app_user_id, old_app_user_id))
         conn.commit()
         return {"ok": True}

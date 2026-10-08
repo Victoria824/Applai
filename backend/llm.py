@@ -247,6 +247,63 @@ def llm_detect_action(msg: str, timeout: int = 20) -> dict | None:
         return None
 
 
+TAILOR_PROMPT = """你是简历优化师。根据目标岗位 JD，优化简历的措辞和排序，让它更匹配。
+
+【铁律 - 违反就整段作废】
+1. 绝不编造：不许新增公司、职位、时间段、数字、项目。所有事实必须来自原简历。
+2. 绝不删除任何一段经历（可以重排顺序，不可以删）。
+3. 日期、公司名、职位名、学校原样保留。
+
+【允许做的】
+1. 重写 bullet：用 JD 里的关键词改写措辞，突出相关经验；量化成果保留原数字。
+2. 调整 bullet 顺序：最相关的放前面。
+3. 重写 summary（一句话），贴合目标岗位。
+4. skills 列表重排，最相关的放前面（不许加原简历没有的技能）。
+
+只返回 JSON，不要解释：
+{"summary": "一句话",
+ "experiences": [{"company": "", "title": "", "dates": "", "bullets": ["", ""]}],
+ "skills": [""],
+ "education": ""}
+
+原简历文本：
+```
+{resume}
+```
+
+目标岗位 JD：
+```
+{jd}
+```
+"""
+
+
+def llm_tailor_resume(resume_text: str, jd: str, timeout: int = 90) -> dict | None:
+    """按 JD 改写简历文本。返回改写后的结构化内容；失败返回 None。"""
+    cfg = get_config()
+    if not cfg["api_key"]:
+        return None
+    prompt = TAILOR_PROMPT.format(
+        resume=(resume_text or "")[:5000],
+        jd=(jd or "")[:3000])
+    try:
+        r = httpx.post(
+            f"{cfg['base_url']}/chat/completions",
+            headers={"Authorization": f"Bearer {cfg['api_key']}", "Content-Type": "application/json"},
+            json={"model": cfg["model"],
+                  "messages": [{"role": "user", "content": prompt}],
+                  "temperature": 0.3, "max_tokens": 2000},
+            timeout=timeout,
+        )
+        r.raise_for_status()
+        data = _extract_json(r.json()["choices"][0]["message"]["content"])
+        if not data or not data.get("experiences"):
+            return None
+        return data
+    except Exception:
+        return None
+
+
 def llm_job_keywords(profile: dict, timeout: int = 60) -> dict | None:
     """画像 → 搜索关键词；失败返回 None（调用方用画像 targetTitles 兜底）。"""
     cfg = get_config()

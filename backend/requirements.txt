@@ -7,3 +7,4 @@ python-multipart
 pywebpush
 uvicorn[standard]>=0.30
 psycopg[binary]>=3.1
+reportlab>=4.0

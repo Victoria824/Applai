@@ -310,6 +310,7 @@ button .en{font-size:10px; opacity:.72; margin-top:1px;}
 
   <section class="page" id="page-profile">
     <div class="page-h"><h2>求职画像<span class="en">Profile</span></h2><p>你的简历与求职偏好，是职位匹配的基础。AI 会按画像生成搜索关键词。<span class="en">Your resume and preferences power job matching. AI generates search keywords from your profile.</span></p></div>
+    <div class="card" style="margin-bottom:12px"><div id="pfSwitcher"><div class="loading">加载中…</div></div></div>
     <div class="sec-head"><span></span><button id="pfEditBtn">编辑<span class="en">Edit</span></button></div>
     <div class="card" style="margin-top:12px">
       <div id="pfView" class="pf-view"><div class="loading">加载中…</div></div>
@@ -498,6 +499,10 @@ async function api(path, opts) {
   }
   return r.json();
 }
+
+const apiGet = (p) => api(p);
+const apiPost = (p, b) => api(p, { method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(b || {}) });
+const apiDel = (p) => api(p, { method: "DELETE" });
 
 let ME = null;
 function userId() { return ME ? ME.app_user_id : ""; }
@@ -688,6 +693,59 @@ $("srcFetchBtn").onclick = async () => {
   }
 };
 
+/* ---------- 多画像切换 ---------- */
+let allProfiles = [];
+async function loadProfiles() {
+  try {
+    const r = await apiGet("/api/v1/profiles");
+    allProfiles = r.profiles || [];
+    renderPfSwitcher();
+  } catch (e) {
+    $("pfSwitcher").innerHTML = `<div class="empty">加载失败<span class=\"en\">Failed</span></div>`;
+  }
+}
+function renderPfSwitcher() {
+  const box = $("pfSwitcher");
+  const chips = allProfiles.map((p) =>
+    `<button class="pf-chip${p.is_active ? " on" : ""}" data-pid="${p.id}" ${p.is_active ? "disabled" : ""}>${esc(p.name)}${p.is_active ? " ✓" : ""}</button>`
+  ).join("");
+  box.innerHTML = `<div class="pf-switcher">${chips}
+    <button class="pf-chip add" id="pfNewBtn">＋ 新建画像<span class="en">New</span></button></div>
+    <div class="hint" style="margin:8px 0 0">不同画像可配不同目标职位和简历（如 AI 工程师 / 全栈开发）。切换后关键词、匹配、投递都按当前画像走。<span class="en">Each profile has its own target titles and resume. Switching changes keywords, matching and applying.</span></div>`;
+  box.querySelectorAll(".pf-chip[data-pid]").forEach((b) => {
+    b.onclick = async () => {
+      await apiPost(`/api/v1/profiles/${b.dataset.pid}/activate`, {});
+      await loadProfiles(); await loadProfile();
+      toast("已切换画像 / Switched");
+    };
+  });
+  box.querySelectorAll(".pf-chip[data-pid]").forEach((b) => {
+    b.oncontextmenu = async (e) => {
+      e.preventDefault();
+      if (!confirm(`删除画像「${b.textContent.trim()}」？改写过的简历版本会保留。`)) return;
+      try { await apiDel(`/api/v1/profiles/${b.dataset.pid}`); await loadProfiles(); }
+      catch (err) { toast(err.message); }
+    };
+  });
+  $("pfNewBtn").onclick = async () => {
+    const name = prompt("新画像名称（如：全栈开发）", "");
+    if (!name || !name.trim()) return;
+    try {
+      const r = await apiPost("/api/v1/profiles", { name: name.trim() });
+      await apiPost(`/api/v1/profiles/${r.id}/activate`, {});
+      await loadProfiles(); await loadProfile();
+      toast("已创建并切换 / Created");
+    } catch (e) { toast(e.message); }
+  };
+}
+
+/* ---------- 多画像 ---------- */
+.pf-switcher { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.pf-chip { border: 1px solid #d0d7de; background: #fff; border-radius: 20px; padding: 6px 14px; cursor: pointer; font-size: 13px; }
+.pf-chip.on { background: #111827; color: #fff; border-color: #111827; cursor: default; }
+.pf-chip.add { border-style: dashed; color: #666; }
+.pf-chip:not(.on):hover { border-color: #111827; }
+
 /* ---------- 求职画像 ---------- */
 const LIST_KEYS = ["targetTitles", "industries", "preferredLocations"];
 const PF_FIELDS = [
@@ -711,7 +769,10 @@ const PF_FIELDS = [
   {k:"needsSponsorship", t:"需要雇主担保签证", type:"checkbox"},
   {k:"coverLetter", t:"通用求职信", type:"textarea"},
 ];
+const TAILOR_FIELD = {k:"_tailorEnabled", t:"按岗位自动优化简历（AI 按每份 JD 改写措辞，不编造经历）", type:"checkbox"};
 let currentProfile = null;   // 后端现有画像（含 resumeFile）
+let currentProfileId = 0;    // 当前激活画像 id
+let currentTailor = false;   // 当前画像是否开启按岗改写
 let pendingResume = null;    // 本次新上传的简历
 const toast = (msg) => {
   const t = $("toast"); t.textContent = msg; t.style.display = "block";
@@ -775,6 +836,7 @@ function renderPfForm(p) {
       h += `<label>${esc(fd.t)}<input type="${fd.type || "text"}" id="${id}" value="${val(fd.k)}"></label>`;
     }
   });
+  h += `<label class="check"><input type="checkbox" id="pf__tailorEnabled"${currentTailor ? " checked" : ""}> ${esc(TAILOR_FIELD.t)}<span class="en">Auto-tailor resume per job (AI rewrites wording, never invents experience)</span></label>`;
   const rf = p.resumeFile;
   h += `<label>简历 PDF <span style="font-size:12px">（${rf && rf.name ? "当前：" + esc(rf.name) + "，不选则保留" : "未上传"}）</span>
     <input type="file" id="pf_resume" accept=".pdf,.doc,.docx"></label>
@@ -829,6 +891,12 @@ async function loadProfile() {
   try {
     const d = await api(`/api/v1/profile?user_id=${encodeURIComponent(userId())}`);
     currentProfile = d.profile || null;
+    // 取当前画像的 id 和改写开关
+    try {
+      const r = await apiGet("/api/v1/profiles");
+      const act = (r.profiles || []).find((p) => p.is_active);
+      if (act) { currentProfileId = act.id; currentTailor = !!act.tailor_enabled; }
+    } catch (e2) {}
     renderPfView(currentProfile);
   } catch (e) {
     $("pfView").innerHTML = `<div class="empty">画像加载失败<span class=\"en\">Failed to load profile</span>：${esc(e.message)}</div>`;
@@ -869,6 +937,15 @@ async function saveProfile() {
       headers: {"Content-Type": "application/json"},
       body: JSON.stringify({user_id: userId(), profile: p})
     });
+    const tEl = $("pf__tailorEnabled");
+    if (tEl && currentProfileId) {
+      await api(`/api/v1/profiles/${currentProfileId}`, {
+        method: "PUT",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({ tailor_enabled: tEl.checked })
+      });
+      currentTailor = tEl.checked;
+    }
     // 刷新画像显示
     currentProfile = p;
     renderPfView(p);
@@ -880,6 +957,7 @@ async function saveProfile() {
 $("pfEditBtn").onclick = openPfEdit;
 $("pfCancelBtn").onclick = closePfEdit;
 $("pfSaveBtn").onclick = saveProfile;
+loadProfiles();
 
 (async () => {
   try {
