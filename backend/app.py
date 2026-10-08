@@ -391,6 +391,77 @@ def put_profile(body: ProfileIn, user: dict = Depends(get_current_user)):
     return {"ok": True}
 
 
+class SnapshotIn(BaseModel):
+    user_id: str
+    job_id: int
+    job_url: str = ""
+    site: str = ""
+    filled_fields: list = Field(default_factory=list)  # [{intent, label, value}]
+    salary_info: str = ""
+    cover_letter: str = ""
+    resume_name: str = ""
+    resume_hash: str = ""
+    resume_data_url: str = ""
+
+
+@app.post("/api/v1/applications/snapshot")
+def post_snapshot(body: SnapshotIn, user: dict = Depends(get_current_user)):
+    """投递留痕：保存某次投递的快照（表单填写、薪资、求职信、简历）。"""
+    uid = user["app_user_id"]
+    # 简历内容寻址存储（去重）
+    if body.resume_hash and body.resume_data_url:
+        db.save_resume_blob(body.resume_hash, body.resume_name, body.resume_data_url)
+    # JD 从职位库冻结一份
+    job = db.get_job(body.job_id) or {}
+    jd_text = ""
+    try:
+        jd_text = db.job_description({**job, "raw_json": job.get("raw_json")}) or ""
+    except Exception:
+        pass
+    if not jd_text:
+        jd_text = (job.get("description") or "")
+    site = body.site
+    if not site and body.job_url:
+        try:
+            from urllib.parse import urlparse
+            site = urlparse(body.job_url).hostname or ""
+        except Exception:
+            pass
+    db.save_snapshot(uid, body.job_id, {
+        "job_url": body.job_url or job.get("url", ""),
+        "site": site or job.get("source", ""),
+        "jd_text": jd_text,
+        "filled_fields": body.filled_fields,
+        "salary_info": body.salary_info,
+        "cover_letter": body.cover_letter,
+        "resume_hash": body.resume_hash,
+        "resume_name": body.resume_name,
+    })
+    return {"ok": True}
+
+
+@app.get("/api/v1/applications/{job_id}/snapshot")
+def get_snapshot(job_id: int, user: dict = Depends(get_current_user)):
+    uid = user["app_user_id"]
+    snap = db.get_snapshot(uid, job_id)
+    if not snap:
+        raise HTTPException(404, "snapshot not found")
+    # 简历正文不直接返回，前端按需下载
+    snap["has_resume"] = bool(snap.get("resume_hash"))
+    return {"snapshot": snap}
+
+
+@app.get("/api/v1/resume-blob/{file_hash}")
+def get_resume_blob(file_hash: str, user: dict = Depends(get_current_user)):
+    # 简单校验 hash 格式，避免路径遍历
+    if not re.fullmatch(r"[0-9a-f]{16,128}", file_hash or ""):
+        raise HTTPException(400, "bad hash")
+    blob = db.get_resume_blob_data(file_hash)
+    if not blob:
+        raise HTTPException(404, "resume not found")
+    return blob
+
+
 @app.post("/api/v1/applications")
 def post_application(body: ApplicationIn, user: dict = Depends(get_current_user)):
     if body.status not in ("queued", "filled", "submitted", "needs_manual", "failed", "skipped"):

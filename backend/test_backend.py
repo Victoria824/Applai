@@ -452,3 +452,37 @@ def test_chat_conversations():
     # 删除
     assert c.delete(f"/api/v1/chat/conversations/{cid}").json()["ok"]
     assert c.get(f"/api/v1/chat/conversations/{cid}/messages").status_code == 404
+
+
+def test_application_snapshot():
+    import hashlib
+    c = _authed_client("snapqa")
+    c.put("/api/v1/profile", json={"user_id": "x", "profile": {"email": "s@s.com"}})
+    jid = c.post("/api/v1/jobs", json={
+        "user_id": "x", "url": "https://example.com/snap1", "title": "Engineer",
+        "company": "Acme", "location": "Toronto"}).json()["id"]
+    c.post("/api/v1/applications", json={"user_id": "x", "job_id": jid, "status": "submitted"})
+    resume_data = "data:application/pdf;base64,QUJD"
+    rhash = hashlib.sha256(resume_data.encode()).hexdigest()
+    r = c.post("/api/v1/applications/snapshot", json={
+        "user_id": "x", "job_id": jid, "job_url": "https://example.com/snap1",
+        "site": "boards.greenhouse.io",
+        "filled_fields": [{"intent": "salaryMin", "label": "薪资下限", "value": "50"},
+                          {"intent": "firstName", "label": "名", "value": "不应存"}],
+        "salary_info": "薪资下限: 50",
+        "cover_letter": "Dear Hiring Manager...",
+        "resume_name": "resume.pdf", "resume_hash": rhash, "resume_data_url": resume_data})
+    assert r.json()["ok"]
+    # 读取快照（不含简历正文）
+    s = c.get(f"/api/v1/applications/{jid}/snapshot").json()["snapshot"]
+    assert s["site"] == "boards.greenhouse.io"
+    assert s["has_resume"] and s["resume_hash"] == rhash
+    assert "data_url" not in s
+    # 简历下载
+    b = c.get(f"/api/v1/resume-blob/{rhash}").json()
+    assert b["data_url"] == resume_data and b["filename"] == "resume.pdf"
+    # 历史列表带标记
+    apps = c.get("/api/v1/applications").json()["applications"]
+    assert any(a["job_id"] == jid and a["has_snapshot"] for a in apps)
+    # 404
+    assert c.get("/api/v1/applications/99999/snapshot").status_code == 404

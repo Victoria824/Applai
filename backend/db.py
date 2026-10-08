@@ -111,6 +111,29 @@ CREATE TABLE IF NOT EXISTS chat_messages (
 );
 CREATE INDEX IF NOT EXISTS idx_chat_conv_user ON chat_conversations(user_id, updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_chat_msg_conv ON chat_messages(conv_id, id);
+CREATE TABLE IF NOT EXISTS resume_blobs (
+  hash TEXT PRIMARY KEY,
+  filename TEXT DEFAULT '',
+  data_url TEXT NOT NULL,
+  size INTEGER DEFAULT 0,
+  created_at REAL NOT NULL
+);
+CREATE TABLE IF NOT EXISTS application_snapshots (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id TEXT NOT NULL,
+  job_id INTEGER NOT NULL,
+  job_url TEXT DEFAULT '',
+  site TEXT DEFAULT '',
+  jd_text TEXT DEFAULT '',
+  filled_fields TEXT DEFAULT '[]',
+  salary_info TEXT DEFAULT '',
+  cover_letter TEXT DEFAULT '',
+  resume_hash TEXT DEFAULT '',
+  resume_name TEXT DEFAULT '',
+  created_at REAL NOT NULL,
+  UNIQUE(user_id, job_id)
+);
+CREATE INDEX IF NOT EXISTS idx_snap_user ON application_snapshots(user_id, created_at DESC);
 """
 
 def get_db():
@@ -256,6 +279,78 @@ def rename_conversation(uid: str, cid: int, title: str):
     conn.close()
 
 
+def save_resume_blob(file_hash: str, filename: str, data_url: str) -> bool:
+    """内容寻址存简历，已存在则跳过（去重）。"""
+    if not file_hash or not data_url:
+        return False
+    conn = get_db()
+    exists = conn.execute("SELECT 1 FROM resume_blobs WHERE hash=?", (file_hash,)).fetchone()
+    if not exists:
+        conn.execute(
+            "INSERT INTO resume_blobs(hash, filename, data_url, size, created_at) VALUES(?,?,?,?,?)",
+            (file_hash, filename or "", data_url, len(data_url), time.time()))
+        conn.commit()
+    conn.close()
+    return True
+
+
+def get_resume_blob(file_hash: str):
+    conn = get_db()
+    r = conn.execute("SELECT hash, filename, size, created_at FROM resume_blobs WHERE hash=?",
+                     (file_hash,)).fetchone()
+    conn.close()
+    return dict(r) if r else None
+
+
+def get_resume_blob_data(file_hash: str):
+    conn = get_db()
+    r = conn.execute("SELECT data_url, filename FROM resume_blobs WHERE hash=?", (file_hash,)).fetchone()
+    conn.close()
+    return dict(r) if r else None
+
+
+def save_snapshot(uid: str, job_id: int, snap: dict):
+    conn = get_db()
+    now = time.time()
+    conn.execute(
+        """INSERT INTO application_snapshots(user_id, job_id, job_url, site, jd_text, filled_fields,
+           salary_info, cover_letter, resume_hash, resume_name, created_at)
+           VALUES(?,?,?,?,?,?,?,?,?,?,?)
+           ON CONFLICT(user_id, job_id) DO UPDATE SET job_url=excluded.job_url, site=excluded.site,
+           jd_text=excluded.jd_text, filled_fields=excluded.filled_fields, salary_info=excluded.salary_info,
+           cover_letter=excluded.cover_letter, resume_hash=excluded.resume_hash,
+           resume_name=excluded.resume_name, created_at=excluded.created_at""",
+        (uid, job_id, snap.get("job_url", ""), snap.get("site", ""), snap.get("jd_text", "")[:8000],
+         json.dumps(snap.get("filled_fields", []), ensure_ascii=False)[:20000],
+         snap.get("salary_info", "")[:500], snap.get("cover_letter", "")[:8000],
+         snap.get("resume_hash", ""), snap.get("resume_name", ""), now))
+    conn.commit()
+    conn.close()
+
+
+def get_snapshot(uid: str, job_id: int):
+    conn = get_db()
+    r = conn.execute(
+        "SELECT * FROM application_snapshots WHERE user_id=? AND job_id=?", (uid, job_id)).fetchone()
+    conn.close()
+    if not r:
+        return None
+    d = dict(r)
+    try:
+        d["filled_fields"] = json.loads(d.get("filled_fields") or "[]")
+    except Exception:
+        d["filled_fields"] = []
+    d.pop("id", None)
+    return d
+
+
+def snapshot_job_ids(uid: str) -> set:
+    conn = get_db()
+    rows = conn.execute("SELECT job_id FROM application_snapshots WHERE user_id=?", (uid,)).fetchall()
+    conn.close()
+    return {r["job_id"] for r in rows}
+
+
 def update_job_score(job_id: int, score: float, reasons: list, via: str = "rules"):
     conn = get_db()
     conn.execute("UPDATE jobs SET score=?, score_reasons=?, score_via=? WHERE id=?",
@@ -310,7 +405,11 @@ def list_applications(user_id: str, limit=200) -> list:
            JOIN jobs j ON j.id = a.job_id
            WHERE a.user_id=? ORDER BY a.updated_at DESC LIMIT ?""", (user_id, limit))
     out = [dict(r) for r in rows]
+    snaps = {r["job_id"] for r in conn.execute(
+        "SELECT job_id FROM application_snapshots WHERE user_id=?", (user_id,)).fetchall()}
     conn.close()
+    for o in out:
+        o["has_snapshot"] = o["job_id"] in snaps
     return out
 
 

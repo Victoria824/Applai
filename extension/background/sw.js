@@ -159,6 +159,45 @@ function waitForTabLoad(tabId, timeoutMs) {
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const rand = (a, b) => a + Math.random() * (b - a);
 
+// 快照不存的个人标识字段
+const SNAPSHOT_PII = new Set(['firstName', 'lastName', 'email', 'phone', 'address', 'location',
+  'linkedin', 'github', 'website', 'dob', 'ssn', 'sin', 'passport', 'name']);
+const SNAPSHOT_SALARY_KEYS = new Set(['salaryMin', 'salaryMax', 'salaryCurrency', 'salaryPeriod']);
+
+async function sha256hex(str) {
+  const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(str));
+  return Array.from(new Uint8Array(buf)).map((b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+async function recordSnapshot(userId, job, fillResult, profile) {
+  try {
+    const r = fillResult || {};
+    const filled = (r.filled || []).filter((f) => !SNAPSHOT_PII.has(f.intent));
+    const salaryParts = (r.filled || [])
+      .filter((f) => SNAPSHOT_SALARY_KEYS.has(f.intent))
+      .map((f) => `${f.label || f.intent}: ${f.value || ''}`);
+    const prof = profile || {};
+    const resumeFile = prof.resumeFile || {};
+    let resumeHash = '', resumeDataUrl = '';
+    if (resumeFile.dataUrl) {
+      resumeHash = await sha256hex(resumeFile.dataUrl);
+      resumeDataUrl = resumeFile.dataUrl;
+    }
+    await apiPost('/api/v1/applications/snapshot', {
+      user_id: userId,
+      job_id: job.id,
+      job_url: job.url || '',
+      site: '',
+      filled_fields: filled.map((f) => ({ intent: f.intent, label: f.label, value: f.value })),
+      salary_info: salaryParts.join('; '),
+      cover_letter: prof.coverLetter || '',
+      resume_name: resumeFile.name || '',
+      resume_hash: resumeHash,
+      resume_data_url: resumeDataUrl,
+    });
+  } catch (e) { /* 快照失败不影响主流程 */ }
+}
+
 async function recordApp(userId, jobId, status, detail) {
   try {
     await apiPost('/api/v1/applications', { user_id: userId, job_id: jobId, status, detail: detail || '' });
@@ -220,6 +259,8 @@ async function runDailyQueue(trigger) {
       const fill = await sendToTab(tab.id, { type: 'AUTOAPPLY_FILL', profile: profile || {}, options: {} }, 90000);
       if (!fill.ok) throw new Error('fill failed: ' + (fill.error || ''));
       const r = fill.result;
+      // 投递留痕：填了什么先存下来（PII 已过滤）
+      await recordSnapshot(userId, job, r, profile);
 
       if (r.captcha && r.captcha.present) {
         await recordApp(userId, job.id, 'needs_manual', `验证码（${r.captcha.type}）`);

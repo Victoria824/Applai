@@ -339,13 +339,21 @@
         radios[m.index].click();
         mark(radios[m.index], true);
         filledKeys.add(key);
-        report.filled.push({ intent: key, label: shortLabel(sig) });
+        report.filled.push({ intent: key, label: shortLabel(sig), value: snapValue(key, radioOptionLabel(radios[m.index]) || value) });
       } else {
         radios.forEach((r) => mark(r, false));
         report.needsReview.push({ intent: key, label: shortLabel(sig), reason: '单选选项无法匹配' });
         filledKeys.add(key);
       }
     }
+  }
+
+  /* 快照用：把填入值截断成可读字符串 */
+  function snapValue(key, value) {
+    let s = String(value == null ? '' : value);
+    // 长文本（求职信等）只留前 300 字，快照里单独存全文
+    if (s.length > 300) s = s.slice(0, 300) + '…';
+    return s;
   }
 
   /* ---------- 主流程 ---------- */
@@ -381,7 +389,7 @@
       if (ok) {
         mark(f.el, true);
         filledKeys.add(key);
-        report.filled.push({ intent: key, label: shortLabel(f.sig) });
+        report.filled.push({ intent: key, label: shortLabel(f.sig), value: snapValue(key, value) });
       } else {
         mark(f.el, false);
         report.missing.push({ intent: key, label: shortLabel(f.sig), reason: '无法填入（选项无匹配或控件无响应）' });
@@ -408,7 +416,8 @@
     for (const f of fileInputs) {
       if (attachResume(f, profile)) {
         mark(f, true);
-        report.filled.push({ intent: 'resume', label: shortLabel(fieldSignature(f)) });
+        report.filled.push({ intent: 'resume', label: shortLabel(fieldSignature(f)),
+          value: (profile.resumeFile && profile.resumeFile.name) || '已附简历' });
       } else {
         manualFiles.push(f);
       }

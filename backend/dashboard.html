@@ -243,6 +243,10 @@ button .en{font-size:10px; opacity:.72; margin-top:1px;}
 .prog{height:8px; background:#eee; border-radius:99px; overflow:hidden; margin-top:8px;}
 .prog-bar{height:100%; background:linear-gradient(90deg,#1677FF,#69b1ff); border-radius:99px; transition:width .4s;}
 #srcFetchBtn:disabled{opacity:.55; cursor:wait;}
+
+.snap-table{width:100%; border-collapse:collapse; font-size:13px; margin:6px 0;}
+.snap-table td{border-bottom:1px solid var(--line); padding:7px 4px; vertical-align:top;}
+.snap-table tr:last-child td{border-bottom:none;}
 </style>
 </head>
 <body>
@@ -369,6 +373,13 @@ button .en{font-size:10px; opacity:.72; margin-top:1px;}
     <div class="page-h"><h2>申请历史<span class="en">History</span></h2><p>所有投递记录与状态变更。<span class="en">All applications and status changes.</span></p></div>
     <div class="card-title">申请历史<span class="en">History</span></div>
     <div id="history"><div class="loading">加载中…</div></div>
+    <div id="snapModal" class="modal" style="display:none">
+      <div class="modal-box" style="max-width:640px">
+        <div class="card-title">投递快照<span class="en">Application snapshot</span>
+          <button class="ghost-btn" id="snapClose" style="margin-left:auto">关闭<span class="en">Close</span></button></div>
+        <div id="snapBody"><div class="loading">加载中…</div></div>
+      </div>
+    </div>
   </section>
 
   <section class="page" id="page-schedule">
@@ -497,12 +508,14 @@ function appCard(a, showActions) {
       <button class="primary" data-act="submitted" data-job="${a.job_id}">已手动投递<span class=\"en\">Done manually</span></button>
       <button data-act="skipped" data-job="${a.job_id}">跳过</button>
     </div>` : "";
+  const snapBtn = a.has_snapshot
+    ? `<div class="actions"><button data-snap="${a.job_id}">📸 查看投递快照<span class=\"en\">View snapshot</span></button></div>` : "";
   return `<div class="card"><div class="top"><div>
     <h3>${esc(a.title || "(未知职位)")} ${stBadge(a.status)}</h3>
     <div class="meta">${esc(a.company || "")}</div></div></div>
     ${a.detail ? `<div class="detail">${esc(a.detail)}</div>` : ""}
     <div class="time">更新于 ${esc(fmtTime(a.updated_at))}</div>
-    ${btns}</div>`;
+    ${btns}${snapBtn}</div>`;
 }
 
 async function loadQueue() {
@@ -1329,6 +1342,53 @@ $("parseModalSave").onclick = () => {
   saveProfile();
 };
 $("parseModal").addEventListener("click", (e) => { if (e.target.id === "parseModal") hideParseModal(); });
+
+
+/* ---------- 投递快照 ---------- */
+document.addEventListener("click", (e) => {
+  const b = e.target.closest("[data-snap]");
+  if (b) openSnapshot(+b.dataset.snap);
+});
+$("snapClose").onclick = () => { $("snapModal").style.display = "none"; };
+$("snapModal").addEventListener("click", (e) => { if (e.target.id === "snapModal") $("snapModal").style.display = "none"; });
+async function openSnapshot(jobId) {
+  $("snapModal").style.display = "flex";
+  $("snapBody").innerHTML = '<div class="loading">加载中…</div>';
+  try {
+    const d = await api(`/api/v1/applications/${jobId}/snapshot?user_id=${encodeURIComponent(userId())}`);
+    const s = d.snapshot;
+    const fields = (s.filled_fields || []).map((f) =>
+      `<tr><td style="color:var(--muted);width:38%">${esc(f.label || f.intent)}</td><td>${esc(f.value || "")}</td></tr>`).join("");
+    $("snapBody").innerHTML = `
+      <div class="meta" style="margin-bottom:10px">
+        ${s.job_url ? `<a href="${esc(s.job_url)}" target="_blank" rel="noopener">岗位原链接 ↗</a> · ` : ""}
+        投递网站：${esc(s.site || "未知")}<br>
+        <span style="color:var(--muted);font-size:12px">快照时间：${esc(fmtTime(s.created_at))}</span>
+      </div>
+      ${s.salary_info ? `<div class="card-title" style="font-size:14px">填写的薪资<span class=\"en\">Salary filled</span></div>
+        <div class="detail">${esc(s.salary_info)}</div>` : ""}
+      <div class="card-title" style="font-size:14px">填写的字段（已过滤姓名电话等隐私）<span class=\"en\">Filled fields (PII excluded)</span></div>
+      ${fields ? `<table class="snap-table"><tbody>${fields}</tbody></table>` : '<div class="hint">无字段记录</div>'}
+      ${s.cover_letter ? `<div class="card-title" style="font-size:14px;margin-top:12px">发出的求职信<span class=\"en\">Cover letter sent</span></div>
+        <div class="detail" style="white-space:pre-wrap;max-height:220px;overflow-y:auto">${esc(s.cover_letter)}</div>` : ""}
+      ${s.jd_text ? `<div class="card-title" style="font-size:14px;margin-top:12px">岗位描述<span class=\"en\">Job description</span></div>
+        <details><summary style="cursor:pointer;color:var(--blue);font-size:13px">展开查看 / Expand</summary>
+        <div class="detail" style="white-space:pre-wrap;max-height:260px;overflow-y:auto;margin-top:6px">${esc(s.jd_text.slice(0, 4000))}</div></details>` : ""}
+      ${s.has_resume ? `<div class="actions" style="margin-top:12px">
+        <button class="primary" id="snapResumeBtn">下载当时投递的简历<span class=\"en\">Download resume</span></button></div>` : ""}`;
+    const rb = $("snapResumeBtn");
+    if (rb) rb.onclick = async () => {
+      try {
+        const r = await api(`/api/v1/resume-blob/${s.resume_hash}?user_id=${encodeURIComponent(userId())}`);
+        const a = document.createElement("a");
+        a.href = r.data_url; a.download = r.filename || "resume.pdf";
+        document.body.appendChild(a); a.click(); a.remove();
+      } catch (err) { toast("下载失败 / Download failed: " + err.message); }
+    };
+  } catch (e) {
+    $("snapBody").innerHTML = `<div class="empty">快照不存在或加载失败：${esc(e.message)}</div>`;
+  }
+}
 
 </script>
 </body>
