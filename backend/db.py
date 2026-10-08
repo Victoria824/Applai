@@ -94,6 +94,23 @@ CREATE TABLE IF NOT EXISTS api_tokens (
   created_at INTEGER NOT NULL,
   last_used INTEGER
 );
+CREATE TABLE IF NOT EXISTS chat_conversations (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id TEXT NOT NULL,
+  title TEXT DEFAULT '',
+  created_at REAL NOT NULL,
+  updated_at REAL NOT NULL
+);
+CREATE TABLE IF NOT EXISTS chat_messages (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  conv_id INTEGER NOT NULL,
+  user_id TEXT NOT NULL,
+  role TEXT NOT NULL,
+  content TEXT NOT NULL,
+  created_at REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_chat_conv_user ON chat_conversations(user_id, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_chat_msg_conv ON chat_messages(conv_id, id);
 """
 
 def get_db():
@@ -172,6 +189,71 @@ def reset_scores(uid: str) -> int:
     n = cur.rowcount
     conn.close()
     return n
+
+
+def create_conversation(uid: str, title: str = "") -> dict:
+    conn = get_db()
+    now = time.time()
+    cur = conn.execute(
+        "INSERT INTO chat_conversations(user_id, title, created_at, updated_at) VALUES(?,?,?,?)",
+        (uid, title or "新对话", now, now))
+    cid = cur.lastrowid
+    conn.commit()
+    conn.close()
+    return {"id": cid, "title": title or "新对话"}
+
+
+def list_conversations(uid: str, limit: int = 50) -> list:
+    conn = get_db()
+    rows = conn.execute(
+        "SELECT id, title, updated_at FROM chat_conversations WHERE user_id=? ORDER BY updated_at DESC LIMIT ?",
+        (uid, limit)).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def get_conversation(uid: str, cid: int):
+    conn = get_db()
+    r = conn.execute(
+        "SELECT id, title FROM chat_conversations WHERE id=? AND user_id=?", (cid, uid)).fetchone()
+    conn.close()
+    return dict(r) if r else None
+
+
+def delete_conversation(uid: str, cid: int):
+    conn = get_db()
+    conn.execute("DELETE FROM chat_messages WHERE conv_id=? AND user_id=?", (cid, uid))
+    conn.execute("DELETE FROM chat_conversations WHERE id=? AND user_id=?", (cid, uid))
+    conn.commit()
+    conn.close()
+
+
+def add_chat_message(uid: str, cid: int, role: str, content: str):
+    conn = get_db()
+    now = time.time()
+    conn.execute(
+        "INSERT INTO chat_messages(conv_id, user_id, role, content, created_at) VALUES(?,?,?,?,?)",
+        (cid, uid, role, content, now))
+    conn.execute("UPDATE chat_conversations SET updated_at=? WHERE id=?", (now, cid))
+    conn.commit()
+    conn.close()
+
+
+def get_chat_messages(uid: str, cid: int, limit: int = 200) -> list:
+    conn = get_db()
+    rows = conn.execute(
+        "SELECT role, content FROM chat_messages WHERE conv_id=? AND user_id=? ORDER BY id ASC LIMIT ?",
+        (cid, uid, limit)).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def rename_conversation(uid: str, cid: int, title: str):
+    conn = get_db()
+    conn.execute("UPDATE chat_conversations SET title=? WHERE id=? AND user_id=?",
+                 (title[:60], cid, uid))
+    conn.commit()
+    conn.close()
 
 
 def update_job_score(job_id: int, score: float, reasons: list, via: str = "rules"):

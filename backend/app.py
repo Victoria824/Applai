@@ -478,6 +478,7 @@ async def resume_parse(file: UploadFile = File(...), user: dict = Depends(get_cu
 class ChatIn(BaseModel):
     message: str
     history: list = Field(default_factory=list)  # [{role, content}]
+    conversation_id: int = 0
 
 
 CHAT_SYSTEM = """你是 Applai 的求职助手，一个友好、专业的 AI 顾问。
@@ -491,6 +492,30 @@ CHAT_SYSTEM = """你是 Applai 的求职助手，一个友好、专业的 AI 顾
 5. 数据里没有的信息要承认不知道，不要 hallucinate。"""
 
 MAX_CTX = 12000
+
+
+@app.get("/api/v1/chat/conversations")
+def chat_list_conversations(user: dict = Depends(get_current_user)):
+    return {"conversations": db.list_conversations(user["app_user_id"])}
+
+
+@app.post("/api/v1/chat/conversations")
+def chat_create_conversation(user: dict = Depends(get_current_user)):
+    return db.create_conversation(user["app_user_id"])
+
+
+@app.get("/api/v1/chat/conversations/{cid}/messages")
+def chat_get_messages(cid: int, user: dict = Depends(get_current_user)):
+    uid = user["app_user_id"]
+    if not db.get_conversation(uid, cid):
+        raise HTTPException(404, "conversation not found")
+    return {"messages": db.get_chat_messages(uid, cid)}
+
+
+@app.delete("/api/v1/chat/conversations/{cid}")
+def chat_delete_conversation(cid: int, user: dict = Depends(get_current_user)):
+    db.delete_conversation(user["app_user_id"], cid)
+    return {"ok": True}
 
 
 @app.post("/api/v1/chat")
@@ -538,16 +563,27 @@ def chat(body: ChatIn, user: dict = Depends(get_current_user)):
     if jd_parts:
         ctx.append("\n\n".join(jd_parts))
 
+    cid = body.conversation_id or 0
     history = []
-    for h in (body.history or [])[-8:]:
-        if isinstance(h, dict) and h.get("role") in ("user", "assistant") and h.get("content"):
-            history.append({"role": h["role"], "content": str(h["content"])[:1500]})
+    if cid and db.get_conversation(uid, cid):
+        for m in db.get_chat_messages(uid, cid, 200)[-8:]:
+            history.append({"role": m["role"], "content": str(m["content"])[:1500]})
+        db.add_chat_message(uid, cid, "user", msg)
+        # 首条消息自动取标题
+        if len(db.get_chat_messages(uid, cid, 2)) <= 1:
+            db.rename_conversation(uid, cid, msg[:24])
+    else:
+        for h in (body.history or [])[-8:]:
+            if isinstance(h, dict) and h.get("role") in ("user", "assistant") and h.get("content"):
+                history.append({"role": h["role"], "content": str(h["content"])[:1500]})
     history.append({"role": "user", "content": msg})
 
     reply = llm_mod.llm_chat(CHAT_SYSTEM + "\n\n实时数据：\n" + "\n".join(ctx)[:MAX_CTX], history)
     if not reply:
         raise HTTPException(502, "助手暂不可用，请稍后重试")
-    return {"reply": reply}
+    if cid and db.get_conversation(uid, cid):
+        db.add_chat_message(uid, cid, "assistant", reply)
+    return {"reply": reply, "conversation_id": cid}
 
 
 # ---------- Web Push（手机浏览器通知，替代 ntfy App） ----------

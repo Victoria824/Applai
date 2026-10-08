@@ -221,6 +221,24 @@ button .en{font-size:10px; opacity:.72; margin-top:1px;}
   display:flex; align-items:center; justify-content:center; padding:20px;}
 .modal-box{background:#fff; border-radius:16px; padding:28px; width:100%; max-width:480px;
   max-height:85vh; overflow-y:auto; box-shadow:0 24px 60px rgba(0,0,0,.25);}
+
+.chat-body{display:flex; min-height:380px; border-top:1px solid var(--line); margin:0 -20px -20px;}
+.chat-side{width:210px; flex:none; border-right:1px solid var(--line); overflow-y:auto; max-height:480px; padding:8px;}
+.conv-item{display:flex; align-items:center; gap:6px; padding:9px 10px; border-radius:10px; cursor:pointer; font-size:13px; margin-bottom:2px;}
+.conv-item:hover{background:#f5f5f5;}
+.conv-item.on{background:#e8e8e8; font-weight:600;}
+.conv-item .t{flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
+.conv-item .del{border:none; background:none; color:#bbb; cursor:pointer; font-size:14px; padding:0 2px;}
+.conv-item .del:hover{color:#e00;}
+.chat-main{flex:1; display:flex; flex-direction:column; min-width:0; padding:0 0 0 4px;}
+.ghost-btn{margin-left:auto; border:1px solid var(--line); background:#fff; border-radius:999px; padding:6px 14px; font-size:12px; cursor:pointer;}
+.ghost-btn:hover{background:#f5f5f5;}
+@media (max-width:640px){
+  .chat-body{flex-direction:column;}
+  .chat-side{width:100%; border-right:none; border-bottom:1px solid var(--line); display:flex; gap:6px; overflow-x:auto; max-height:none; padding:8px 4px;}
+  .conv-item{flex:none; border:1px solid var(--line); margin-bottom:0;}
+  .conv-item .del{display:none;}
+}
 </style>
 </head>
 <body>
@@ -265,12 +283,18 @@ button .en{font-size:10px; opacity:.72; margin-top:1px;}
     <div class="quicklinks" id="quickLinks"></div>
     <div class="stats" id="stats"></div>
     <div class="card chat-card">
-      <div class="chat-head">💬 求职助手<span class="en">Job assistant</span> <span class="hint" style="margin:0">问我投递进展、职位分析、面试建议<span class="en">Ask about progress, job analysis, interview tips</span></span></div>
-      <div id="chatMsgs"></div>
-      <div class="chips" id="chatChips"></div>
-      <div class="chat-input">
-        <input id="chatInput" placeholder="比如：今天投了几个？待人工的那个职位要求什么？" maxlength="500">
-        <button class="primary" id="chatSend">发送<span class="en">Send</span></button>
+      <div class="chat-head">💬 求职助手<span class="en">Job assistant</span> <span class="hint" style="margin:0">问我投递进展、职位分析、面试建议<span class="en">Ask about progress, job analysis, interview tips</span></span>
+        <button id="chatNewBtn" class="ghost-btn">＋ 新对话<span class="en">New chat</span></button></div>
+      <div class="chat-body">
+        <div class="chat-side" id="chatSide"><div class="loading">加载中…</div></div>
+        <div class="chat-main">
+          <div id="chatMsgs"></div>
+          <div class="chips" id="chatChips"></div>
+          <div class="chat-input">
+            <input id="chatInput" placeholder="比如：今天投了几个？待人工的那个职位要求什么？" maxlength="500">
+            <button class="primary" id="chatSend">发送<span class="en">Send</span></button>
+          </div>
+        </div>
       </div>
     </div>
   </section>
@@ -909,8 +933,9 @@ function showPage(name) {
 document.querySelectorAll("#sidenav button[data-page]").forEach((b) =>
   b.addEventListener("click", () => showPage(b.dataset.page)));
 
-/* ---------- 聊天助手 ---------- */
-let chatHistory = [];
+/* ---------- 聊天助手（多会话） ---------- */
+let chatConvId = 0;
+let chatConvs = [];
 const CHAT_SUGGEST = ["今天投了几个？", "待人工的职位是什么情况？", "队列里分数最高的职位要求什么？", "给我些面试建议"];
 function renderChips() {
   $("chatChips").innerHTML = CHAT_SUGGEST.map((s) =>
@@ -928,22 +953,82 @@ function addMsg(role, text) {
   $("chatMsgs").scrollTop = $("chatMsgs").scrollHeight;
   return d;
 }
+async function loadConvs(openLatest = true) {
+  try {
+    const d = await api("/api/v1/chat/conversations");
+    chatConvs = d.conversations || [];
+  } catch (e) { chatConvs = []; }
+  renderConvList();
+  if (openLatest) {
+    if (chatConvs.length) openConv(chatConvs[0].id, false);
+    else newConv(false);
+  }
+}
+function renderConvList() {
+  const el = $("chatSide");
+  if (!chatConvs.length) { el.innerHTML = '<div class="hint" style="padding:8px">暂无历史对话<span class=\"en\">No chats yet</span></div>'; return; }
+  el.innerHTML = chatConvs.map((c) =>
+    `<div class="conv-item${c.id === chatConvId ? " on" : ""}" data-cid="${c.id}">
+       <span class="t">${esc(c.title || "新对话")}</span>
+       <button class="del" data-del="${c.id}" title="删除">×</button>
+     </div>`).join("");
+}
+$("chatSide").addEventListener("click", (e) => {
+  const del = e.target.closest("[data-del]");
+  if (del) {
+    e.stopPropagation();
+    if (!confirm("删除这个对话？ / Delete this chat?")) return;
+    api(`/api/v1/chat/conversations/${del.dataset.del}`, { method: "DELETE" })
+      .then(() => {
+        chatConvs = chatConvs.filter((c) => c.id != del.dataset.del);
+        if (chatConvId == del.dataset.del) { chatConvId = 0; loadConvs(true); }
+        else renderConvList();
+      });
+    return;
+  }
+  const item = e.target.closest(".conv-item");
+  if (item) openConv(+item.dataset.cid, true);
+});
+async function openConv(cid, render = true) {
+  chatConvId = cid;
+  renderConvList();
+  $("chatMsgs").innerHTML = '<div class="loading">加载中…</div>';
+  try {
+    const d = await api(`/api/v1/chat/conversations/${cid}/messages`);
+    $("chatMsgs").innerHTML = "";
+    (d.messages || []).forEach((m) => addMsg(m.role === "user" ? "user" : "bot", m.content));
+    if (!(d.messages || []).length) addMsg("bot", "你好！我是你的求职助手 \u0001F4BC\nHi! I'm your job assistant — I know your profile, progress and all JDs.\n可以问我：今天投了几个？待人工的职位什么情况？队列里最高分的职位要求什么？");
+  } catch (e) { $("chatMsgs").innerHTML = ""; addMsg("bot", "加载失败 / Load failed: " + e.message); }
+  if (render) $("chatMsgs").scrollTop = $("chatMsgs").scrollHeight;
+}
+async function newConv(openIt = true) {
+  try {
+    const d = await api("/api/v1/chat/conversations", { method: "POST" });
+    chatConvs.unshift({ id: d.id, title: d.title, updated_at: Date.now() / 1000 });
+    if (openIt) openConv(d.id, false);
+    else { chatConvId = d.id; renderConvList(); $("chatMsgs").innerHTML = "";
+      addMsg("bot", "你好！我是你的求职助手 \u0001F4BC\nHi! I'm your job assistant — I know your profile, progress and all JDs.\n可以问我：今天投了几个？待人工的职位什么情况？队列里最高分的职位要求什么？"); }
+  } catch (e) { toast("创建失败 / Create failed: " + e.message); }
+}
+$("chatNewBtn").onclick = () => newConv(true);
 async function sendChat() {
   const input = $("chatInput");
   const text = input.value.trim();
   if (!text) return;
+  if (!chatConvId) await newConv(false);
   input.value = "";
   addMsg("user", text);
-  const typing = addMsg("bot", "思考中…");
+  const typing = addMsg("bot", "思考中… / Thinking…");
   typing.classList.add("typing");
   try {
     const d = await api("/api/v1/chat", {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ message: text, history: chatHistory.slice(-8) })
+      body: JSON.stringify({ message: text, conversation_id: chatConvId })
     });
     typing.classList.remove("typing");
     typing.textContent = d.reply;
-    chatHistory.push({ role: "user", content: text }, { role: "assistant", content: d.reply });
+    // 刷新会话列表（标题可能已更新）
+    loadConvs(false);
   } catch (e) {
     typing.classList.remove("typing");
     typing.textContent = "出错了 / Error: " + e.message;
@@ -951,6 +1036,7 @@ async function sendChat() {
 }
 $("chatSend").onclick = sendChat;
 $("chatInput").addEventListener("keydown", (e) => { if (e.key === "Enter") sendChat(); });
+loadConvs(true);
 
 /* ---------- 定时设置 ---------- */
 async function loadSchedule() {
@@ -1057,7 +1143,6 @@ loadApps = async function () {
 
 // 初始化
 renderChips();
-addMsg("bot", "你好！我是你的求职助手 \u0001F4BC\\nHi! I'm your job assistant \u2014 I know your profile, progress and all JDs.\\n可以问我：今天投了几个？待人工的职位什么情况？队列里最高分的职位要求什么？");
 try {
   const savedPage = localStorage.getItem("applai_page");
   if (savedPage && document.getElementById("page-" + savedPage)) showPage(savedPage);

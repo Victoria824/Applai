@@ -415,3 +415,30 @@ def test_profile_update_resets_keywords_and_scores():
         "username": "rsetqa", "password": "testpass123"}).json().get("user_id", ""))
     # keywords_updated 被清零（通过内部检查）
     assert st["keywords_updated"] == 0
+
+
+def test_chat_conversations():
+    c = _authed_client("chatconvqa")
+    # 新建
+    d = c.post("/api/v1/chat/conversations").json()
+    cid = d["id"]
+    # 发消息（LLM 未配置会 502——mock 掉 llm_chat）
+    import app as appm
+    orig = appm.llm_mod.llm_chat if hasattr(appm, "llm_mod") else None
+    import llm as llm_mod
+    old_fn = llm_mod.llm_chat
+    llm_mod.llm_chat = lambda sys, hist: "好的收到"
+    try:
+        r = c.post("/api/v1/chat", json={"message": "今天投了几个", "conversation_id": cid}).json()
+        assert r["reply"] == "好的收到" and r["conversation_id"] == cid
+    finally:
+        llm_mod.llm_chat = old_fn
+    # 历史落盘
+    msgs = c.get(f"/api/v1/chat/conversations/{cid}/messages").json()["messages"]
+    assert [m["role"] for m in msgs] == ["user", "assistant"]
+    # 列表里有标题（首条消息）
+    convs = c.get("/api/v1/chat/conversations").json()["conversations"]
+    assert any(x["id"] == cid and "今天投了几个" in x["title"] for x in convs)
+    # 删除
+    assert c.delete(f"/api/v1/chat/conversations/{cid}").json()["ok"]
+    assert c.get(f"/api/v1/chat/conversations/{cid}/messages").status_code == 404
