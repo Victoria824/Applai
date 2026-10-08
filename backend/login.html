@@ -56,16 +56,26 @@ button.ghost:hover{background:var(--bg);}
 <script>
 const $ = (id) => document.getElementById(id);
 let mode = "login";
+const inviteCode = new URLSearchParams(location.search).get("invite") || "";
+if (inviteCode) {
+  mode = "register";
+  const banner = document.createElement("div");
+  banner.style.cssText = "background:#e6f4ff;border:1px solid #91caff;border-radius:12px;padding:10px 14px;font-size:13px;margin-bottom:12px;color:#1677ff";
+  banner.textContent = "🎉 你通过朋友邀请加入 Applai，注册即自动关联";
+  document.querySelector(".card").insertBefore(banner, document.querySelector(".tabs"));
+}
 $("tabLogin").onclick = () => { mode = "login";
   $("tabLogin").classList.add("on"); $("tabReg").classList.remove("on");
   $("submitBtn").textContent = "登录"; $("err").textContent = ""; };
 $("tabReg").onclick = () => { mode = "register";
   $("tabReg").classList.add("on"); $("tabLogin").classList.remove("on");
   $("submitBtn").textContent = "注册并进入"; $("err").textContent = ""; };
+if (inviteCode) { $("tabReg").click(); }
 $("form").onsubmit = async (e) => {
   e.preventDefault();
   $("err").textContent = "";
   const body = { username: $("username").value.trim(), password: $("password").value };
+  if (mode === "register" && inviteCode) body.invite_code = inviteCode;
   try {
     const r = await fetch(`/api/v1/auth/${mode}`, {
       method: "POST", headers: {"Content-Type": "application/json"},

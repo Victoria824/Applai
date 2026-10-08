@@ -6,3 +6,4 @@ pytest>=8.0
 python-multipart
 pywebpush
 uvicorn[standard]>=0.30
+psycopg[binary]>=3.1

@@ -27,6 +27,16 @@
         "<all_urls>"
       ],
       "run_at": "document_idle"
+    },
+    {
+      "js": [
+        "content/jobbank.js"
+      ],
+      "matches": [
+        "https://www.jobbank.gc.ca/jobsearch/jobposting/*",
+        "https://jobbank.gc.ca/jobsearch/jobposting/*"
+      ],
+      "run_at": "document_idle"
     }
   ],
   "description": "原型：在公司官网职位页自动填写申请表单，验证码任务进队列并手机推送提醒。",

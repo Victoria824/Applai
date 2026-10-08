@@ -118,6 +118,16 @@ def get_profile(user: dict = Depends(get_current_user)):
     return {"user_id": uid, "profile": db.get_profile(uid)}
 
 
+@app.get("/api/v1/jobs/lookup")
+def lookup_job(url: str, user: dict = Depends(get_current_user)):
+    """按 URL 查职位（插件 Job Bank 面板用）。"""
+    uid = user["app_user_id"]
+    job = db.get_job_by_url(uid, url)
+    if not job:
+        raise HTTPException(404, "job not found")
+    return job
+
+
 @app.post("/api/v1/jobs")
 def add_job(body: JobIn, user: dict = Depends(get_current_user)):
     uid = user["app_user_id"]
@@ -494,6 +504,7 @@ def get_stats(user: dict = Depends(get_current_user)):
 class AuthIn(BaseModel):
     username: str
     password: str
+    invite_code: str = ""
 
 
 class TokenIn(BaseModel):
@@ -511,9 +522,41 @@ def auth_register(body: AuthIn, request: Request):
         u = db.create_auth_user(body.username, body.password)
     except ValueError as e:
         raise HTTPException(400, str(e))
+    if body.invite_code:
+        db.redeem_invite(body.invite_code, u["app_user_id"])
     token = db.create_session(u["id"])
     resp = Response('{"ok":true}', media_type="application/json")
     _set_session_cookie(resp, token)
+    return resp
+
+
+@app.get("/api/v1/invites")
+def list_my_invites(user: dict = Depends(get_current_user)):
+    return {"invites": db.list_invites(user["app_user_id"])}
+
+
+class InviteIn(BaseModel):
+    note: str = ""
+
+
+@app.post("/api/v1/invites")
+def create_my_invite(body: InviteIn, user: dict = Depends(get_current_user)):
+    inv = db.create_invite(user["app_user_id"], body.note)
+    return {**inv, "link": f"https://applai-backend.fly.dev/?invite={inv['code']}"}
+
+
+@app.get("/api/v1/account/export")
+def account_export(user: dict = Depends(get_current_user)):
+    """导出本账号全部数据（JSON 下载）。"""
+    return db.export_user_data(user["app_user_id"])
+
+
+@app.delete("/api/v1/account")
+def account_delete(user: dict = Depends(get_current_user)):
+    """删除本账号及全部数据，不可恢复。"""
+    stats = db.delete_user_data(user["app_user_id"])
+    resp = Response('{"ok":true}', media_type="application/json")
+    resp.delete_cookie(SESSION_COOKIE, path="/")
     return resp
 
 

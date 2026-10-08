@@ -3,12 +3,95 @@ import hashlib
 import hmac
 import json
 import os
+import re
 import secrets
 import sqlite3
 import time
 from pathlib import Path
 
 DB_PATH = os.environ.get("APPLAI_DB") or str(Path(__file__).parent / "applai.db")
+PG_URL = os.environ.get("APPLAI_DB_URL", "") or os.environ.get("DATABASE_URL", "")
+USE_PG = PG_URL.startswith("postgres")
+
+try:
+    from psycopg import errors as _pg_errors
+    _IntegrityError = (sqlite3.IntegrityError, _pg_errors.UniqueViolation)
+except ImportError:
+    _IntegrityError = (sqlite3.IntegrityError,)
+
+# 有自增 id 列的表（PG 下 INSERT 自动加 RETURNING id）
+_ID_TABLES = {"jobs", "applications", "push_subscriptions", "job_sources",
+              "auth_users", "api_tokens", "chat_conversations", "chat_messages",
+              "application_snapshots"}
+
+
+def _pg_schema(sql: str) -> str:
+    """SQLite DDL → Postgres DDL（小子集翻译）。"""
+    sql = sql.replace("INTEGER PRIMARY KEY AUTOINCREMENT", "SERIAL PRIMARY KEY")
+    sql = re.sub(r"\bREAL\b", "DOUBLE PRECISION", sql)
+    return sql
+
+
+class _PGCursor:
+    """让 psycopg 游标长得像 sqlite3 游标：? 占位符 + lastrowid。"""
+
+    def __init__(self, cur):
+        self._cur = cur
+        self._lastrowid = None
+
+    def execute(self, sql, params=()):
+        pg_sql = sql.replace("?", "%s")
+        m = re.match(r"\s*INSERT\s+INTO\s+(\w+)", sql, re.I)
+        if m and m.group(1).lower() in _ID_TABLES and "RETURNING" not in sql.upper():
+            pg_sql += " RETURNING id"
+            self._cur.execute(pg_sql, params)
+            row = self._cur.fetchone()
+            self._lastrowid = row["id"] if row else None
+        else:
+            self._cur.execute(pg_sql, params)
+        return self
+
+    @property
+    def lastrowid(self):
+        return self._lastrowid
+
+    @property
+    def rowcount(self):
+        return self._cur.rowcount
+
+    def fetchone(self):
+        return self._cur.fetchone()
+
+    def fetchall(self):
+        return self._cur.fetchall()
+
+    def __iter__(self):
+        return iter(self._cur)
+
+
+class _PGConn:
+    def __init__(self, conn):
+        self._conn = conn
+
+    def execute(self, sql, params=()):
+        return _PGCursor(self._conn.cursor()).execute(sql, params)
+
+    def executescript(self, sql):
+        # PG 没有 executescript：按分号拆分执行
+        with self._conn.cursor() as cur:
+            for stmt in sql.split(";"):
+                stmt = stmt.strip()
+                if stmt:
+                    cur.execute(_pg_schema(stmt))
+
+    def commit(self):
+        self._conn.commit()
+
+    def rollback(self):
+        self._conn.rollback()
+
+    def close(self):
+        self._conn.close()
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS users (
@@ -134,9 +217,33 @@ CREATE TABLE IF NOT EXISTS application_snapshots (
   UNIQUE(user_id, job_id)
 );
 CREATE INDEX IF NOT EXISTS idx_snap_user ON application_snapshots(user_id, created_at DESC);
+CREATE TABLE IF NOT EXISTS invites (
+  code TEXT PRIMARY KEY,
+  created_by TEXT NOT NULL,
+  note TEXT DEFAULT '',
+  created_at REAL NOT NULL,
+  used_by TEXT DEFAULT '',
+  used_at REAL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_invites_creator ON invites(created_by, created_at DESC);
 """
 
 def get_db():
+    if USE_PG:
+        import psycopg
+        from psycopg.rows import dict_row
+        conn = psycopg.connect(PG_URL, row_factory=dict_row, autocommit=False)
+        pg = _PGConn(conn)
+        pg.executescript(SCHEMA)
+        pg.executescript(AUTH_SCHEMA)
+        # 轻量迁移：jobs 表加 score_via 列
+        cols = {r["column_name"] for r in pg.execute(
+            "SELECT column_name FROM information_schema.columns WHERE table_name='jobs'").fetchall()}
+        if "score_via" not in cols:
+            pg.execute("ALTER TABLE jobs ADD COLUMN score_via TEXT DEFAULT 'rules'")
+            pg.commit()
+        pg.commit()
+        return pg
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     conn.executescript(SCHEMA)
@@ -184,7 +291,11 @@ def add_job(user_id: str, url: str, title="", company="", location="", source="m
         )
         job_id = cur.lastrowid
         is_new = True
-    except sqlite3.IntegrityError:
+    except _IntegrityError:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
         row = conn.execute("SELECT id FROM jobs WHERE user_id=? AND url=?", (user_id, url)).fetchone()
         job_id = row["id"]
         is_new = False
@@ -351,6 +462,139 @@ def snapshot_job_ids(uid: str) -> set:
     return {r["job_id"] for r in rows}
 
 
+def create_invite(created_by: str, note: str = "") -> dict:
+    code = secrets.token_hex(4).upper()  # 8 位可读码
+    conn = get_db()
+    conn.execute("INSERT INTO invites(code, created_by, note, created_at) VALUES(?,?,?,?)",
+                 (code, created_by, note or "", time.time()))
+    conn.commit()
+    conn.close()
+    return {"code": code}
+
+
+def list_invites(created_by: str) -> list:
+    conn = get_db()
+    rows = conn.execute(
+        "SELECT code, note, created_at, used_by, used_at FROM invites WHERE created_by=? ORDER BY created_at DESC",
+        (created_by,)).fetchall()
+    out = []
+    for r in rows:
+        d = dict(r)
+        # 好友进度：画像 / 简历 / 插件 Token
+        if d["used_by"]:
+            prof = get_profile(d["used_by"]) or {}
+            has_resume = bool((prof.get("resumeFile") or {}).get("name"))
+            toks = conn.execute(
+                "SELECT 1 FROM api_tokens t JOIN auth_users u ON u.id=t.user_id WHERE u.app_user_id=? LIMIT 1",
+                (d["used_by"],)).fetchone()
+            # 用户名
+            un = conn.execute("SELECT username FROM auth_users WHERE app_user_id=?",
+                              (d["used_by"],)).fetchone()
+            d["friend"] = (un["username"] if un else "?")
+            d["has_profile"] = bool(prof.get("targetTitles"))
+            d["has_resume"] = has_resume
+            d["has_token"] = bool(toks)
+        out.append(d)
+    conn.close()
+    return out
+
+
+def redeem_invite(code: str, used_by: str) -> bool:
+    """使用邀请码。返回是否成功（码存在且未被用过）。"""
+    conn = get_db()
+    r = conn.execute("SELECT used_by FROM invites WHERE code=?", (code.upper(),)).fetchone()
+    if not r or r["used_by"]:
+        conn.close()
+        return False
+    conn.execute("UPDATE invites SET used_by=?, used_at=? WHERE code=?",
+                 (used_by, time.time(), code.upper()))
+    conn.commit()
+    conn.close()
+    return True
+
+
+def export_user_data(uid: str) -> dict:
+    """导出用户全部数据（JSON）。"""
+    conn = get_db()
+    data = {"app_user_id": uid, "exported_at": time.time()}
+    data["profile"] = get_profile(uid)
+    data["settings"] = get_settings(uid)
+    for tbl in ("jobs", "applications", "application_snapshots", "chat_conversations", "chat_messages", "invites"):
+        try:
+            if tbl == "chat_conversations":
+                rows = conn.execute("SELECT id, title, created_at, updated_at FROM chat_conversations WHERE user_id=?", (uid,)).fetchall()
+            elif tbl == "chat_messages":
+                rows = conn.execute(
+                    "SELECT m.role, m.content, m.created_at FROM chat_messages m JOIN chat_conversations c ON c.id=m.conv_id WHERE c.user_id=? ORDER BY m.id", (uid,)).fetchall()
+            elif tbl == "application_snapshots":
+                rows = conn.execute(
+                    "SELECT job_id, job_url, site, filled_fields, salary_info, cover_letter, resume_name, created_at FROM application_snapshots WHERE user_id=?", (uid,)).fetchall()
+            elif tbl == "invites":
+                rows = conn.execute("SELECT code, note, created_at, used_by, used_at FROM invites WHERE created_by=?", (uid,)).fetchall()
+            else:
+                rows = conn.execute(f"SELECT * FROM {tbl} WHERE user_id=?", (uid,)).fetchall()
+            data[tbl] = [dict(r) for r in rows]
+        except Exception:
+            data[tbl] = []
+    # 简历 blob（只导自己快照引用到的）
+    hashes = {s.get("resume_hash") for s in data.get("application_snapshots", []) if s.get("resume_hash")}
+    prof = data.get("profile") or {}
+    rf = prof.get("resumeFile") or {}
+    data["resume_blobs"] = []
+    conn.close()
+    return data
+
+
+def delete_user_data(uid: str):
+    """级联删除用户全部数据。返回删除的表行数统计。"""
+    conn = get_db()
+    stats = {}
+    # 先找 auth id（删 token/session）
+    au = conn.execute("SELECT id FROM auth_users WHERE app_user_id=?", (uid,)).fetchone()
+    auth_id = au["id"] if au else None
+    for tbl, col in [("application_snapshots", "user_id"), ("applications", "user_id"),
+                     ("jobs", "user_id"), ("chat_messages", "user_id"),
+                     ("chat_conversations", "user_id"), ("invites", "created_by")]:
+        try:
+            cur = conn.execute(f"DELETE FROM {tbl} WHERE {col}=?", (uid,))
+            stats[tbl] = cur.rowcount
+        except Exception:
+            pass
+    # 该用户创建的邀请码一起删
+    try:
+        conn.execute("DELETE FROM invites WHERE created_by=?", (uid,))
+    except Exception:
+        pass
+    for tbl in ("users", "user_settings"):
+        try:
+            cur = conn.execute(f"DELETE FROM {tbl} WHERE user_id=?", (uid,))
+            stats[tbl] = cur.rowcount
+        except Exception:
+            pass
+    if auth_id:
+        for tbl in ("api_tokens", "auth_sessions"):
+            try:
+                cur = conn.execute(f"DELETE FROM {tbl} WHERE user_id=?", (auth_id,))
+                stats[tbl] = cur.rowcount
+            except Exception:
+                pass
+        try:
+            cur = conn.execute("DELETE FROM auth_users WHERE id=?", (auth_id,))
+            stats["auth_users"] = cur.rowcount
+        except Exception:
+            pass
+    conn.commit()
+    conn.close()
+    return stats
+
+
+def get_job_by_url(user_id: str, url: str):
+    conn = get_db()
+    r = conn.execute("SELECT * FROM jobs WHERE user_id=? AND url=?", (user_id, url)).fetchone()
+    conn.close()
+    return dict(r) if r else None
+
+
 def update_job_score(job_id: int, score: float, reasons: list, via: str = "rules"):
     conn = get_db()
     conn.execute("UPDATE jobs SET score=?, score_reasons=?, score_via=? WHERE id=?",
@@ -477,7 +721,7 @@ def create_auth_user(username: str, password: str) -> dict:
             (app_user_id, username, _pw_hash(password), now))
         conn.commit()
         return {"id": cur.lastrowid, "app_user_id": app_user_id, "username": username}
-    except sqlite3.IntegrityError:
+    except _IntegrityError:
         raise ValueError("用户名已被注册")
     finally:
         conn.close()
@@ -610,7 +854,7 @@ def add_source(user_id: str, type_: str, key: str) -> dict:
             (user_id, type_, key, time.time()))
         conn.commit()
         return {"id": cur.lastrowid, "type": type_, "key": key}
-    except sqlite3.IntegrityError:
+    except _IntegrityError:
         raise ValueError("该来源已添加")
     finally:
         conn.close()

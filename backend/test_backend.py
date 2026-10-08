@@ -486,3 +486,44 @@ def test_application_snapshot():
     assert any(a["job_id"] == jid and a["has_snapshot"] for a in apps)
     # 404
     assert c.get("/api/v1/applications/99999/snapshot").status_code == 404
+
+
+def test_invites():
+    c = _authed_client("invqa")
+    # 创建邀请
+    d = c.post("/api/v1/invites", json={"note": "朋友A"}).json()
+    assert len(d["code"]) == 8 and d["link"].endswith(d["code"])
+    # 朋友用邀请码注册
+    f = TestClient(app.app)
+    r = f.post("/api/v1/auth/register", json={
+        "username": "invfriend1", "password": "password123", "invite_code": d["code"]})
+    assert r.status_code == 200
+    # 邀请人看到进度
+    invs = c.get("/api/v1/invites").json()["invites"]
+    assert len(invs) == 1 and invs[0]["friend"] == "invfriend1"
+    assert invs[0]["has_profile"] is False
+    # 朋友填了画像 → 进度更新
+    f.put("/api/v1/profile", json={"user_id": "x", "profile": {"targetTitles": ["Dev"]}})
+    invs = c.get("/api/v1/invites").json()["invites"]
+    assert invs[0]["has_profile"] is True
+    # 邀请码只能用一次
+    f2 = TestClient(app.app)
+    r2 = f2.post("/api/v1/auth/register", json={
+        "username": "invfriend2", "password": "password123", "invite_code": d["code"]})
+    assert r2.status_code == 200  # 注册成功但不关联
+    invs = c.get("/api/v1/invites").json()["invites"]
+    assert invs[0]["friend"] == "invfriend1"  # 还是第一个人
+
+
+def test_export_and_delete():
+    c = _authed_client("expdelqa")
+    c.put("/api/v1/profile", json={"user_id": "x", "profile": {"email": "e@e.com"}})
+    d = c.get("/api/v1/account/export").json()
+    assert d["profile"]["email"] == "e@e.com"
+    assert "jobs" in d and "applications" in d
+    # 删除
+    assert c.delete("/api/v1/account").json()["ok"]
+    # 数据没了（新 client 重新登录应失败）
+    c2 = TestClient(app.app)
+    r = c2.post("/api/v1/auth/login", json={"username": "expdelqa", "password": "password123"})
+    assert r.status_code == 401
