@@ -11,6 +11,6 @@ jobs:
       - run: |
           MID=$(flyctl machine list --app applai-backend --json | python3 -c "import json,sys; ms=json.load(sys.stdin); print([m['id'] for m in ms if m['state']=='started'][0])")
           echo "machine: $MID"
-          flyctl machine exec --app applai-backend $MID "sh -c 'cd /srv && APPLAI_DB=/data/applai.db python3 migrate_sqlite_to_pg.py'" 2>&1 | tail -25
+          flyctl machine exec --app applai-backend $MID "sh -c 'env | grep -i -c database; echo ---; env | grep -i database | cut -c1-30'" 2>&1 | tail -5
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
