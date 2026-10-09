@@ -329,8 +329,11 @@ def get_db():
         if "kind" not in pcols:
             pg.execute("ALTER TABLE profiles ADD COLUMN kind TEXT DEFAULT 'job'")
             pg.commit()
-        _migrate_split_profiles(pg)
-        pg.commit()
+        try:
+            _migrate_split_profiles(pg)
+            pg.commit()
+        except Exception:
+            pg.rollback()
         _pg_fix_sequences(pg)
         return pg
     conn = sqlite3.connect(DB_PATH)
@@ -354,7 +357,11 @@ def get_db():
     if "kind" not in pcols:
         conn.execute("ALTER TABLE profiles ADD COLUMN kind TEXT DEFAULT 'job'")
         conn.commit()
-    _migrate_split_profiles(conn)
+    try:
+        _migrate_split_profiles(conn)
+        conn.commit()
+    except Exception:
+        conn.rollback()
     return conn
 
 
@@ -393,10 +400,15 @@ def _migrate_split_profiles(conn):
         prow = conn.execute("SELECT id, profile_json FROM profiles WHERE user_id=? AND kind='person' LIMIT 1",
                             (d["user_id"],)).fetchone()
         if not prow:
+            pname = "我的简历"
+            taken = {r2["name"] for r2 in conn.execute(
+                "SELECT name FROM profiles WHERE user_id=?", (d["user_id"],)).fetchall()}
+            if pname in taken:
+                pname = f"我的简历-{d['id']}"
             conn.execute(
                 "INSERT INTO profiles(user_id, name, kind, profile_json, is_active, created_at, updated_at) "
                 "VALUES(?,?,?,?,?,?,?)",
-                (d["user_id"], "我的简历", "person", json.dumps(person, ensure_ascii=False),
+                (d["user_id"], pname, "person", json.dumps(person, ensure_ascii=False),
                  1, now, now))
         elif person:
             try:
