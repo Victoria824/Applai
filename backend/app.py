@@ -335,7 +335,9 @@ def _run_smart_discover_bg(uid: str, task_id: str):
         _discover_task_set(task_id, status="done", stage="完成 / Done",
                            done=100, total=100, new=res.get("new", 0), seen=res.get("seen", 0))
     except Exception as e:
-        _discover_task_set(task_id, status="error", error=str(e)[:200])
+        import traceback as _tb
+        err = f"{type(e).__name__}: {e}\n" + "".join(_tb.format_tb(e.__traceback__)[-4:])
+        _discover_task_set(task_id, status="error", error=err[:800])
 
 
 @app.post("/api/v1/jobs/discover/auto")
