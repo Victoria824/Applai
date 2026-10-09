@@ -277,6 +277,29 @@ CREATE TABLE IF NOT EXISTS resume_versions (
 CREATE INDEX IF NOT EXISTS idx_resume_ver ON resume_versions(user_id, profile_id, job_id);
 """
 
+def _pg_fix_sequences(pg):
+    """修复迁移后序列不同步：把每个 SERIAL id 序列拨到 MAX(id)+1。"""
+    try:
+        tbls = pg.execute(
+            "SELECT tablename FROM pg_tables WHERE schemaname='public'").fetchall()
+        for t in tbls:
+            tbl = t["tablename"]
+            try:
+                seq = pg.execute(
+                    "SELECT pg_get_serial_sequence(%s, 'id')", (tbl,)).fetchone()
+                seqname = seq["pg_get_serial_sequence"] if seq else None
+                if not seqname:
+                    continue
+                pg.execute(
+                    f"SELECT setval(%s, COALESCE((SELECT MAX(id) FROM {tbl}), 0) + 1, false)",
+                    (seqname,))
+            except Exception:
+                continue
+        pg.commit()
+    except Exception:
+        pass
+
+
 def get_db():
     if USE_PG:
         import psycopg
@@ -308,6 +331,7 @@ def get_db():
             pg.commit()
         _migrate_split_profiles(pg)
         pg.commit()
+        _pg_fix_sequences(pg)
         return pg
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
@@ -1129,9 +1153,21 @@ def create_auth_user(username: str, password: str) -> dict:
         conn.commit()
         return {"id": cur.lastrowid, "app_user_id": app_user_id, "username": username}
     except _IntegrityError:
-        raise ValueError("用户名已被注册")
-    finally:
+        # 到底是用户名重复，还是 id 序列冲突？查清楚再报错
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        r = conn.execute("SELECT 1 FROM auth_users WHERE username=?", (username,)).fetchone()
         conn.close()
+        if r:
+            raise ValueError("用户名已被注册")
+        raise ValueError("注册失败请重试")
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
 
 def get_auth_user(auth_id: int) -> dict | None:
     conn = get_db()

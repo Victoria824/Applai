@@ -602,20 +602,6 @@ def create_my_invite(body: InviteIn, user: dict = Depends(get_current_user)):
     return {**inv, "link": f"https://applai-backend.fly.dev/?invite={inv['code']}"}
 
 
-@app.get("/api/v1/admin/whois")
-def admin_whois(username: str):
-    """一次性：查用户名的注册时间。用完即删。"""
-    import time as _t
-    conn = db.get_db()
-    r = conn.execute("SELECT username, created_at FROM auth_users WHERE username=?", (username,)).fetchone()
-    conn.close()
-    if not r:
-        return {"exists": False}
-    d = dict(r)
-    return {"exists": True, "username": d["username"],
-            "created": _t.strftime("%Y-%m-%d %H:%M", _t.localtime(d["created_at"]))}
-
-
 @app.get("/api/v1/gmail/status")
 def gmail_status(user: dict = Depends(get_current_user)):
     uid = user["app_user_id"]
