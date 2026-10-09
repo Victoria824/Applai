@@ -618,6 +618,35 @@ def suggest_job_profile(user: dict = Depends(get_current_user)):
 
 @app.post("/api/v1/admin/chat-debug")
 def admin_chat_debug(body: dict):
+    """一次性：对所有用户跑 chat 上下文组装，找 500。用完即删。"""
+    import traceback
+    import llm as llm_mod
+    conn = db.get_db()
+    users = [dict(r)["app_user_id"] for r in
+             conn.execute("SELECT app_user_id FROM auth_users").fetchall()]
+    conn.close()
+    out = {}
+    for uid in users:
+        steps = {}
+        try:
+            profile = db.get_profile(uid) or {}
+            ctx = []
+            ctx.append("【用户画像】" + llm_mod._profile_text(profile)[:800])
+            if profile.get("summary"):
+                ctx.append("【简历摘要】" + str(profile["summary"])[:600])
+            stats = db.stats(uid)
+            ctx.append("【统计】" + str(stats))
+            apps = db.list_applications(uid, 30)
+            lines = [f"- {a.get('title','?')} @ {a.get('company','?')}" for a in apps]
+            ctx.append("【最近申请】\n" + ("\n".join(lines) if lines else "暂无"))
+            queued = _queue_jobs(uid, 15)
+            out[uid[:8]] = {"ctx_len": sum(len(c) for c in ctx), "status": "ok"}
+        except Exception:
+            out[uid[:8]] = {"FAILED": traceback.format_exc()[-1500:]}
+    return out
+
+
+def admin_chat_debug(body: dict):
     """一次性：复现 Victoria 账号的 chat 500。用完即删。"""
     import traceback
     msg = body.get("message", "你给我投什么方向简历")
