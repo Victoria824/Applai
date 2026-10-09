@@ -9,6 +9,7 @@
 import json
 import os
 import re
+import time
 
 import httpx
 
@@ -166,7 +167,7 @@ KEYWORDS_PROMPT = """你是职业规划师。根据求职者画像，生成用�
 EMAIL_PROMPT = """你是求职邮件分类器。判断这封邮件是不是求职相关的，并分类。
 
 只返回 JSON，不要任何解释：
-{"kind": "interview|rejection|other", "company": "公司名（没有就空）", "job_title": "职位名（没有就空）", "summary": "一句话中文摘要（20字内）"}
+{{"kind": "interview|rejection|other", "company": "公司名（没有就空）", "job_title": "职位名（没有就空）", "summary": "一句话中文摘要（20字内）"}}
 
 分类标准：
 - interview：面试邀请、OA/笔试邀请、HR 约电话、offer 相关
@@ -216,8 +217,8 @@ ACTION_PROMPT = """判断用户是不是想让助手执行操作。只返回 JSO
 - resume_schedule: 恢复自动投递
 - mark_applied: 标记已手动投递。需要 "jobs": ["职位名 @ 公司名", ...]
 
-如果不是操作意图，返回 {"action": "none"}。
-如果是，返回 {"action": "add_to_queue", "jobs": [...]} 等。
+如果不是操作意图，返回 {{"action": "none"}}。
+如果是，返回 {{"action": "add_to_queue", "jobs": [...]}} 等。
 
 用户消息：{msg}
 """
@@ -261,10 +262,10 @@ TAILOR_PROMPT = """你是简历优化师。根据目标岗位 JD，优化简历�
 4. skills 列表重排，最相关的放前面（不许加原简历没有的技能）。
 
 只返回 JSON，不要解释：
-{"summary": "一句话",
- "experiences": [{"company": "", "title": "", "dates": "", "bullets": ["", ""]}],
+{{"summary": "一句话",
+ "experiences": [{{"company": "", "title": "", "dates": "", "bullets": ["", ""]}}],
  "skills": [""],
- "education": ""}
+ "education": ""}}
 
 原简历文本：
 ```
@@ -285,15 +286,15 @@ JOB_PROFILE_PROMPT = """你是资深职业顾问。根据下面这份简历，�
 2. industries：匹配的行业 2-4 个。
 3. yearsExperience：从经历估算工作年限（数字）。
 4. preferredLocations：根据现居地推断求职地点；如果在加拿大，首选其所在城市 + Remote。
-5. salary：根据职位和年限给合理的薪资范围。加拿大 AI/软件岗按时薪 CAD 估算（如 45-80）；如不确定宁可保守。
+5. salary：根据职位和年限给合理的薪资范围。加拿大 AI/软件岗按年薪 CAD 估算（如 90000-130000）；如不确定宁可保守。
 6. remotePreference：根据简历判断偏好（remote/hybrid/onsite/any），不确定填 any。
 7. workAuth：如简历显示在加拿大，填 "PR/Citizen or valid work permit in Canada" 之类；不确定留空。
 
 只返回 JSON，不要解释：
-{"targetTitles": [""], "industries": [""], "yearsExperience": 0,
+{{"targetTitles": [""], "industries": [""], "yearsExperience": 0,
  "preferredLocations": [""], "salaryMin": 0, "salaryMax": 0,
- "salaryCurrency": "CAD", "salaryPeriod": "hourly",
- "remotePreference": "any", "workAuth": "", "reason": "一句话说明推荐逻辑"}
+ "salaryCurrency": "CAD", "salaryPeriod": "annual",
+ "remotePreference": "any", "workAuth": "", "reason": "一句话说明推荐逻辑"}}
 
 简历：
 ```
@@ -302,28 +303,31 @@ JOB_PROFILE_PROMPT = """你是资深职业顾问。根据下面这份简历，�
 """
 
 
-def llm_suggest_job_profile(resume_text: str, timeout: int = 60) -> dict | None:
-    """根据简历生成目标岗位画像初稿。失败返回 None。"""
+def llm_suggest_job_profile(resume_text: str, timeout: int = 60, tries: int = 3) -> dict | None:
+    """根据简历生成目标岗位画像初稿。瞬时失败自动重试（最多 tries 次）；最终失败返回 None。"""
     cfg = get_config()
     if not cfg["api_key"] or not resume_text:
         return None
     prompt = JOB_PROFILE_PROMPT.format(resume=resume_text[:5000])
-    try:
-        r = httpx.post(
-            f"{cfg['base_url']}/chat/completions",
-            headers={"Authorization": f"Bearer {cfg['api_key']}", "Content-Type": "application/json"},
-            json={"model": cfg["model"],
-                  "messages": [{"role": "user", "content": prompt}],
-                  "temperature": 0.3, "max_tokens": 800},
-            timeout=timeout,
-        )
-        r.raise_for_status()
-        data = _extract_json(r.json()["choices"][0]["message"]["content"])
-        if not data or not data.get("targetTitles"):
-            return None
-        return data
-    except Exception:
-        return None
+    for attempt in range(tries):
+        try:
+            r = httpx.post(
+                f"{cfg['base_url']}/chat/completions",
+                headers={"Authorization": f"Bearer {cfg['api_key']}", "Content-Type": "application/json"},
+                json={"model": cfg["model"],
+                      "messages": [{"role": "user", "content": prompt}],
+                      "temperature": 0.3, "max_tokens": 800},
+                timeout=timeout,
+            )
+            r.raise_for_status()
+            data = _extract_json(r.json()["choices"][0]["message"]["content"])
+            if data and data.get("targetTitles"):
+                return data
+        except Exception:
+            pass
+        if attempt < tries - 1:
+            time.sleep(2)
+    return None
 
 
 def llm_tailor_resume(resume_text: str, jd: str, timeout: int = 90) -> dict | None:

@@ -625,7 +625,7 @@ def suggest_job_profile(user: dict = Depends(get_current_user)):
         raise HTTPException(400, "请先上传简历")
     sug = llm.llm_suggest_job_profile(resume_text)
     if not sug:
-        raise HTTPException(502, "AI 生成失败，请稍后重试或手动填写")
+        raise HTTPException(502, "AI 生成暂时失败（已自动重试多次），请点重试或稍后手动填写")
     return {"suggestion": sug}
 
 

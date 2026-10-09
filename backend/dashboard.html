@@ -149,6 +149,8 @@ main{flex:1; min-width:0; max-width:860px; margin:0 auto; padding:24px 28px 70px
 .ob-box input[type=text], .ob-box input[type=number], .ob-box select{width:100%; padding:10px 12px; border:1px solid var(--line); border-radius:10px; font-size:14px; margin-top:4px; box-sizing:border-box;}
 .ob-foot{margin-top:20px;}
 .ob-ok{font-size:48px; text-align:center; margin:8px 0;}
+.ob-err{background:#fef2f2; border:1px solid #fecaca; color:#991b1b; border-radius:10px; padding:12px 14px; font-size:14px; margin-bottom:16px; line-height:1.7;}
+.ob-err .hint{color:#b45309;}
 #pfWidget{margin-top:auto; border-top:1px solid var(--line); padding:12px 8px 4px; cursor:pointer;}
 #pfWidget:hover{background:var(--gray-bg); border-radius:8px;}
 .pfw-row{display:flex; align-items:center; gap:8px; font-size:13px; padding:4px 6px; color:var(--body);}
@@ -1502,6 +1504,7 @@ $("tutorialSteps").addEventListener("click", () => {});
 /* ---------- 新手引导：上传 → AI 工作 → 审批 ---------- */
 let obPhase = "upload";  // upload | working | approve_job | approve_launch | done
 let obJobSug = null;
+let obJobErr = "";
 async function checkOnboarding() {
   if (localStorage.getItem("applai_onboarded")) return;
   try {
@@ -1555,12 +1558,17 @@ function renderOb() {
     const s = obJobSug || {};
     B.innerHTML = `<h3>AI 按你的简历生成了目标岗位画像</h3>
       <div class="ob-desc">看看对不对，不对直接改，改完点确认。</div>
+      ${obJobErr ? `<div class="ob-err">⚠️ AI 生成失败：${esc(obJobErr)}<br>
+        <button class="ghost-btn" id="obRetrySug" style="margin-top:8px">🔄 重试生成</button>
+        <span class="hint">也可以直接手动填写。</span></div>` : ""}
       ${s.reason ? `<div class="hint" style="margin-bottom:12px">💡 ${esc(s.reason)}</div>` : ""}
       <label>目标职位<input type="text" id="obTitles" value="${esc((s.targetTitles || []).join(", "))}"></label>
       <label>行业<input type="text" id="obIndustries" value="${esc((s.industries || []).join(", "))}"></label>
       <label>期望地点<input type="text" id="obLocs" value="${esc((s.preferredLocations || []).join(", "))}"></label>
       <label>期望薪资 <span style="font-size:12px;color:var(--muted)">(CAD/年)</span>
         <div style="display:flex;gap:8px"><input type="number" id="obSalMin" value="${s.salaryMin || ""}" placeholder="下限" style="flex:1"><span style="align-self:center">–</span><input type="number" id="obSalMax" value="${s.salaryMax || ""}" placeholder="上限" style="flex:1"></div></label>`;
+    const retryBtn = $("obRetrySug");
+    if (retryBtn) retryBtn.onclick = () => { obPhase = "working"; renderOb(); };
   } else if (obPhase === "approve_launch") {
     obProgress(90, "第 3 步：审批并启动");
     $("obNext").style.display = "";
@@ -1606,15 +1614,20 @@ async function obDoUpload(e) {
   } catch (err) { $("obUpMsg").textContent = "失败：" + err.message + "，换个 PDF 试试"; }
 }
 async function obRunAI() {
-  // 1. 生成目标岗位画像
+  // 1. 生成目标岗位画像（失败时保留错误信息，不静默留空）
+  obJobErr = "";
   try {
     const d = await api("/api/v1/profile/suggest-job", { method: "POST" });
     obJobSug = d.suggestion || {};
+    if (!obJobSug.targetTitles || !obJobSug.targetTitles.length) {
+      throw new Error("AI 返回的内容为空");
+    }
     const w1 = $("ow1");
     if (w1) { w1.textContent = "✓ 目标岗位画像已生成"; w1.style.opacity = 1; }
   } catch (e) {
     const w1 = $("ow1");
-    if (w1) w1.textContent = "⚠️ 画像生成失败，稍后可手动填";
+    obJobErr = (e.message || "生成失败").replace(/^请求失败 \d+ /, "");
+    if (w1) w1.textContent = "⚠️ 画像生成失败：" + obJobErr;
     obJobSug = {};
   }
   const w2 = $("ow2");
