@@ -305,6 +305,7 @@ button .en{font-size:10px; opacity:.72; margin-top:1px;}
         <p>Applai 是你的 AI 求职助手：按画像全网发现职位、智能打分排序、自动填表投递。<br>你只需要传一份简历，剩下的交给它。<span class="en">Applai is your AI job-search assistant: it discovers jobs across the web, ranks them by fit, and auto-fills applications. You only need to upload a resume.</span></p>
         <div class="hero-actions">
           <button class="primary" id="heroProfile">上传简历<span class="en">Upload resume</span></button>
+          <input type="file" id="heroResumeFile" accept=".pdf" style="display:none">
           <button id="heroSchedule">开启自动投递<span class="en">Enable auto-apply</span></button>
         </div>
       </div>
@@ -1407,7 +1408,58 @@ loadQuickLinks();
 
 
 /* ---------- 首页 hero ---------- */
-$("heroProfile").onclick = () => showPage("profile");
+// hero 上传简历：没简历则直传，有简历则去画像页
+async function heroHasResume() {
+  try {
+    const d = await api("/api/v1/profile");
+    const rf = (d.person && d.person.profile && d.person.profile.resumeFile) || {};
+    return !!(rf.name || rf.dataUrl);
+  } catch (e) { return true; }
+}
+$("heroProfile").onclick = async () => {
+  if (await heroHasResume()) { showPage("profile"); return; }
+  $("heroResumeFile").click();
+};
+$("heroResumeFile").addEventListener("change", async (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+  const btn = $("heroProfile");
+  btn.disabled = true;
+  btn.innerHTML = "识别中…";
+  try {
+    const fd = new FormData();
+    fd.append("file", file, file.name);
+    const resp = await fetch("/api/v1/resume/parse", { method: "POST", credentials: "include", body: fd });
+    const d = await resp.json();
+    if (!resp.ok) throw new Error(d.detail || "识别失败");
+    const f = d.fields || {};
+    const rdr = new FileReader();
+    rdr.onload = async () => {
+      try {
+        const pr = await apiGet("/api/v1/profiles?kind=person");
+        const act = (pr.profiles || []).find((p) => p.is_active);
+        if (act) {
+          await api(`/api/v1/profiles/${act.id}`, { method: "PUT",
+            headers: {"Content-Type": "application/json"},
+            body: JSON.stringify({ profile: { ...f, resumeFile: { name: file.name, dataUrl: rdr.result } } }) });
+        }
+        await loadAllProfiles();
+        const nm = [f.firstName, f.lastName].filter(Boolean).join(" ");
+        toast(`简历已上传${nm ? "：" + nm : ""} ✓`);
+        btn.innerHTML = "更新简历<span class=\"en\">Update resume</span>";
+        // 简历有了，引导去生成目标岗位画像
+        if (confirm("简历上传成功！要让 AI 按简历生成目标岗位画像吗？")) showPage("profile");
+      } catch (err) { toast("保存失败：" + err.message); }
+      btn.disabled = false;
+    };
+    rdr.readAsDataURL(file);
+  } catch (err) {
+    toast("上传失败：" + err.message);
+    btn.disabled = false;
+    btn.innerHTML = "上传简历<span class=\"en\">Upload resume</span>";
+  }
+  e.target.value = "";
+});
 $("heroSchedule").onclick = () => showPage("schedule");
 
 /* ---------- 新手教程（真实状态） ---------- */
