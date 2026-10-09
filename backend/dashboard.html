@@ -1176,7 +1176,7 @@ document.querySelectorAll("#sidenav button[data-page]").forEach((b) =>
 /* ---------- 聊天助手（多会话） ---------- */
 let chatConvId = 0;
 let chatConvs = [];
-const CHAT_SUGGEST = ["今天投了几个？", "待人工的职位是什么情况？", "队列里分数最高的职位要求什么？", "给我些面试建议"];
+const CHAT_SUGGEST = ["帮我复盘一下这周", "今天投了几个？", "待人工的职位是什么情况？", "队列里分数最高的职位要求什么？", "给我些面试建议"];
 function renderChips() {
   $("chatChips").innerHTML = CHAT_SUGGEST.map((s) =>
     `<button data-q="${esc(s)}">${esc(s)}</button>`).join("");

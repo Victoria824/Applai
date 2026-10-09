@@ -616,7 +616,7 @@ def suggest_job_profile(user: dict = Depends(get_current_user)):
     return {"suggestion": sug}
 
 
-@app.post("/api/v1/admin/chat-debug")
+
 def admin_chat_debug(body: dict):
     """一次性：完整复现 chat pipeline（含 JD/action/llm）。用完即删。"""
     import traceback
@@ -1097,7 +1097,8 @@ CHAT_SYSTEM = """你是 Applai 的求职助手，一个友好、专业的 AI 顾
 2. 结合 JD 回答更广泛的问题：分析职位要求、对比多个职位、给面试/简历建议、评估匹配度。用户问简历分析时，用画像里的简历摘要回答，不要说"没有简历数据"。
 3. 队列为空时，先看实时数据找原因（是从未抓取？还是抓到了但分数不够？），给出可操作的建议（如去"来源"页点"立即抓取"、检查画像关键词），不要说"市面上没有岗位"这种无法验证的话。
 4. 回答简洁，中文为主，关键信息用条列。不要输出 JSON。
-5. 数据里没有的信息要承认不知道，不要 hallucinate。"""
+5. 数据里没有的信息要承认不知道，不要 hallucinate。
+6. 你也是复盘助手：用户说"复盘一下""这周怎么样"时，用【本周复盘】和【邮件动态】给出结构化复盘：投递数、回复率、进展亮点、问题、下周建议。"""
 
 MAX_CTX = 12000
 
@@ -1142,6 +1143,22 @@ def chat(body: ChatIn, user: dict = Depends(get_current_user)):
     if profile.get("summary"):
         ctx.append("【简历摘要】" + str(profile["summary"])[:600])
     ctx.append("【统计】" + str(stats))
+    # 复盘数据：本周投递、回复率、邮件动态（供"复盘一下"类问题）
+    try:
+        _cutoff = time.time() - 7 * 86400
+        _apps7 = [a for a in db.list_applications(uid, limit=1000) if a.get("updated_at", 0) >= _cutoff]
+        _bs = {}
+        for _a in _apps7:
+            _bs[_a["status"]] = _bs.get(_a["status"], 0) + 1
+        _sub = _bs.get("submitted", 0)
+        _resp = _bs.get("interviewing", 0) + _bs.get("rejected", 0)
+        _rr = round(_resp / _sub * 100, 1) if _sub else 0
+        _evs = [e for e in db.list_email_events(uid, limit=10) if e.get("created_at", 0) >= _cutoff]
+        _evl = [f"- {e.get('kind','?')}：{e.get('subject','')[:50]}" for e in _evs]
+        ctx.append(f"【本周复盘】投递{_sub} · 面试中{_bs.get('interviewing',0)} · 拒信{_bs.get('rejected',0)} · 回复率{_rr}%")
+        ctx.append("【邮件动态】\n" + ("\n".join(_evl) if _evl else "暂无"))
+    except Exception:
+        pass
     lines = []
     for a in apps:
         lines.append(f"- {a.get('title','?')} @ {a.get('company','?')}：{a.get('status','?')}（{a.get('detail','')[:60]}）")
