@@ -134,6 +134,11 @@ main{flex:1; min-width:0; max-width:860px; margin:0 auto; padding:24px 28px 70px
   box-shadow:none; color:var(--body); position:relative;}
 #sidenav button:hover{background:var(--gray-bg);}
 #sidenav button.on{background:var(--nav-active); color:var(--ink); font-weight:700;}
+.pf-switcher{display:flex; flex-wrap:wrap; gap:8px; align-items:center;}
+.pf-chip{border:1px solid #d0d7de; background:#fff; border-radius:20px; padding:6px 14px; cursor:pointer; font-size:13px;}
+.pf-chip.on{background:#111827; color:#fff; border-color:#111827; cursor:default;}
+.pf-chip.add{border-style:dashed; color:#666;}
+.pf-chip:not(.on):hover{border-color:#111827;}
 #sidenav button span{font-weight:600;}
 .nbadge{position:absolute; top:6px; right:8px; min-width:20px; height:20px; padding:0 6px;
   background:var(--orange); color:#fff; font-size:11px; font-weight:800; font-style:normal;
@@ -738,13 +743,6 @@ function renderPfSwitcher() {
     } catch (e) { toast(e.message); }
   };
 }
-
-/* ---------- 多画像 ---------- */
-.pf-switcher { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
-.pf-chip { border: 1px solid #d0d7de; background: #fff; border-radius: 20px; padding: 6px 14px; cursor: pointer; font-size: 13px; }
-.pf-chip.on { background: #111827; color: #fff; border-color: #111827; cursor: default; }
-.pf-chip.add { border-style: dashed; color: #666; }
-.pf-chip:not(.on):hover { border-color: #111827; }
 
 /* ---------- 求职画像 ---------- */
 const LIST_KEYS = ["targetTitles", "industries", "preferredLocations"];
