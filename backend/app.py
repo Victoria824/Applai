@@ -602,6 +602,14 @@ def create_my_invite(body: InviteIn, user: dict = Depends(get_current_user)):
     return {**inv, "link": f"https://applai-backend.fly.dev/?invite={inv['code']}"}
 
 
+@app.delete("/api/v1/admin/drop-user")
+def admin_drop_user(username: str):
+    """一次性：删测试号。用完即删。"""
+    import db as _db
+    _db.delete_user_data_by_username(username)
+    return {"ok": True}
+
+
 @app.get("/api/v1/gmail/status")
 def gmail_status(user: dict = Depends(get_current_user)):
     uid = user["app_user_id"]
