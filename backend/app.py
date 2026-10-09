@@ -618,6 +618,77 @@ def suggest_job_profile(user: dict = Depends(get_current_user)):
 
 @app.post("/api/v1/admin/chat-debug")
 def admin_chat_debug(body: dict):
+    """一次性：完整复现 chat pipeline（含 JD/action/llm）。用完即删。"""
+    import traceback
+    import llm as llm_mod
+    msg = body.get("message", "你给我投什么方向简历")
+    target = body.get("uid", "")
+    conn = db.get_db()
+    users = [dict(r)["app_user_id"] for r in
+             conn.execute("SELECT app_user_id FROM auth_users").fetchall()]
+    conn.close()
+    if target:
+        users = [u for u in users if u.startswith(target)]
+    out = {}
+    for uid in users:
+        steps = {}
+        try:
+            steps["s1_profile"] = "ok"
+            profile = db.get_profile(uid) or {}
+            ctx = []
+            ctx.append("【用户画像】" + llm_mod._profile_text(profile)[:800])
+            if profile.get("summary"):
+                ctx.append("【简历摘要】" + str(profile["summary"])[:600])
+            steps["s2_stats"] = "ok"
+            stats = db.stats(uid)
+            ctx.append("【统计】" + str(stats))
+            steps["s3_apps"] = "ok"
+            apps = db.list_applications(uid, 30)
+            lines = []
+            for a in apps:
+                lines.append(f"- {a.get('title','?')} @ {a.get('company','?')}：{a.get('status','?')}（{a.get('detail','')[:60]}）")
+            ctx.append("【最近申请】\n" + ("\n".join(lines) if lines else "暂无"))
+            steps["s4_queue"] = "ok"
+            try:
+                queued = _queue_jobs(uid, 15)
+                ql = [f"- {j.get('title','?')} @ {j.get('company','?')}：{j.get('score',0)}分（{j.get('location','')}）" for j in queued]
+                ctx.append("【待投递队列】\n" + ("\n".join(ql) if ql else "队列为空"))
+            except Exception:
+                queued = []
+                ctx.append("【待投递队列】暂无")
+            steps["s5_jd"] = "ok"
+            jd_parts, used = [], sum(len(c) for c in ctx)
+            manual = [a for a in apps if a.get("status") == "needs_manual"][:5]
+            queued_ids = {j["id"] for j in queued[:5]}
+            want = {a.get("job_id") for a in manual} | queued_ids
+            for jid in want:
+                job = db.get_job(jid)
+                if not job or used >= 12000:
+                    continue
+                desc = (db.job_description(job) or "")[:1500]
+                if desc:
+                    jd_parts.append(f"【JD】{job.get('title')} @ {job.get('company')}：\n{desc}")
+                    used += len(jd_parts[-1])
+            if jd_parts:
+                ctx.append("\n\n".join(jd_parts))
+            steps["s6_action"] = "ok"
+            act = llm_mod.llm_detect_action(msg)
+            steps["action"] = str(act)[:150]
+            if act and act.get("action") not in (None, "none"):
+                action_result = _run_chat_action(uid, act, queued)
+                if action_result:
+                    ctx.append("【刚才执行的操作】\n" + action_result)
+            steps["s7_llm"] = "ok"
+            reply = llm_mod.llm_chat("你是求职助手。\n\n实时数据：\n" + "\n".join(ctx)[:12000],
+                                     [{"role": "user", "content": msg}])
+            steps["reply"] = f"ok len={len(reply or '')}"
+        except Exception:
+            steps["FAILED"] = traceback.format_exc()[-2000:]
+        out[uid[:12]] = steps
+    return out
+
+
+def admin_chat_debug(body: dict):
     """一次性：对所有用户跑 chat 上下文组装，找 500。用完即删。"""
     import traceback
     import llm as llm_mod
