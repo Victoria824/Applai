@@ -602,6 +602,52 @@ def create_my_invite(body: InviteIn, user: dict = Depends(get_current_user)):
     return {**inv, "link": f"https://applai-backend.fly.dev/?invite={inv['code']}"}
 
 
+@app.post("/api/v1/profile/suggest-job")
+def suggest_job_profile(user: dict = Depends(get_current_user)):
+    """根据人物简历画像，AI 生成目标岗位画像初稿。"""
+    uid = user["app_user_id"]
+    person = db.get_active_person(uid).get("profile") or {}
+    resume_text = _resume_text_from_profile(person)
+    if not resume_text:
+        raise HTTPException(400, "请先上传简历")
+    sug = llm.llm_suggest_job_profile(resume_text)
+    if not sug:
+        raise HTTPException(502, "AI 生成失败，请稍后重试或手动填写")
+    return {"suggestion": sug}
+
+
+@app.post("/api/v1/admin/chat-debug")
+def admin_chat_debug(body: dict):
+    """一次性：复现 Victoria 账号的 chat 500。用完即删。"""
+    import traceback
+    msg = body.get("message", "你给我投什么方向简历")
+    username = body.get("username", "")
+    conn = db.get_db()
+    r = conn.execute("SELECT app_user_id FROM auth_users WHERE username=?", (username,)).fetchone()
+    conn.close()
+    uid = dict(r)["app_user_id"] if r else ""
+    steps = {}
+    try:
+        steps["profile"] = "ok"
+        profile = db.get_profile(uid) or {}
+        steps["stats"] = "ok"
+        stats = db.stats(uid)
+        steps["apps"] = "ok"
+        apps = db.list_applications(uid, 30)
+        steps["queue"] = "ok"
+        queued = _queue_jobs(uid, 15)
+        steps["action_detect"] = "ok"
+        import llm as llm_mod
+        act = llm_mod.llm_detect_action(msg)
+        steps["action"] = str(act)[:200]
+        steps["chat"] = "ok"
+        reply = llm_mod.llm_chat("test", [{"role": "user", "content": msg}])
+        steps["reply_len"] = len(reply or "")
+    except Exception as e:
+        steps["FAILED_AT"] = traceback.format_exc()[-2000:]
+    return steps
+
+
 @app.get("/api/v1/gmail/status")
 def gmail_status(user: dict = Depends(get_current_user)):
     uid = user["app_user_id"]

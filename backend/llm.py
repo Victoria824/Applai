@@ -278,6 +278,54 @@ TAILOR_PROMPT = """你是简历优化师。根据目标岗位 JD，优化简历�
 """
 
 
+JOB_PROFILE_PROMPT = """你是资深职业顾问。根据下面这份简历，为求职者生成一份【目标岗位画像】初稿。
+
+要求：
+1. targetTitles：从简历经历推断 2-4 个最匹配的目标职位（英文职位名，如 "AI Engineer"）。
+2. industries：匹配的行业 2-4 个。
+3. yearsExperience：从经历估算工作年限（数字）。
+4. preferredLocations：根据现居地推断求职地点；如果在加拿大，首选其所在城市 + Remote。
+5. salary：根据职位和年限给合理的薪资范围。加拿大 AI/软件岗按时薪 CAD 估算（如 45-80）；如不确定宁可保守。
+6. remotePreference：根据简历判断偏好（remote/hybrid/onsite/any），不确定填 any。
+7. workAuth：如简历显示在加拿大，填 "PR/Citizen or valid work permit in Canada" 之类；不确定留空。
+
+只返回 JSON，不要解释：
+{"targetTitles": [""], "industries": [""], "yearsExperience": 0,
+ "preferredLocations": [""], "salaryMin": 0, "salaryMax": 0,
+ "salaryCurrency": "CAD", "salaryPeriod": "hourly",
+ "remotePreference": "any", "workAuth": "", "reason": "一句话说明推荐逻辑"}
+
+简历：
+```
+{resume}
+```
+"""
+
+
+def llm_suggest_job_profile(resume_text: str, timeout: int = 60) -> dict | None:
+    """根据简历生成目标岗位画像初稿。失败返回 None。"""
+    cfg = get_config()
+    if not cfg["api_key"] or not resume_text:
+        return None
+    prompt = JOB_PROFILE_PROMPT.format(resume=resume_text[:5000])
+    try:
+        r = httpx.post(
+            f"{cfg['base_url']}/chat/completions",
+            headers={"Authorization": f"Bearer {cfg['api_key']}", "Content-Type": "application/json"},
+            json={"model": cfg["model"],
+                  "messages": [{"role": "user", "content": prompt}],
+                  "temperature": 0.3, "max_tokens": 800},
+            timeout=timeout,
+        )
+        r.raise_for_status()
+        data = _extract_json(r.json()["choices"][0]["message"]["content"])
+        if not data or not data.get("targetTitles"):
+            return None
+        return data
+    except Exception:
+        return None
+
+
 def llm_tailor_resume(resume_text: str, jd: str, timeout: int = 90) -> dict | None:
     """按 JD 改写简历文本。返回改写后的结构化内容；失败返回 None。"""
     cfg = get_config()

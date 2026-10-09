@@ -139,6 +139,16 @@ main{flex:1; min-width:0; max-width:860px; margin:0 auto; padding:24px 28px 70px
 .pf-chip.on{background:#111827; color:#fff; border-color:#111827; cursor:default;}
 .pf-chip.add{border-style:dashed; color:#666;}
 .pf-chip:not(.on):hover{border-color:#111827;}
+.ob-box{max-width:520px;}
+.ob-progress{height:6px; background:var(--gray-bg); border-radius:3px; overflow:hidden; margin-bottom:12px;}
+.ob-progress div{height:100%; background:#111827; border-radius:3px; transition:width .3s;}
+.ob-step-tag{font-size:12px; color:var(--muted); margin-bottom:12px;}
+.ob-box h3{font-size:20px; margin:0 0 8px;}
+.ob-box .ob-desc{color:var(--muted); font-size:14px; margin-bottom:16px; line-height:1.6;}
+.ob-box label{display:block; margin-bottom:12px; font-size:14px;}
+.ob-box input[type=text], .ob-box input[type=number], .ob-box select{width:100%; padding:10px 12px; border:1px solid var(--line); border-radius:10px; font-size:14px; margin-top:4px; box-sizing:border-box;}
+.ob-foot{margin-top:20px;}
+.ob-ok{font-size:48px; text-align:center; margin:8px 0;}
 #pfWidget{margin-top:auto; border-top:1px solid var(--line); padding:12px 8px 4px; cursor:pointer;}
 #pfWidget:hover{background:var(--gray-bg); border-radius:8px;}
 .pfw-row{display:flex; align-items:center; gap:8px; font-size:13px; padding:4px 6px; color:var(--body);}
@@ -300,7 +310,7 @@ button .en{font-size:10px; opacity:.72; margin-top:1px;}
       </div>
     </div>
     <div class="card">
-      <div class="card-title">新手教程<span class="en">Getting started</span> <span class="card-desc">跟着走完这 4 步，投递就全自动了<span class="en">Complete these 4 steps to go fully automatic</span></span></div>
+      <div class="card-title">新手教程<span class="en">Getting started</span> <span class="card-desc">跟着走完这 5 步，投递就全自动了<span class="en">Complete these 5 steps to go fully automatic</span></span></div>
       <div id="tutorialSteps" class="steps"><div class="loading">加载中…</div></div>
     </div>
     <div class="quicklinks" id="quickLinks"></div>
@@ -885,12 +895,33 @@ function openPersonEdit() {
 function openJobEdit() {
   const p = (curJob && curJob.profile) || {};
   const f = $("jobForm");
-  f.innerHTML = renderFormFields("jp", p, JOB_PF_FIELDS) +
+  f.innerHTML = `<div class="actions" style="margin:0 0 12px">
+      <button class="ghost-btn" id="jpSuggestBtn">✨ AI 根据简历生成初稿<span class="en">Generate from resume</span></button>
+      <span class="hint" id="jpSuggestMsg" style="margin:0"></span></div>` +
+    renderFormFields("jp", p, JOB_PF_FIELDS) +
     `<label class="check"><input type="checkbox" id="jp__tailor"${curJob && curJob.tailor_enabled ? " checked" : ""}> ${esc(TAILOR_HINT)}<span class="en">Auto-tailor resume per job</span></label>`;
   $("jobView").style.display = "none";
   f.style.display = "block";
   $("jobActions").style.display = "flex";
   $("jobEditBtn").style.display = "none";
+  $("jpSuggestBtn").onclick = async () => {
+    const msg = $("jpSuggestMsg");
+    msg.textContent = "生成中…";
+    try {
+      const d = await api("/api/v1/profile/suggest-job", { method: "POST" });
+      const s = d.suggestion || {};
+      const set = (k, v) => { const el = $("jp_" + k); if (el) el.value = v; };
+      set("targetTitles", (s.targetTitles || []).join(", "));
+      set("industries", (s.industries || []).join(", "));
+      set("preferredLocations", (s.preferredLocations || []).join(", "));
+      if (s.yearsExperience) set("yearsExperience", s.yearsExperience);
+      if (s.salaryMin) set("salaryMin", s.salaryMin);
+      if (s.salaryMax) set("salaryMax", s.salaryMax);
+      if (s.remotePreference) set("remotePreference", s.remotePreference);
+      if (s.workAuth) set("workAuth", s.workAuth);
+      msg.textContent = s.reason ? "💡 " + s.reason : "已填入 ✓";
+    } catch (e) { msg.textContent = "失败：" + e.message; }
+  };
 }
 function closePersonEdit() {
   $("personView").style.display = "block";
@@ -1370,21 +1401,27 @@ $("heroSchedule").onclick = () => showPage("schedule");
 /* ---------- 新手教程（真实状态） ---------- */
 async function loadTutorial() {
   const box = $("tutorialSteps");
-  let profile = null, tokens = [], sched = {};
-  try { profile = await api("/api/v1/profile"); } catch (e) {}
+  let person = null, job = null, tokens = [], sched = {};
+  try { const d = await api("/api/v1/profile"); person = d.person; job = d.job; } catch (e) {}
   try { tokens = (await api("/api/v1/tokens")).tokens || []; } catch (e) {}
   try { sched = await api("/api/v1/settings"); } catch (e) {}
-  const hasProfile = !!(profile && (profile.name || profile.email));
+  const pp = (person && person.profile) || {};
+  const jp = (job && job.profile) || {};
+  const hasPerson = !!(pp.email || (pp.resumeFile && pp.resumeFile.name));
+  const hasJob = !!((jp.targetTitles && jp.targetTitles.length));
   const hasToken = tokens.length > 0;
   const hasSched = !!sched.schedule_enabled;
+  const allDone = hasPerson && hasJob && hasToken && hasSched;
   const steps = [
-    { done: hasProfile, t: "完善求职画像<span class=\"en\">Complete your profile</span>", d: "上传简历自动识别，或手动填写目标职位、薪资、地区<span class=\"en\">Upload resume for auto-fill, or enter target roles, salary, locations</span>",
-      act: hasProfile ? "" : ["profile", "去完善"] },
+    { done: hasPerson, t: "🤵 完善简历画像<span class=\"en\">Resume profile</span>", d: "上传简历自动识别姓名、联系方式<span class=\"en\">Upload resume for auto-fill</span>",
+      act: hasPerson ? "" : ["profile", "去上传"] },
+    { done: hasJob, t: "🎯 设置目标岗位<span class=\"en\">Target job</span>", d: "填目标职位、期望地点、薪资，AI 按这个找工作<span class=\"en\">AI finds jobs matching your targets</span>",
+      act: hasJob ? "" : ["profile", "去设置"] },
     { done: hasToken, t: "连接 Chrome 插件<span class=\"en\">Connect extension</span>", d: "一键连接后，插件才能在招聘网站上自动填表<span class=\"en\">One-click connect lets the extension auto-fill forms</span>",
       act: hasToken ? "" : ["connect", "去连接"] },
     { done: hasSched, t: "开启定时投递<span class=\"en\">Enable schedule</span>", d: "设置每天几点、投几份，之后全自动运行<span class=\"en\">Set time and daily count — then fully automatic</span>",
       act: hasSched ? "" : ["schedule", "去开启"] },
-    { done: hasProfile && hasToken && hasSched, t: "坐等投递<span class=\"en\">Sit back</span>", d: "每天自动发现职位、打分、投递；验证码会推送到你手机<span class=\"en\">Jobs are discovered, scored and applied daily; CAPTCHAs push to your phone</span>",
+    { done: allDone, t: "坐等投递<span class=\"en\">Sit back</span>", d: "每天自动发现职位、打分、投递；验证码会推送到你手机<span class=\"en\">Jobs are discovered, scored and applied daily; CAPTCHAs push to your phone</span>",
       act: "" },
   ];
   box.innerHTML = steps.map((s, i) => `
@@ -1397,6 +1434,193 @@ async function loadTutorial() {
     b.addEventListener("click", () => showPage(b.dataset.goto)));
 }
 $("tutorialSteps").addEventListener("click", () => {});
+
+/* ---------- 新手引导向导 ---------- */
+let obStep = 0;
+const OB_TOTAL = 4;
+async function checkOnboarding() {
+  if (localStorage.getItem("applai_onboarded")) return;
+  try {
+    const d = await api("/api/v1/profile");
+    const p = (d && d.profile) || {};
+    // 有邮箱或目标职位就不弹了
+    if (p.email || (p.targetTitles && p.targetTitles.length)) return;
+  } catch (e) { return; }
+  openOnboarding();
+}
+function openOnboarding() {
+  obStep = 0;
+  $("obModal").style.display = "flex";
+  renderObStep();
+}
+function closeOnboarding(done) {
+  $("obModal").style.display = "none";
+  if (done) localStorage.setItem("applai_onboarded", "1");
+}
+function renderObStep() {
+  $("obBar").style.width = ((obStep + 1) / OB_TOTAL * 100) + "%";
+  $("obTag").textContent = `第 ${obStep + 1} 步 / 共 ${OB_TOTAL} 步`;
+  $("obBack").style.display = obStep > 0 ? "" : "none";
+  $("obNext").textContent = obStep === OB_TOTAL - 1 ? "完成 🎉" : "下一步 →";
+  const B = $("obBody");
+  if (obStep === 0) {
+    B.innerHTML = `<h3>上传你的简历</h3>
+      <div class="ob-desc">传一份 PDF 简历，AI 自动识别姓名、联系方式，不用一个个手填。<span class="en">Upload your resume PDF — AI extracts your info automatically.</span></div>
+      <label>简历 PDF<input type="file" id="obResume" accept=".pdf"></label>
+      <div class="hint" id="obResumeMsg"></div>`;
+    $("obResume").addEventListener("change", async (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+      $("obResumeMsg").textContent = "正在识别…";
+      const fd = new FormData();
+      fd.append("file", file, file.name);
+      try {
+        const resp = await fetch("/api/v1/resume/parse", { method: "POST", credentials: "include", body: fd });
+        const d = await resp.json();
+        if (!resp.ok) throw new Error(d.detail || "识别失败");
+        const f = d.fields || {};
+        // 存到 person 画像
+        const rdr = new FileReader();
+        rdr.onload = async () => {
+          try {
+            const pr = await apiGet("/api/v1/profiles?kind=person");
+            const act = (pr.profiles || []).find((p) => p.is_active);
+            if (act) {
+              await api(`/api/v1/profiles/${act.id}`, { method: "PUT",
+                headers: {"Content-Type": "application/json"},
+                body: JSON.stringify({ profile: { ...f, resumeFile: { name: file.name, dataUrl: rdr.result } } }) });
+            }
+            const nm = [f.firstName, f.lastName].filter(Boolean).join(" ");
+            $("obResumeMsg").textContent = nm ? `识别成功：${nm} ✓` : "识别成功 ✓";
+            await loadAllProfiles();
+          } catch (err) { $("obResumeMsg").textContent = "保存失败：" + err.message; }
+        };
+        rdr.readAsDataURL(file);
+      } catch (err) { $("obResumeMsg").textContent = "识别失败：" + err.message + "，可跳过稍后手动填"; }
+    });
+  } else if (obStep === 1) {
+    B.innerHTML = `<h3>确认你的目标岗位</h3>
+      <div class="ob-desc">AI 已根据你的简历生成初稿，改改就能用。<span class="en">AI drafted this from your resume — review and tweak.</span></div>
+      <div class="hint" id="obSugMsg">正在生成…</div>
+      <div id="obSugForm" style="display:none">
+        <div class="hint" id="obSugReason" style="margin-bottom:12px"></div>
+        <label>目标职位（逗号分隔）<input type="text" id="obTitles"></label>
+        <label>行业（逗号分隔）<input type="text" id="obIndustries"></label>
+        <label>期望地点（逗号分隔）<input type="text" id="obLocs"></label>
+        <label>期望薪资 <span style="font-size:12px;color:var(--muted)">(CAD/小时)</span>
+          <div style="display:flex;gap:8px"><input type="number" id="obSalMin" placeholder="下限" style="flex:1"><span style="align-self:center">–</span><input type="number" id="obSalMax" placeholder="上限" style="flex:1"></div></label>
+        <label>远程偏好 <select id="obRemote">
+          <option value="any">不限</option><option value="remote">纯远程</option>
+          <option value="hybrid">混合</option><option value="onsite">坐班</option></select></label>
+        <div class="actions" style="margin-top:4px"><button class="ghost-btn" id="obRegen">↻ 重新生成</button></div>
+      </div>`;
+    const fillSug = (s) => {
+      $("obTitles").value = (s.targetTitles || []).join(", ");
+      $("obIndustries").value = (s.industries || []).join(", ");
+      $("obLocs").value = (s.preferredLocations || []).join(", ");
+      $("obSalMin").value = s.salaryMin || "";
+      $("obSalMax").value = s.salaryMax || "";
+      $("obRemote").value = s.remotePreference || "any";
+      if (s.reason) $("obSugReason").textContent = "💡 " + s.reason;
+      $("obSugMsg").style.display = "none";
+      $("obSugForm").style.display = "block";
+    };
+    const genSug = async () => {
+      $("obSugMsg").style.display = "";
+      $("obSugMsg").textContent = "正在生成…";
+      $("obSugForm").style.display = "none";
+      try {
+        const d = await api("/api/v1/profile/suggest-job", { method: "POST" });
+        fillSug(d.suggestion || {});
+      } catch (e) {
+        $("obSugMsg").textContent = "生成失败（" + e.message + "），请手动填写";
+        $("obSugForm").style.display = "block";
+      }
+    };
+    $("obRegen").onclick = genSug;
+    genSug();
+  } else if (obStep === 2) {
+    B.innerHTML = `<h3>连接 Chrome 插件</h3>
+      <div class="ob-desc">插件负责在招聘网站上自动填表。点一下，账号自动绑进插件，不用复制粘贴。<span class="en">One click links your account to the extension.</span></div>
+      <div class="actions" style="margin-top:8px"><button class="primary" id="obConnect">一键连接插件</button></div>
+      <div class="hint" id="obConnMsg" style="margin-top:8px"></div>
+      <div class="hint" style="margin-top:8px">还没安装插件？去 <b>chrome://extensions</b> → 开发者模式 → 加载已解压的扩展程序 → 选择插件文件夹。</div>`;
+    $("obConnect").onclick = async () => {
+      const msg = $("obConnMsg");
+      msg.textContent = "正在检测插件…";
+      if (!(await extPing())) {
+        msg.textContent = "未检测到插件。请先安装 Chrome 插件，再点一次。";
+        return;
+      }
+      msg.textContent = "已找到插件，正在传送…";
+      let token;
+      try {
+        const d = await api("/api/v1/auth/tokens", { method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ name: "一键连接 " + new Date().toLocaleDateString("zh-CN") }) });
+        token = d.token;
+      } catch (e) { msg.textContent = "创建 Token 失败：" + e.message; return; }
+      const res = await new Promise((resolve) => {
+        const h = (e) => {
+          if (e.source === window && e.data && e.data.type === "APPLAI_CONNECT_RESULT") {
+            window.removeEventListener("message", h);
+            clearTimeout(t);
+            resolve(e.data);
+          }
+        };
+        const t = setTimeout(() => { window.removeEventListener("message", h); resolve({ ok: false }); }, 5000);
+        window.addEventListener("message", h);
+        window.postMessage({ type: "APPLAI_CONNECT", token }, "*");
+      });
+      msg.textContent = res.ok ? "插件已连接 ✓" : "传送失败，可跳过稍后在「插件」页连接";
+    };
+  } else {
+    B.innerHTML = `<h3>开启定时投递</h3>
+      <div class="ob-desc">设好每天几点投、投几份，之后全自动运行。<span class="en">Set it and forget it.</span></div>
+      <label>每天几点 <input type="text" id="obTime" value="08:00" placeholder="08:00"></label>
+      <label>每天投几份 <input type="number" id="obCount" value="10" min="1" max="50"></label>`;
+  }
+}
+$("obBack").onclick = () => { if (obStep > 0) { obStep--; renderObStep(); } };
+$("obSkip").onclick = () => closeOnboarding(true);
+$("obNext").onclick = async () => {
+  // 每步保存
+  try {
+    if (obStep === 1) {
+      const jr = await apiGet("/api/v1/profiles?kind=job");
+      const act = (jr.profiles || []).find((p) => p.is_active);
+      if (act && $("obTitles")) {
+        const salMin = $("obSalMin").value ? Number($("obSalMin").value) : null;
+        const salMax = $("obSalMax").value ? Number($("obSalMax").value) : null;
+        await api(`/api/v1/profiles/${act.id}`, { method: "PUT",
+          headers: {"Content-Type": "application/json"},
+          body: JSON.stringify({ profile: { ...act.profile,
+            targetTitles: splitList($("obTitles").value),
+            industries: splitList($("obIndustries").value),
+            preferredLocations: splitList($("obLocs").value),
+            salaryMin: salMin, salaryMax: salMax,
+            salaryCurrency: "CAD", salaryPeriod: "hourly",
+            remotePreference: $("obRemote").value || "any" } }) });
+        await loadAllProfiles();
+      }
+    } else if (obStep === 3) {
+      await api("/api/v1/settings", { method: "PUT", headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({ schedule_enabled: true,
+          schedule_time: $("obTime").value || "08:00",
+          daily_count: Number($("obCount").value) || 10 }) });
+    }
+  } catch (e) { toast("保存失败：" + e.message); return; }
+  if (obStep < OB_TOTAL - 1) { obStep++; renderObStep(); }
+  else {
+    closeOnboarding(true);
+    $("obBody").innerHTML = "";
+    toast("设置完成，开始自动投递 🎉");
+    showPage("home");
+    loadAll();
+  }
+};
+// 登录后检查
+setTimeout(checkOnboarding, 1200);
 
 /* ---------- 快捷入口 ---------- */
 async function loadQuickLinks() {
@@ -1701,5 +1925,18 @@ $("adviceBtn").onclick = async () => {
 };
 
 </script>
+<div id="obModal" class="modal" style="display:none">
+  <div class="modal-box ob-box">
+    <div class="ob-progress"><div id="obBar"></div></div>
+    <div class="ob-step-tag" id="obTag">第 1 步 / 共 4 步</div>
+    <div id="obBody"></div>
+    <div class="actions ob-foot">
+      <button id="obSkip" class="ghost-btn">跳过引导</button>
+      <span style="flex:1"></span>
+      <button id="obBack" class="ghost-btn" style="display:none">← 上一步</button>
+      <button id="obNext" class="primary">下一步 →</button>
+    </div>
+  </div>
+</div>
 </body>
 </html>
