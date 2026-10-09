@@ -139,6 +139,11 @@ main{flex:1; min-width:0; max-width:860px; margin:0 auto; padding:24px 28px 70px
 .pf-chip.on{background:#111827; color:#fff; border-color:#111827; cursor:default;}
 .pf-chip.add{border-style:dashed; color:#666;}
 .pf-chip:not(.on):hover{border-color:#111827;}
+#pfWidget{margin-top:auto; border-top:1px solid var(--line); padding:12px 8px 4px; cursor:pointer;}
+#pfWidget:hover{background:var(--gray-bg); border-radius:8px;}
+.pfw-row{display:flex; align-items:center; gap:8px; font-size:13px; padding:4px 6px; color:var(--body);}
+.pfw-row span:last-child{overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
+.pfw-ic{flex-shrink:0;}
 #sidenav button span{font-weight:600;}
 .nbadge{position:absolute; top:6px; right:8px; min-width:20px; height:20px; padding:0 6px;
   background:var(--orange); color:#fff; font-size:11px; font-weight:800; font-style:normal;
@@ -274,6 +279,10 @@ button .en{font-size:10px; opacity:.72; margin-top:1px;}
   <button data-page="review">📊<span>复盘<span class="en">Review</span></span></button>
   <button data-page="schedule">⏰<span>定时<span class="en">Schedule</span></span></button>
   <button data-page="connect">🔌<span>插件<span class="en">Extension</span></span></button>
+  <div id="pfWidget" title="点击管理画像">
+    <div class="pfw-row"><span class="pfw-ic">🤵</span><span id="pfwPerson">…</span></div>
+    <div class="pfw-row"><span class="pfw-ic">🎯</span><span id="pfwJob">…</span></div>
+  </div>
 </nav>
 <main>
   <div id="err" class="err"></div>
@@ -314,17 +323,31 @@ button .en{font-size:10px; opacity:.72; margin-top:1px;}
   </section>
 
   <section class="page" id="page-profile">
-    <div class="page-h"><h2>求职画像<span class="en">Profile</span></h2><p>你的简历与求职偏好，是职位匹配的基础。AI 会按画像生成搜索关键词。<span class="en">Your resume and preferences power job matching. AI generates search keywords from your profile.</span></p></div>
-    <div class="card" style="margin-bottom:12px"><div id="pfSwitcher"><div class="loading">加载中…</div></div></div>
-    <div class="sec-head"><span></span><button id="pfEditBtn">编辑<span class="en">Edit</span></button></div>
-    <div class="card" style="margin-top:12px">
-      <div id="pfView" class="pf-view"><div class="loading">加载中…</div></div>
-      <div id="pfForm" class="pf-form" style="display:none"></div>
-      <div class="actions" id="pfActions" style="display:none">
-        <button class="primary" id="pfSaveBtn">保存画像<span class="en">Save profile</span></button>
-        <button id="pfCancelBtn">取消<span class="en">Cancel</span></button>
+    <div class="page-h"><h2>求职画像<span class="en">Profile</span></h2><p>「你是谁」和「你要什么」分开管：AI 同时读两份画像做匹配、关键词和简历改写。<span class="en">Who you are and what you want, managed separately. AI reads both for matching, keywords and resume tailoring.</span></p></div>
+
+    <div class="card-title">🤵 人物简历画像<span class="en">Resume profile — who you are</span></div>
+    <div class="card">
+      <div id="personSwitcher"><div class="loading">加载中…</div></div>
+      <div class="sec-head" style="margin-top:8px"><span></span><button id="personEditBtn">编辑<span class="en">Edit</span></button></div>
+      <div id="personView" class="pf-view"><div class="loading">加载中…</div></div>
+      <div id="personForm" class="pf-form" style="display:none"></div>
+      <div class="actions" id="personActions" style="display:none">
+        <button class="primary" id="personSaveBtn">保存<span class="en">Save</span></button>
+        <button id="personCancelBtn">取消<span class="en">Cancel</span></button>
       </div>
-      <div class="hint" id="pfResumeHint"></div>
+      <div class="hint" id="personResumeHint"></div>
+    </div>
+
+    <div class="card-title" style="margin-top:16px">🎯 目标岗位画像<span class="en">Target job profile — what you want</span></div>
+    <div class="card">
+      <div id="jobSwitcher"><div class="loading">加载中…</div></div>
+      <div class="sec-head" style="margin-top:8px"><span></span><button id="jobEditBtn">编辑<span class="en">Edit</span></button></div>
+      <div id="jobView" class="pf-view"><div class="loading">加载中…</div></div>
+      <div id="jobForm" class="pf-form" style="display:none"></div>
+      <div class="actions" id="jobActions" style="display:none">
+        <button class="primary" id="jobSaveBtn">保存<span class="en">Save</span></button>
+        <button id="jobCancelBtn">取消<span class="en">Cancel</span></button>
+      </div>
     </div>
     <div class="card-title" style="margin-top:4px">数据管理<span class="en">Data</span></div>
     <div class="card">
@@ -616,7 +639,7 @@ $("refreshBtn").onclick = () => loadAll();
 async function loadAll() {
   clearErr();
   if (!userId()) return;
-  await Promise.all([loadHealth(), loadProfile(), loadSources(), loadQueue(), loadApps()]);
+  await Promise.all([loadHealth(), loadAllProfiles(), loadSources(), loadQueue(), loadApps()]);
 }
 
 /* ---------- 职位来源 ---------- */
@@ -698,59 +721,15 @@ $("srcFetchBtn").onclick = async () => {
   }
 };
 
-/* ---------- 多画像切换 ---------- */
-let allProfiles = [];
-async function loadProfiles() {
-  try {
-    const r = await apiGet("/api/v1/profiles");
-    allProfiles = r.profiles || [];
-    renderPfSwitcher();
-  } catch (e) {
-    $("pfSwitcher").innerHTML = `<div class="empty">加载失败<span class=\"en\">Failed</span></div>`;
-  }
-}
-function renderPfSwitcher() {
-  const box = $("pfSwitcher");
-  const chips = allProfiles.map((p) =>
-    `<button class="pf-chip${p.is_active ? " on" : ""}" data-pid="${p.id}" ${p.is_active ? "disabled" : ""}>${esc(p.name)}${p.is_active ? " ✓" : ""}</button>`
-  ).join("");
-  box.innerHTML = `<div class="pf-switcher">${chips}
-    <button class="pf-chip add" id="pfNewBtn">＋ 新建画像<span class="en">New</span></button></div>
-    <div class="hint" style="margin:8px 0 0">不同画像可配不同目标职位和简历（如 AI 工程师 / 全栈开发）。切换后关键词、匹配、投递都按当前画像走。<span class="en">Each profile has its own target titles and resume. Switching changes keywords, matching and applying.</span></div>`;
-  box.querySelectorAll(".pf-chip[data-pid]").forEach((b) => {
-    b.onclick = async () => {
-      await apiPost(`/api/v1/profiles/${b.dataset.pid}/activate`, {});
-      await loadProfiles(); await loadProfile();
-      toast("已切换画像 / Switched");
-    };
-  });
-  box.querySelectorAll(".pf-chip[data-pid]").forEach((b) => {
-    b.oncontextmenu = async (e) => {
-      e.preventDefault();
-      if (!confirm(`删除画像「${b.textContent.trim()}」？改写过的简历版本会保留。`)) return;
-      try { await apiDel(`/api/v1/profiles/${b.dataset.pid}`); await loadProfiles(); }
-      catch (err) { toast(err.message); }
-    };
-  });
-  $("pfNewBtn").onclick = async () => {
-    const name = prompt("新画像名称（如：全栈开发）", "");
-    if (!name || !name.trim()) return;
-    try {
-      const r = await apiPost("/api/v1/profiles", { name: name.trim() });
-      await apiPost(`/api/v1/profiles/${r.id}/activate`, {});
-      await loadProfiles(); await loadProfile();
-      toast("已创建并切换 / Created");
-    } catch (e) { toast(e.message); }
-  };
-}
-
-/* ---------- 求职画像 ---------- */
-const LIST_KEYS = ["targetTitles", "industries", "preferredLocations"];
-const PF_FIELDS = [
+/* ---------- 画像：person（简历） / job（目标岗位） ---------- */
+const PERSON_PF_FIELDS = [
   {k:"firstName", t:"名"}, {k:"lastName", t:"姓"},
   {k:"email", t:"邮箱", type:"email"}, {k:"phone", t:"电话"},
   {k:"location", t:"现居地"},
   {k:"linkedin", t:"LinkedIn"}, {k:"github", t:"GitHub"}, {k:"website", t:"个人网站"},
+  {k:"coverLetter", t:"通用求职信", type:"textarea"},
+];
+const JOB_PF_FIELDS = [
   {k:"targetTitles", t:"目标职位（逗号分隔）", list:1},
   {k:"industries", t:"行业（逗号分隔）", list:1},
   {k:"yearsExperience", t:"工作年限", type:"number"},
@@ -765,13 +744,11 @@ const PF_FIELDS = [
    options:[["hourly","按小时 / Hourly"],["annual","按年 / Annual"]]},
   {k:"workAuth", t:"工作许可"},
   {k:"needsSponsorship", t:"需要雇主担保签证", type:"checkbox"},
-  {k:"coverLetter", t:"通用求职信", type:"textarea"},
 ];
-const TAILOR_FIELD = {k:"_tailorEnabled", t:"按岗位自动优化简历（AI 按每份 JD 改写措辞，不编造经历）", type:"checkbox"};
-let currentProfile = null;   // 后端现有画像（含 resumeFile）
-let currentProfileId = 0;    // 当前激活画像 id
-let currentTailor = false;   // 当前画像是否开启按岗改写
-let pendingResume = null;    // 本次新上传的简历
+const TAILOR_HINT = "按岗位自动优化简历（AI 按每份 JD 改写措辞，不编造经历）";
+let personProfiles = [], jobProfiles = [];
+let curPerson = null, curJob = null;
+let pendingResume = null;
 const toast = (msg) => {
   const t = $("toast"); t.textContent = msg; t.style.display = "block";
   clearTimeout(t._h); t._h = setTimeout(() => t.style.display = "none", 2200);
@@ -784,44 +761,99 @@ function pfSummaryRow(k, v) {
   return `<div class="row"><div class="k">${esc(k)}</div><div>${val}</div></div>`;
 }
 
-function renderPfView(p) {
-  const box = $("pfView");
-  if (!p) {
-    box.innerHTML = `<div class="empty">还没有画像，点击右上角「编辑」创建。<span class=\"en\">No profile yet — click Edit (top right) to create one.</span></div>`;
-    $("pfResumeHint").textContent = "";
-    return;
-  }
+/* ----- 加载 ----- */
+async function loadKindProfiles(kind) {
+  const r = await apiGet(`/api/v1/profiles?kind=${kind}`);
+  const list = r.profiles || [];
+  if (kind === "person") { personProfiles = list; curPerson = list.find((p) => p.is_active) || list[0] || null; }
+  else { jobProfiles = list; curJob = list.find((p) => p.is_active) || list[0] || null; }
+  renderSwitcher(kind);
+  if (kind === "person") renderPersonView(); else renderJobView();
+  updatePfWidget();
+}
+async function loadAllProfiles() {
+  try { await loadKindProfiles("person"); } catch (e) {
+    $("personSwitcher").innerHTML = `<div class="empty">加载失败</div>`; }
+  try { await loadKindProfiles("job"); } catch (e) {
+    $("jobSwitcher").innerHTML = `<div class="empty">加载失败</div>`; }
+}
+
+/* ----- 切换器 ----- */
+function renderSwitcher(kind) {
+  const list = kind === "person" ? personProfiles : jobProfiles;
+  const box = $(kind === "person" ? "personSwitcher" : "jobSwitcher");
+  const newName = kind === "person" ? "新简历画像" : "新岗位画像";
+  box.innerHTML = `<div class="pf-switcher">` + list.map((p) =>
+    `<button class="pf-chip${p.is_active ? " on" : ""}" data-pid="${p.id}"${p.is_active ? " disabled" : ""}>${esc(p.name)}${p.is_active ? " ✓" : ""}</button>`
+  ).join("") + `<button class="pf-chip add" data-new="1">＋ ${newName}</button></div>` +
+  (kind === "job" ? `<div class="hint" style="margin:8px 0 0">不同目标岗位各建一个画像（如 AI 工程师 / 全栈开发），切换后匹配、关键词、投递都按当前走。右键删除。<span class="en">One profile per target role. Right-click to delete.</span></div>` : ``);
+  box.querySelectorAll(".pf-chip[data-pid]").forEach((b) => {
+    b.onclick = async () => {
+      await apiPost(`/api/v1/profiles/${b.dataset.pid}/activate`, {});
+      await loadAllProfiles();
+      toast("已切换 ✓");
+    };
+    b.oncontextmenu = async (e) => {
+      e.preventDefault();
+      if (!confirm(`删除「${b.textContent.trim()}」？`)) return;
+      try { await apiDel(`/api/v1/profiles/${b.dataset.pid}`); await loadAllProfiles(); }
+      catch (err) { toast(err.message); }
+    };
+  });
+  box.querySelector("[data-new]").onclick = async () => {
+    const name = prompt(kind === "person" ? "简历画像名称（如：主简历）" : "岗位画像名称（如：AI 工程师）", "");
+    if (!name || !name.trim()) return;
+    try {
+      const r = await apiPost("/api/v1/profiles", { name: name.trim(), kind });
+      await apiPost(`/api/v1/profiles/${r.id}/activate`, {});
+      await loadAllProfiles();
+      toast("已创建并切换 ✓");
+    } catch (e) { toast(e.message); }
+  };
+}
+
+/* ----- 展示 ----- */
+function renderPersonView() {
+  const box = $("personView"), p = (curPerson && curPerson.profile) || {};
+  if (!curPerson) { box.innerHTML = `<div class="empty">还没有简历画像</div>`; return; }
   const name = [p.firstName, p.lastName].filter(Boolean).join(" ");
-  const periodZh = p.salaryPeriod === "annual" ? "/年" : "/小时";
-  const salary = (p.salaryMin || p.salaryMax)
-    ? `${p.salaryMin || "?"}${p.salaryMax ? "–" + p.salaryMax : "+"} ${p.salaryCurrency || ""}${periodZh}` : "";
   box.innerHTML =
     pfSummaryRow("姓名", name) +
     pfSummaryRow("邮箱 / 电话", [p.email, p.phone].filter(Boolean).join(" · ")) +
     pfSummaryRow("现居地", p.location) +
+    pfSummaryRow("LinkedIn / GitHub", [p.linkedin, p.github].filter(Boolean).join(" · ")) +
+    pfSummaryRow("个人网站", p.website);
+  const rf = p.resumeFile;
+  $("personResumeHint").textContent = rf && rf.name ? `简历：${rf.name}（已上传）` : "简历：未上传（编辑时可上传 PDF）";
+}
+function renderJobView() {
+  const box = $("jobView"), p = (curJob && curJob.profile) || {};
+  if (!curJob) { box.innerHTML = `<div class="empty">还没有岗位画像</div>`; return; }
+  const periodZh = p.salaryPeriod === "annual" ? "/年" : "/小时";
+  const salary = (p.salaryMin || p.salaryMax)
+    ? `${p.salaryMin || "?"}${p.salaryMax ? "–" + p.salaryMax : "+"} ${p.salaryCurrency || ""}${periodZh}` : "";
+  box.innerHTML =
     pfSummaryRow("目标职位", p.targetTitles) +
+    pfSummaryRow("行业", p.industries) +
     pfSummaryRow("工作年限", p.yearsExperience) +
     pfSummaryRow("期望薪资", salary) +
     pfSummaryRow("期望地点", p.preferredLocations) +
     pfSummaryRow("远程偏好", {any:"不限", remote:"纯远程", hybrid:"混合", onsite:"坐班"}[p.remotePreference]) +
     pfSummaryRow("工作许可", p.workAuth) +
-    (p.needsSponsorship ? pfSummaryRow("签证担保", "需要雇主担保") : "");
-  const rf = p.resumeFile;
-  $("pfResumeHint").textContent = rf && rf.name
-    ? `简历：${rf.name}（已上传 / uploaded）` : "简历：未上传（编辑时可上传 PDF）<span class=\"en\">Resume: not uploaded (upload PDF in edit mode)</span>";
+    (p.needsSponsorship ? pfSummaryRow("签证担保", "需要雇主担保") : "") +
+    pfSummaryRow("简历改写", curJob.tailor_enabled ? "已开启（按岗位自动优化）" : "未开启");
 }
 
-function renderPfForm(p) {
-  const f = $("pfForm");
-  p = p || {};
+/* ----- 编辑表单 ----- */
+function renderFormFields(f, p, fields) {
   let h = "";
   const val = (k) => {
     const v = p[k];
-    if (LIST_KEYS.includes(k)) return esc((v || []).join(", "));
+    if (fields.find((x) => x.k === k && x.list)) return esc((v || []).join(", "));
     return esc(v == null ? "" : v);
   };
-  PF_FIELDS.forEach((fd) => {
-    const id = "pf_" + fd.k;
+  fields.forEach((fd) => {
+    const id = f + "_" + fd.k;
     if (fd.type === "select") {
       const opts = fd.options.map(([v, t]) =>
         `<option value="${v}"${String(p[fd.k] || "") === v ? " selected" : ""}>${esc(t)}</option>`).join("");
@@ -834,128 +866,147 @@ function renderPfForm(p) {
       h += `<label>${esc(fd.t)}<input type="${fd.type || "text"}" id="${id}" value="${val(fd.k)}"></label>`;
     }
   });
-  h += `<label class="check"><input type="checkbox" id="pf__tailorEnabled"${currentTailor ? " checked" : ""}> ${esc(TAILOR_FIELD.t)}<span class="en">Auto-tailor resume per job (AI rewrites wording, never invents experience)</span></label>`;
-  const rf = p.resumeFile;
-  h += `<label>简历 PDF <span style="font-size:12px">（${rf && rf.name ? "当前：" + esc(rf.name) + "，不选则保留" : "未上传"}）</span>
-    <input type="file" id="pf_resume" accept=".pdf,.doc,.docx"></label>
-    <div class="hint" id="pfResumeNew"></div>`;
-  f.innerHTML = h;
-  $("pf_resume").addEventListener("change", (e) => {
-    const file = e.target.files[0];
-    if (!file) { pendingResume = null; $("pfResumeNew").textContent = ""; return; }
-    if (file.size > 4 * 1024 * 1024) { toast("文件超过 4MB，请压缩后上传"); e.target.value = ""; return; }
-    const r = new FileReader();
-    r.onload = () => {
-      pendingResume = { name: file.name, size: file.size, dataUrl: r.result };
-      $("pfResumeNew").textContent = `已选择：${file.name}（保存后生效）`;
-    };
-    r.readAsDataURL(file);
-    // PDF 简历 → 后端识别 → 自动预填
-    if (/\.pdf$/i.test(file.name)) {
-      $("pfResumeNew").textContent = "正在识别简历内容…";
-      const fd = new FormData();
-      fd.append("file", file, file.name);
-      fetch("/api/v1/resume/parse", { method: "POST", credentials: "include", body: fd })
-        .then(async (resp) => {
-          const d = await resp.json().catch(() => ({}));
-          if (!resp.ok) throw new Error(d.detail || `识别失败 ${resp.status}`);
-          return d;
-        })
-        .then((d) => {
-          prefillProfileForm(d.fields || {});
-          const n = Object.keys(d.fields || {}).length;
-          if (n) showParseConfirm(n);
-          else toast("未识别出有效信息，请手动填写 / Nothing recognized — please fill in manually");
-          if (pendingResume) $("pfResumeNew").textContent = `已选择：${file.name}（保存后生效）`;
-        })
-        .catch((err) => {
-          $("pfResumeNew").textContent = `已选择：${file.name}。自动识别失败（${err.message}），请手动填写`;
-        });
-    }
-  });
+  return h;
 }
-
-function prefillProfileForm(fields) {
+function openPersonEdit() {
+  pendingResume = null;
+  const p = (curPerson && curPerson.profile) || {};
+  const f = $("personForm");
+  f.innerHTML = renderFormFields("pp", p, PERSON_PF_FIELDS) +
+    `<label>简历 PDF <span style="font-size:12px">（${p.resumeFile && p.resumeFile.name ? "当前：" + esc(p.resumeFile.name) + "，不选则保留" : "未上传"}）</span>
+    <input type="file" id="pp_resume" accept=".pdf,.doc,.docx"></label>
+    <div class="hint" id="ppResumeNew"></div>`;
+  $("personView").style.display = "none";
+  f.style.display = "block";
+  $("personActions").style.display = "flex";
+  $("personEditBtn").style.display = "none";
+  $("pp_resume").addEventListener("change", onResumeFile);
+}
+function openJobEdit() {
+  const p = (curJob && curJob.profile) || {};
+  const f = $("jobForm");
+  f.innerHTML = renderFormFields("jp", p, JOB_PF_FIELDS) +
+    `<label class="check"><input type="checkbox" id="jp__tailor"${curJob && curJob.tailor_enabled ? " checked" : ""}> ${esc(TAILOR_HINT)}<span class="en">Auto-tailor resume per job</span></label>`;
+  $("jobView").style.display = "none";
+  f.style.display = "block";
+  $("jobActions").style.display = "flex";
+  $("jobEditBtn").style.display = "none";
+}
+function closePersonEdit() {
+  $("personView").style.display = "block";
+  $("personForm").style.display = "none";
+  $("personActions").style.display = "none";
+  $("personEditBtn").style.display = "";
+}
+function closeJobEdit() {
+  $("jobView").style.display = "block";
+  $("jobForm").style.display = "none";
+  $("jobActions").style.display = "none";
+  $("jobEditBtn").style.display = "";
+}
+function onResumeFile(e) {
+  const file = e.target.files[0];
+  if (!file) { pendingResume = null; $("ppResumeNew").textContent = ""; return; }
+  if (file.size > 4 * 1024 * 1024) { toast("文件超过 4MB，请压缩后上传"); e.target.value = ""; return; }
+  const r = new FileReader();
+  r.onload = () => {
+    pendingResume = { name: file.name, size: file.size, dataUrl: r.result };
+    $("ppResumeNew").textContent = `已选择：${file.name}（保存后生效）`;
+  };
+  r.readAsDataURL(file);
+  if (/\.pdf$/i.test(file.name)) {
+    $("ppResumeNew").textContent = "正在识别简历内容…";
+    const fd = new FormData();
+    fd.append("file", file, file.name);
+    fetch("/api/v1/resume/parse", { method: "POST", credentials: "include", body: fd })
+      .then(async (resp) => {
+        const d = await resp.json().catch(() => ({}));
+        if (!resp.ok) throw new Error(d.detail || `识别失败 ${resp.status}`);
+        return d;
+      })
+      .then((d) => {
+        prefillPersonForm(d.fields || {});
+        const n = Object.keys(d.fields || {}).length;
+        if (n) showParseConfirm(n);
+        else toast("未识别出有效信息，请手动填写");
+        if (pendingResume) $("ppResumeNew").textContent = `已选择：${file.name}（保存后生效）`;
+      })
+      .catch((err) => {
+        $("ppResumeNew").textContent = `已选择：${file.name}。自动识别失败（${err.message}），请手动填写`;
+      });
+  }
+}
+function prefillPersonForm(fields) {
   Object.entries(fields).forEach(([k, v]) => {
     if (k === "summary" || v == null || v === "") return;
-    const el = $("pf_" + k);
+    const el = $("pp_" + k);
     if (!el) return;
     if (el.type === "checkbox") { el.checked = !!v; return; }
     el.value = Array.isArray(v) ? v.join(", ") : String(v);
   });
 }
-
-async function loadProfile() {
-  try {
-    const d = await api(`/api/v1/profile?user_id=${encodeURIComponent(userId())}`);
-    currentProfile = d.profile || null;
-    // 取当前画像的 id 和改写开关
-    try {
-      const r = await apiGet("/api/v1/profiles");
-      const act = (r.profiles || []).find((p) => p.is_active);
-      if (act) { currentProfileId = act.id; currentTailor = !!act.tailor_enabled; }
-    } catch (e2) {}
-    renderPfView(currentProfile);
-  } catch (e) {
-    $("pfView").innerHTML = `<div class="empty">画像加载失败<span class=\"en\">Failed to load profile</span>：${esc(e.message)}</div>`;
-  }
-}
-
-function openPfEdit() {
-  pendingResume = null;
-  renderPfForm(currentProfile);
-  $("pfView").style.display = "none";
-  $("pfForm").style.display = "block";
-  $("pfActions").style.display = "flex";
-  $("pfEditBtn").style.display = "none";
-}
-function closePfEdit() {
-  $("pfView").style.display = "block";
-  $("pfForm").style.display = "none";
-  $("pfActions").style.display = "none";
-  $("pfEditBtn").style.display = "";
-}
-
-async function saveProfile() {
-  clearErr();
+function collectForm(f, fields) {
   const p = {};
-  PF_FIELDS.forEach((fd) => {
-    const el = $("pf_" + fd.k);
+  fields.forEach((fd) => {
+    const el = $(f + "_" + fd.k);
+    if (!el) return;
     if (fd.type === "checkbox") { p[fd.k] = el.checked; return; }
-    if (LIST_KEYS.includes(fd.k)) { p[fd.k] = splitList(el.value); return; }
+    if (fd.list) { p[fd.k] = splitList(el.value); return; }
     const v = el.value.trim();
     p[fd.k] = (fd.type === "number") ? (v === "" ? null : Number(v)) : v;
   });
+  return p;
+}
+async function savePerson() {
+  if (!curPerson) { toast("没有可保存的画像"); return; }
+  const p = collectForm("pp", PERSON_PF_FIELDS);
   if (!p.email) { toast("请填写邮箱 / Email required"); return; }
   if (pendingResume) p.resumeFile = pendingResume;
-  else if (currentProfile && currentProfile.resumeFile) p.resumeFile = currentProfile.resumeFile;
+  else if (curPerson.profile && curPerson.profile.resumeFile) p.resumeFile = curPerson.profile.resumeFile;
   try {
-    await api("/api/v1/profile", {
-      method: "PUT",
-      headers: {"Content-Type": "application/json"},
-      body: JSON.stringify({user_id: userId(), profile: p})
+    await api(`/api/v1/profiles/${curPerson.id}`, {
+      method: "PUT", headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({ profile: p })
     });
-    const tEl = $("pf__tailorEnabled");
-    if (tEl && currentProfileId) {
-      await api(`/api/v1/profiles/${currentProfileId}`, {
-        method: "PUT",
-        headers: {"Content-Type": "application/json"},
-        body: JSON.stringify({ tailor_enabled: tEl.checked })
-      });
-      currentTailor = tEl.checked;
-    }
-    // 刷新画像显示
-    currentProfile = p;
-    renderPfView(p);
-    closePfEdit();
-    toast("画像已保存 ✓");
-  } catch (e) { showErr("保存失败 / Save failed：" + e.message); }
+    closePersonEdit();
+    await loadAllProfiles();
+    toast("简历画像已保存 ✓");
+  } catch (e) { showErr("保存失败：" + e.message); }
+}
+async function saveJob() {
+  if (!curJob) { toast("没有可保存的画像"); return; }
+  const p = collectForm("jp", JOB_PF_FIELDS);
+  const tailorEl = $("jp__tailor");
+  try {
+    await api(`/api/v1/profiles/${curJob.id}`, {
+      method: "PUT", headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({ profile: p, tailor_enabled: tailorEl ? tailorEl.checked : false })
+    });
+    closeJobEdit();
+    await loadAllProfiles();
+    toast("岗位画像已保存 ✓");
+  } catch (e) { showErr("保存失败：" + e.message); }
 }
 
-$("pfEditBtn").onclick = openPfEdit;
-$("pfCancelBtn").onclick = closePfEdit;
-$("pfSaveBtn").onclick = saveProfile;
-loadProfiles();
+/* ----- 侧栏 widget ----- */
+function updatePfWidget() {
+  const pn = (curPerson && (curPerson.profile.firstName || curPerson.profile.lastName))
+    ? [curPerson.profile.firstName, curPerson.profile.lastName].filter(Boolean).join(" ")
+    : (curPerson ? curPerson.name : "未设置");
+  const jn = curJob ? curJob.name : "未设置";
+  $("pfwPerson").textContent = pn;
+  $("pfwJob").textContent = jn;
+}
+
+$("personEditBtn").onclick = openPersonEdit;
+$("personCancelBtn").onclick = closePersonEdit;
+$("personSaveBtn").onclick = savePerson;
+$("jobEditBtn").onclick = openJobEdit;
+$("jobCancelBtn").onclick = closeJobEdit;
+$("jobSaveBtn").onclick = saveJob;
+$("pfWidget").onclick = () => showPage("profile");
+loadAllProfiles();
+
 
 (async () => {
   try {
@@ -1384,10 +1435,11 @@ const CONFIRM_FIELDS = [
   {k:"workAuth", t:"工作许可", en:"Work authorization"},
 ];
 function fieldVal(k) {
-  const el = $("pf_" + k);
+  const el = $("pp_" + k) || $("jp_" + k);
   if (!el) return "";
   return (el.value || "").trim();
 }
+function fieldEl(k) { return $("pp_" + k) || $("jp_" + k); }
 function showParseConfirm(n) {
   const missing = CONFIRM_FIELDS.filter((f) => {
     if (f.k === "salaryMin" || f.k === "salaryMax") return !fieldVal("salaryMin") && !fieldVal("salaryMax");
@@ -1417,7 +1469,7 @@ function showParseConfirm(n) {
             <span style="color:var(--muted)">–</span>
             <input type="number" id="cf_salaryMax" placeholder="上限 Max（可空）" value="${fieldVal("salaryMax")}" style="flex:1;min-width:80px">
             <select id="cf_salaryCurrency" style="width:80px">
-              ${["CAD","USD","CNY"].map((c) => `<option${($("pf_salaryCurrency")||{}).value===c?" selected":""}>${c}</option>`).join("")}
+              ${["CAD","USD","CNY"].map((c) => `<option${(fieldEl("salaryCurrency")||{}).value===c?" selected":""}>${c}</option>`).join("")}
             </select>
             <select id="cf_salaryPeriod" style="width:110px">
               <option value="hourly"${curPeriod==="hourly"?" selected":""}>按小时 / hr</option>
@@ -1438,21 +1490,23 @@ function showParseConfirm(n) {
 }
 function hideParseModal() { $("parseModal").style.display = "none"; }
 $("parseModalLater").onclick = hideParseModal;
-$("parseModalSave").onclick = () => {
+$("parseModalSave").onclick = async () => {
   // 把弹窗里的值写回表单
   ["preferredLocations","industries","workAuth"].forEach((k) => {
-    const c = $("cf_" + k), p = $("pf_" + k);
+    const c = $("cf_" + k), p = fieldEl(k);
     if (c && p) p.value = c.value;
   });
   const sm = $("cf_salaryMin"), sx = $("cf_salaryMax"), sc = $("cf_salaryCurrency"), sp = $("cf_salaryPeriod");
-  if (sm && $("pf_salaryMin")) $("pf_salaryMin").value = sm.value;
-  if (sx && $("pf_salaryMax")) $("pf_salaryMax").value = sx.value;
-  if (sc && $("pf_salaryCurrency")) $("pf_salaryCurrency").value = sc.value;
-  if (sp && $("pf_salaryPeriod")) $("pf_salaryPeriod").value = sp.value;
+  if (sm && fieldEl("salaryMin")) fieldEl("salaryMin").value = sm.value;
+  if (sx && fieldEl("salaryMax")) fieldEl("salaryMax").value = sx.value;
+  if (sc && fieldEl("salaryCurrency")) fieldEl("salaryCurrency").value = sc.value;
+  if (sp && fieldEl("salaryPeriod")) fieldEl("salaryPeriod").value = sp.value;
   const rp = $("cf_remotePreference");
-  if (rp && $("pf_remotePreference")) $("pf_remotePreference").value = rp.value;
+  if (rp && fieldEl("remotePreference")) fieldEl("remotePreference").value = rp.value;
   hideParseModal();
-  saveProfile();
+  // 人和岗都保存（解析可能补了两边的字段）
+  if ($("personForm").style.display !== "none") await savePerson();
+  if ($("jobForm").style.display !== "none") await saveJob();
 };
 $("parseModal").addEventListener("click", (e) => { if (e.target.id === "parseModal") hideParseModal(); });
 

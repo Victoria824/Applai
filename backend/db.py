@@ -300,6 +300,13 @@ def get_db():
         if "resume_tailored" not in scols:
             pg.execute("ALTER TABLE application_snapshots ADD COLUMN resume_tailored INTEGER DEFAULT 0")
             pg.commit()
+        # 画像拆分：kind 列 + 老数据拆分
+        pcols = {r["column_name"] for r in pg.execute(
+            "SELECT column_name FROM information_schema.columns WHERE table_name='profiles'").fetchall()}
+        if "kind" not in pcols:
+            pg.execute("ALTER TABLE profiles ADD COLUMN kind TEXT DEFAULT 'job'")
+            pg.commit()
+        _migrate_split_profiles(pg)
         pg.commit()
         return pg
     conn = sqlite3.connect(DB_PATH)
@@ -318,13 +325,80 @@ def get_db():
     if "resume_tailored" not in scols:
         conn.execute("ALTER TABLE application_snapshots ADD COLUMN resume_tailored INTEGER DEFAULT 0")
     conn.commit()
+    # 画像拆分：person（简历） vs job（目标岗位）
+    pcols = {r[1] for r in conn.execute("PRAGMA table_info(profiles)").fetchall()}
+    if "kind" not in pcols:
+        conn.execute("ALTER TABLE profiles ADD COLUMN kind TEXT DEFAULT 'job'")
+        conn.commit()
+    _migrate_split_profiles(conn)
     return conn
 
 
+PERSON_KEYS = {"firstName", "lastName", "email", "phone", "location", "linkedin",
+               "github", "website", "resumeFile", "coverLetter"}
+
+
+def _migrate_split_profiles(conn):
+    """老画像（job 行里混着 person 字段）拆成 person + job 两条。
+    按内容识别：kind='job' 但 profile_json 里含 person 专属字段的，就是没拆过的老数据。"""
+    rows = conn.execute("SELECT id, user_id, name, profile_json, is_active, tailor_enabled "
+                        "FROM profiles WHERE kind='job'").fetchall()
+    # 只处理真正混着 person 字段的行
+    todo = []
+    for r in rows:
+        try:
+            pj = json.loads(dict(r)["profile_json"] or "{}")
+        except Exception:
+            continue
+        if any(k in pj for k in PERSON_KEYS):
+            todo.append(r)
+    rows = todo
+    now = time.time()
+    for r in rows:
+        d = dict(r)
+        try:
+            pj = json.loads(d["profile_json"] or "{}")
+        except Exception:
+            pj = {}
+        person = {k: v for k, v in pj.items() if k in PERSON_KEYS}
+        job = {k: v for k, v in pj.items() if k not in PERSON_KEYS}
+        # 原行变为 job 画像
+        conn.execute("UPDATE profiles SET kind='job', profile_json=? WHERE id=?",
+                     (json.dumps(job, ensure_ascii=False), d["id"]))
+        # person 数据：没有就建一条，有的就合并（首个非空值 wins）
+        prow = conn.execute("SELECT id, profile_json FROM profiles WHERE user_id=? AND kind='person' LIMIT 1",
+                            (d["user_id"],)).fetchone()
+        if not prow:
+            conn.execute(
+                "INSERT INTO profiles(user_id, name, kind, profile_json, is_active, created_at, updated_at) "
+                "VALUES(?,?,?,?,?,?,?)",
+                (d["user_id"], "我的简历", "person", json.dumps(person, ensure_ascii=False),
+                 1, now, now))
+        elif person:
+            try:
+                existing = json.loads(dict(prow)["profile_json"] or "{}")
+            except Exception:
+                existing = {}
+            merged_p = dict(existing)
+            for k, v in person.items():
+                if k not in merged_p or not merged_p[k]:
+                    merged_p[k] = v
+            conn.execute("UPDATE profiles SET profile_json=?, updated_at=? WHERE id=?",
+                         (json.dumps(merged_p, ensure_ascii=False), now, dict(prow)["id"]))
+    if rows:
+        conn.commit()
+
+
 def upsert_profile(user_id: str, profile: dict):
-    """向后兼容：更新当前激活画像的内容。"""
-    ap = get_active_profile(user_id)
-    update_profile(ap["id"], user_id, profile=profile)
+    """向后兼容：按字段归属拆分，分别更新 person / job 画像。"""
+    person = {k: v for k, v in (profile or {}).items() if k in PERSON_KEYS}
+    job = {k: v for k, v in (profile or {}).items() if k not in PERSON_KEYS}
+    ap = get_active_person(user_id)
+    aj = get_active_job(user_id)
+    if person:
+        update_profile(ap["id"], user_id, profile={**(ap.get("profile") or {}), **person})
+    if job or not person:
+        update_profile(aj["id"], user_id, profile={**(aj.get("profile") or {}), **job})
 
 
 def get_profile(user_id: str) -> dict:
@@ -624,7 +698,7 @@ def delete_user_data(uid: str):
         conn.execute("DELETE FROM invites WHERE created_by=?", (uid,))
     except Exception:
         pass
-    for tbl in ("users", "user_settings"):
+    for tbl in ("users", "user_settings", "profiles", "resume_versions"):
         try:
             cur = conn.execute(f"DELETE FROM {tbl} WHERE user_id=?", (uid,))
             stats[tbl] = cur.rowcount
@@ -744,32 +818,42 @@ def list_email_events(user_id: str, limit: int = 50) -> list:
 
 
 def _ensure_default_profile(user_id: str) -> dict:
-    """没有画像时，从旧 users 表迁移一个默认画像。"""
+    """确保 person 和 job 各有一个激活画像（老用户走 _migrate_split_profiles）。"""
     conn = get_db()
-    r = conn.execute("SELECT id FROM profiles WHERE user_id=? LIMIT 1", (user_id,)).fetchone()
-    if r:
-        conn.close()
-        return {"id": r["id"]}
-    # 从旧表迁移
-    old = conn.execute("SELECT profile_json FROM users WHERE user_id=?", (user_id,)).fetchone()
-    profile_json = old["profile_json"] if old else "{}"
     now = time.time()
-    cur = conn.execute(
-        "INSERT INTO profiles(user_id, name, profile_json, is_active, created_at, updated_at) "
-        "VALUES(?,?,?,?,?,?)",
-        (user_id, "默认画像", profile_json, 1, now, now))
-    pid = cur.lastrowid
+    for kind, name in (("person", "我的简历"), ("job", "默认画像")):
+        r = conn.execute("SELECT id FROM profiles WHERE user_id=? AND kind=? LIMIT 1",
+                         (user_id, kind)).fetchone()
+        if not r:
+            # 尝试从旧 users 表拿
+            pj = {}
+            if kind == "job":
+                old = conn.execute("SELECT profile_json FROM users WHERE user_id=?",
+                                   (user_id,)).fetchone()
+                if old:
+                    try:
+                        full = json.loads(old["profile_json"] or "{}")
+                    except Exception:
+                        full = {}
+                    pj = {k: v for k, v in full.items() if k not in PERSON_KEYS}
+            conn.execute(
+                "INSERT INTO profiles(user_id, name, kind, profile_json, is_active, created_at, updated_at) "
+                "VALUES(?,?,?,?,?,?,?)",
+                (user_id, name, kind, json.dumps(pj, ensure_ascii=False), 1, now, now))
     conn.commit()
+    r = conn.execute("SELECT id FROM profiles WHERE user_id=? AND kind='job' AND is_active=1 LIMIT 1",
+                     (user_id,)).fetchone()
     conn.close()
-    return {"id": pid}
+    return {"id": r["id"] if r else 0}
 
 
-def list_profiles(user_id: str) -> list:
+def list_profiles(user_id: str, kind: str = "job") -> list:
     _ensure_default_profile(user_id)
     conn = get_db()
     rows = conn.execute(
         "SELECT id, name, profile_json, is_active, tailor_enabled, created_at, updated_at "
-        "FROM profiles WHERE user_id=? ORDER BY is_active DESC, id", (user_id,)).fetchall()
+        "FROM profiles WHERE user_id=? AND kind=? ORDER BY is_active DESC, id",
+        (user_id, kind)).fetchall()
     out = []
     for r in rows:
         d = dict(r)
@@ -784,13 +868,12 @@ def list_profiles(user_id: str) -> list:
     return out
 
 
-def get_active_profile(user_id: str) -> dict:
-    """返回 {id, name, profile, tailor_enabled}。"""
+def _get_active_one(user_id: str, kind: str) -> dict:
     _ensure_default_profile(user_id)
     conn = get_db()
     r = conn.execute(
         "SELECT id, name, profile_json, tailor_enabled FROM profiles "
-        "WHERE user_id=? AND is_active=1 LIMIT 1", (user_id,)).fetchone()
+        "WHERE user_id=? AND kind=? AND is_active=1 LIMIT 1", (user_id, kind)).fetchone()
     conn.close()
     if not r:
         return {"id": 0, "name": "", "profile": {}, "tailor_enabled": False}
@@ -803,20 +886,41 @@ def get_active_profile(user_id: str) -> dict:
     return d
 
 
-def create_profile(user_id: str, name: str, profile: dict = None) -> dict:
+def get_active_person(user_id: str) -> dict:
+    return _get_active_one(user_id, "person")
+
+
+def get_active_job(user_id: str) -> dict:
+    return _get_active_one(user_id, "job")
+
+
+def get_active_profile(user_id: str) -> dict:
+    """向后兼容：返回 person+job 合并后的画像。LLM/匹配/插件都读这个。"""
+    person = get_active_person(user_id)
+    job = get_active_job(user_id)
+    merged = dict(person.get("profile") or {})
+    merged.update(job.get("profile") or {})
+    return {"id": job.get("id", 0), "person_id": person.get("id", 0),
+            "name": job.get("name", ""), "person_name": person.get("name", ""),
+            "profile": merged, "tailor_enabled": job.get("tailor_enabled", False)}
+
+
+def create_profile(user_id: str, name: str, profile: dict = None, kind: str = "job") -> dict:
     _ensure_default_profile(user_id)
+    # 同 kind 下同名不允许
     conn = get_db()
-    now = time.time()
-    try:
-        cur = conn.execute(
-            "INSERT INTO profiles(user_id, name, profile_json, is_active, created_at, updated_at) "
-            "VALUES(?,?,?,?,?,?)",
-            (user_id, name[:50], json.dumps(profile or {}, ensure_ascii=False), 0, now, now))
-        pid = cur.lastrowid
-        conn.commit()
-    except _IntegrityError:
+    dup = conn.execute("SELECT 1 FROM profiles WHERE user_id=? AND kind=? AND name=? LIMIT 1",
+                       (user_id, kind, name[:50])).fetchone()
+    if dup:
         conn.close()
         raise ValueError("同名画像已存在")
+    now = time.time()
+    cur = conn.execute(
+        "INSERT INTO profiles(user_id, name, kind, profile_json, is_active, created_at, updated_at) "
+        "VALUES(?,?,?,?,?,?,?)",
+        (user_id, name[:50], kind, json.dumps(profile or {}, ensure_ascii=False), 0, now, now))
+    pid = cur.lastrowid
+    conn.commit()
     conn.close()
     return {"id": pid}
 
@@ -845,7 +949,10 @@ def update_profile(profile_id: int, user_id: str, profile: dict = None,
 
 def activate_profile(profile_id: int, user_id: str):
     conn = get_db()
-    conn.execute("UPDATE profiles SET is_active=0 WHERE user_id=?", (user_id,))
+    r = conn.execute("SELECT kind FROM profiles WHERE id=? AND user_id=?",
+                     (profile_id, user_id)).fetchone()
+    kind = r["kind"] if r else "job"
+    conn.execute("UPDATE profiles SET is_active=0 WHERE user_id=? AND kind=?", (user_id, kind))
     conn.execute("UPDATE profiles SET is_active=1 WHERE id=? AND user_id=?", (profile_id, user_id))
     conn.commit()
     conn.close()

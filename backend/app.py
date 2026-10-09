@@ -118,23 +118,30 @@ def put_profile(body: ProfileIn, user: dict = Depends(get_current_user)):
 @app.get("/api/v1/profile")
 def get_profile(user: dict = Depends(get_current_user)):
     uid = user["app_user_id"]
-    return {"user_id": uid, "profile": db.get_profile(uid)}
+    ap = db.get_active_profile(uid)
+    return {"user_id": uid, "profile": ap["profile"],
+            "person": db.get_active_person(uid), "job": db.get_active_job(uid),
+            "tailor_enabled": ap.get("tailor_enabled", False)}
 
 
 class ProfileCreateIn(BaseModel):
     name: str
     profile: dict = Field(default_factory=dict)
+    kind: str = "job"
 
 
 @app.get("/api/v1/profiles")
-def list_profiles(user: dict = Depends(get_current_user)):
-    return {"profiles": db.list_profiles(user["app_user_id"])}
+def list_profiles(kind: str = "job", user: dict = Depends(get_current_user)):
+    if kind not in ("person", "job"):
+        kind = "job"
+    return {"profiles": db.list_profiles(user["app_user_id"], kind)}
 
 
 @app.post("/api/v1/profiles")
 def create_profile(body: ProfileCreateIn, user: dict = Depends(get_current_user)):
     try:
-        return db.create_profile(user["app_user_id"], body.name, body.profile)
+        kind = body.kind if body.kind in ("person", "job") else "job"
+        return db.create_profile(user["app_user_id"], body.name, body.profile, kind)
     except ValueError as e:
         raise HTTPException(400, str(e))
 
