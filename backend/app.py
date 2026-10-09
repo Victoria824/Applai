@@ -248,14 +248,19 @@ def _run_discover(uid: str, sources: list, limit: int = 100) -> dict:
             postings = ingest.fetch_source(src, limit)
         except Exception:
             continue
-        for p in postings:
+        for p in (postings or []):
+            if not isinstance(p, dict) or not p.get("url"):
+                continue
             total_seen += 1
             job = db.add_job(uid, p["url"], p["title"], p["company"],
                              p["location"], source=p["source"], raw=p["raw"],
                              description=p.get("description", ""))
             if job["is_new"]:
                 total_new += 1
-                score_and_store(uid, job["id"], profile)
+                try:
+                    score_and_store(uid, job["id"], profile)
+                except Exception:
+                    continue
     return {"seen": total_seen, "new": total_new}
 
 
@@ -290,7 +295,9 @@ def _run_smart_discover(uid: str, limit: int = 60, progress=None) -> dict:
         except Exception:
             continue
         new_jobs = []
-        for p in postings:
+        for p in (postings or []):
+            if not isinstance(p, dict) or not p.get("url"):
+                continue
             agg_seen += 1
             job = db.add_job(uid, p["url"], p["title"], p["company"],
                              p["location"], source=p["source"], raw=p["raw"],
