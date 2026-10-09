@@ -702,14 +702,6 @@ def export_user_data(uid: str) -> dict:
     return data
 
 
-def delete_user_data_by_username(username: str):
-    conn = get_db()
-    r = conn.execute("SELECT app_user_id FROM auth_users WHERE username=?", (username,)).fetchone()
-    conn.close()
-    if r:
-        delete_user_data(dict(r)["app_user_id"])
-
-
 def delete_user_data(uid: str):
     """级联删除用户全部数据。返回删除的表行数统计。"""
     conn = get_db()
