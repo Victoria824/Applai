@@ -581,6 +581,12 @@ def auth_register(body: AuthIn, request: Request):
         raise HTTPException(400, str(e))
     if body.invite_code:
         db.redeem_invite(body.invite_code, u["app_user_id"])
+    # 新用户默认开启定时投递：每天 8 点，10 份。用户之后可改，不用 upfront 决策。
+    try:
+        db.update_settings(u["app_user_id"], schedule_enabled=1,
+                           schedule_time="08:00", daily_count=10)
+    except Exception:
+        pass
     token = db.create_session(u["id"])
     resp = Response('{"ok":true}', media_type="application/json")
     _set_session_cookie(resp, token)

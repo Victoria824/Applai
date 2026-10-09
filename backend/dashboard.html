@@ -311,7 +311,7 @@ button .en{font-size:10px; opacity:.72; margin-top:1px;}
       </div>
     </div>
     <div class="card">
-      <div class="card-title">新手教程<span class="en">Getting started</span> <span class="card-desc">跟着走完这 5 步，投递就全自动了<span class="en">Complete these 5 steps to go fully automatic</span></span></div>
+      <div class="card-title">新手教程<span class="en">Getting started</span> <span class="card-desc">传完简历 AI 全自动开工，你只管审批<span class="en">Upload your resume — AI handles the rest, you just approve</span></span></div>
       <div id="tutorialSteps" class="steps"><div class="loading">加载中…</div></div>
     </div>
     <div class="quicklinks" id="quickLinks"></div>
@@ -1499,161 +1499,142 @@ async function loadTutorial() {
 }
 $("tutorialSteps").addEventListener("click", () => {});
 
-/* ---------- 新手引导向导 ---------- */
-let obStep = 0;
-const OB_TOTAL = 4;
+/* ---------- 新手引导：上传 → AI 工作 → 审批 ---------- */
+let obPhase = "upload";  // upload | working | approve_job | approve_launch | done
+let obJobSug = null;
 async function checkOnboarding() {
   if (localStorage.getItem("applai_onboarded")) return;
   try {
     const d = await api("/api/v1/profile");
     const p = (d && d.profile) || {};
-    // 有邮箱或目标职位就不弹了
     if (p.email || (p.targetTitles && p.targetTitles.length)) return;
   } catch (e) { return; }
   openOnboarding();
 }
 function openOnboarding() {
-  obStep = 0;
+  obPhase = "upload";
   $("obModal").style.display = "flex";
-  renderObStep();
+  renderOb();
 }
 function closeOnboarding(done) {
   $("obModal").style.display = "none";
   if (done) localStorage.setItem("applai_onboarded", "1");
 }
-function renderObStep() {
-  $("obBar").style.width = ((obStep + 1) / OB_TOTAL * 100) + "%";
-  $("obTag").textContent = `第 ${obStep + 1} 步 / 共 ${OB_TOTAL} 步`;
-  $("obBack").style.display = obStep > 0 ? "" : "none";
-  $("obNext").textContent = obStep === OB_TOTAL - 1 ? "完成 🎉" : "下一步 →";
+function obProgress(pct, tag) {
+  $("obBar").style.width = pct + "%";
+  if (tag) $("obTag").textContent = tag;
+}
+function renderOb() {
   const B = $("obBody");
-  if (obStep === 0) {
-    B.innerHTML = `<h3>上传你的简历</h3>
-      <div class="ob-desc">传一份 PDF 简历，AI 自动识别姓名、联系方式，不用一个个手填。<span class="en">Upload your resume PDF — AI extracts your info automatically.</span></div>
-      <label>简历 PDF<input type="file" id="obResume" accept=".pdf"></label>
-      <div class="hint" id="obResumeMsg"></div>`;
-    $("obResume").addEventListener("change", async (e) => {
-      const file = e.target.files[0];
-      if (!file) return;
-      $("obResumeMsg").textContent = "正在识别…";
-      const fd = new FormData();
-      fd.append("file", file, file.name);
-      try {
-        const resp = await fetch("/api/v1/resume/parse", { method: "POST", credentials: "include", body: fd });
-        const d = await resp.json();
-        if (!resp.ok) throw new Error(d.detail || "识别失败");
-        const f = d.fields || {};
-        // 存到 person 画像
-        const rdr = new FileReader();
-        rdr.onload = async () => {
-          try {
-            const pr = await apiGet("/api/v1/profiles?kind=person");
-            const act = (pr.profiles || []).find((p) => p.is_active);
-            if (act) {
-              await api(`/api/v1/profiles/${act.id}`, { method: "PUT",
-                headers: {"Content-Type": "application/json"},
-                body: JSON.stringify({ profile: { ...f, resumeFile: { name: file.name, dataUrl: rdr.result } } }) });
-            }
-            const nm = [f.firstName, f.lastName].filter(Boolean).join(" ");
-            $("obResumeMsg").textContent = nm ? `识别成功：${nm} ✓` : "识别成功 ✓";
-            await loadAllProfiles();
-          } catch (err) { $("obResumeMsg").textContent = "保存失败：" + err.message; }
-        };
-        rdr.readAsDataURL(file);
-      } catch (err) { $("obResumeMsg").textContent = "识别失败：" + err.message + "，可跳过稍后手动填"; }
-    });
-  } else if (obStep === 1) {
-    B.innerHTML = `<h3>确认你的目标岗位</h3>
-      <div class="ob-desc">AI 已根据你的简历生成初稿，改改就能用。<span class="en">AI drafted this from your resume — review and tweak.</span></div>
-      <div class="hint" id="obSugMsg">正在生成…</div>
-      <div id="obSugForm" style="display:none">
-        <div class="hint" id="obSugReason" style="margin-bottom:12px"></div>
-        <label>目标职位（逗号分隔）<input type="text" id="obTitles"></label>
-        <label>行业（逗号分隔）<input type="text" id="obIndustries"></label>
-        <label>期望地点（逗号分隔）<input type="text" id="obLocs"></label>
-        <label>期望薪资 <span style="font-size:12px;color:var(--muted)">(CAD/小时)</span>
-          <div style="display:flex;gap:8px"><input type="number" id="obSalMin" placeholder="下限" style="flex:1"><span style="align-self:center">–</span><input type="number" id="obSalMax" placeholder="上限" style="flex:1"></div></label>
-        <label>远程偏好 <select id="obRemote">
-          <option value="any">不限</option><option value="remote">纯远程</option>
-          <option value="hybrid">混合</option><option value="onsite">坐班</option></select></label>
-        <div class="actions" style="margin-top:4px"><button class="ghost-btn" id="obRegen">↻ 重新生成</button></div>
+  $("obBack").style.display = "none";
+  if (obPhase === "upload") {
+    obProgress(10, "第 1 步：上传简历");
+    $("obNext").style.display = "none";
+    B.innerHTML = `<div class="ob-ok">📄</div>
+      <h3 style="text-align:center">上传简历，剩下的交给 AI</h3>
+      <div class="ob-desc" style="text-align:center">传完之后：AI 自动生成目标岗位画像、全网搜索匹配职位。<br>你只需要审批两下，不用填任何表。</div>
+      <div class="actions" style="justify-content:center"><button class="primary" id="obUploadBtn" style="font-size:16px;padding:14px 32px">选择简历 PDF</button></div>
+      <input type="file" id="obFile" accept=".pdf" style="display:none">
+      <div class="hint" id="obUpMsg" style="text-align:center;margin-top:12px"></div>`;
+    $("obUploadBtn").onclick = () => $("obFile").click();
+    $("obFile").addEventListener("change", obDoUpload);
+  } else if (obPhase === "working") {
+    obProgress(40, "AI 正在为你工作…");
+    $("obNext").style.display = "none";
+    B.innerHTML = `<h3>AI 正在为你工作…</h3>
+      <div class="ob-desc">不用等太久，喝口水。</div>
+      <div id="obWork">
+        <div class="ob-work-row" id="ow1">⏳ 正在生成目标岗位画像…</div>
+        <div class="ob-work-row" id="ow2" style="opacity:.4">⏳ 正在全网搜索匹配职位…</div>
       </div>`;
-    const fillSug = (s) => {
-      $("obTitles").value = (s.targetTitles || []).join(", ");
-      $("obIndustries").value = (s.industries || []).join(", ");
-      $("obLocs").value = (s.preferredLocations || []).join(", ");
-      $("obSalMin").value = s.salaryMin || "";
-      $("obSalMax").value = s.salaryMax || "";
-      $("obRemote").value = s.remotePreference || "any";
-      if (s.reason) $("obSugReason").textContent = "💡 " + s.reason;
-      $("obSugMsg").style.display = "none";
-      $("obSugForm").style.display = "block";
-    };
-    const genSug = async () => {
-      $("obSugMsg").style.display = "";
-      $("obSugMsg").textContent = "正在生成…";
-      $("obSugForm").style.display = "none";
-      try {
-        const d = await api("/api/v1/profile/suggest-job", { method: "POST" });
-        fillSug(d.suggestion || {});
-      } catch (e) {
-        $("obSugMsg").textContent = "生成失败（" + e.message + "），请手动填写";
-        $("obSugForm").style.display = "block";
-      }
-    };
-    $("obRegen").onclick = genSug;
-    genSug();
-  } else if (obStep === 2) {
-    B.innerHTML = `<h3>连接 Chrome 插件</h3>
-      <div class="ob-desc">插件负责在招聘网站上自动填表。点一下，账号自动绑进插件，不用复制粘贴。<span class="en">One click links your account to the extension.</span></div>
-      <div class="actions" style="margin-top:8px"><button class="primary" id="obConnect">一键连接插件</button></div>
-      <div class="hint" id="obConnMsg" style="margin-top:8px"></div>
-      <div class="hint" style="margin-top:8px">还没安装插件？去 <b>chrome://extensions</b> → 开发者模式 → 加载已解压的扩展程序 → 选择插件文件夹。</div>`;
-    $("obConnect").onclick = async () => {
-      const msg = $("obConnMsg");
-      msg.textContent = "正在检测插件…";
-      if (!(await extPing())) {
-        msg.textContent = "未检测到插件。请先安装 Chrome 插件，再点一次。";
-        return;
-      }
-      msg.textContent = "已找到插件，正在传送…";
-      let token;
-      try {
-        const d = await api("/api/v1/auth/tokens", { method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ name: "一键连接 " + new Date().toLocaleDateString("zh-CN") }) });
-        token = d.token;
-      } catch (e) { msg.textContent = "创建 Token 失败：" + e.message; return; }
-      const res = await new Promise((resolve) => {
-        const h = (e) => {
-          if (e.source === window && e.data && e.data.type === "APPLAI_CONNECT_RESULT") {
-            window.removeEventListener("message", h);
-            clearTimeout(t);
-            resolve(e.data);
-          }
-        };
-        const t = setTimeout(() => { window.removeEventListener("message", h); resolve({ ok: false }); }, 5000);
-        window.addEventListener("message", h);
-        window.postMessage({ type: "APPLAI_CONNECT", token }, "*");
-      });
-      msg.textContent = res.ok ? "插件已连接 ✓" : "传送失败，可跳过稍后在「插件」页连接";
-    };
-  } else {
-    B.innerHTML = `<h3>开启定时投递</h3>
-      <div class="ob-desc">设好每天几点投、投几份，之后全自动运行。<span class="en">Set it and forget it.</span></div>
-      <label>每天几点 <input type="text" id="obTime" value="08:00" placeholder="08:00"></label>
-      <label>每天投几份 <input type="number" id="obCount" value="10" min="1" max="50"></label>`;
+    obRunAI();
+  } else if (obPhase === "approve_job") {
+    obProgress(70, "第 2 步：审批目标岗位画像");
+    $("obNext").style.display = "";
+    $("obNext").textContent = "✓ 就这样，下一步 →";
+    const s = obJobSug || {};
+    B.innerHTML = `<h3>AI 按你的简历生成了目标岗位画像</h3>
+      <div class="ob-desc">看看对不对，不对直接改，改完点确认。</div>
+      ${s.reason ? `<div class="hint" style="margin-bottom:12px">💡 ${esc(s.reason)}</div>` : ""}
+      <label>目标职位<input type="text" id="obTitles" value="${esc((s.targetTitles || []).join(", "))}"></label>
+      <label>行业<input type="text" id="obIndustries" value="${esc((s.industries || []).join(", "))}"></label>
+      <label>期望地点<input type="text" id="obLocs" value="${esc((s.preferredLocations || []).join(", "))}"></label>
+      <label>期望薪资 <span style="font-size:12px;color:var(--muted)">(CAD/小时)</span>
+        <div style="display:flex;gap:8px"><input type="number" id="obSalMin" value="${s.salaryMin || ""}" placeholder="下限" style="flex:1"><span style="align-self:center">–</span><input type="number" id="obSalMax" value="${s.salaryMax || ""}" placeholder="上限" style="flex:1"></div></label>`;
+  } else if (obPhase === "approve_launch") {
+    obProgress(90, "第 3 步：审批并启动");
+    $("obNext").style.display = "";
+    $("obNext").textContent = "🚀 启动全自动投递";
+    B.innerHTML = `<div class="ob-ok">🎯</div>
+      <h3 style="text-align:center">找到 <b id="obJobCount">…</b> 个匹配职位</h3>
+      <div class="ob-desc" style="text-align:center">每天 8 点 AI 自动投 10 份，改写简历、填表、提交全包。<br>有面试邀请或要验证码，推送到你手机，你审批就行。</div>
+      <div class="hint" style="text-align:center">插件还没连？启动后去「插件」页一键连接，30 秒搞定。</div>`;
+    // 查队列数
+    api("/api/v1/queue?top_n=1").then((d) => {
+      const el = $("obJobCount");
+      if (el) el.textContent = ((d && d.jobs) || []).length ? "一批" : "一些";
+    }).catch(() => {});
   }
 }
-$("obBack").onclick = () => { if (obStep > 0) { obStep--; renderObStep(); } };
+async function obDoUpload(e) {
+  const file = e.target.files[0];
+  if (!file) return;
+  $("obUpMsg").textContent = "正在识别简历…";
+  const fd = new FormData();
+  fd.append("file", file, file.name);
+  try {
+    const resp = await fetch("/api/v1/resume/parse", { method: "POST", credentials: "include", body: fd });
+    const d = await resp.json();
+    if (!resp.ok) throw new Error(d.detail || "识别失败");
+    const f = d.fields || {};
+    const rdr = new FileReader();
+    rdr.onload = async () => {
+      try {
+        const pr = await apiGet("/api/v1/profiles?kind=person");
+        const act = (pr.profiles || []).find((p) => p.is_active);
+        if (act) {
+          await api(`/api/v1/profiles/${act.id}`, { method: "PUT",
+            headers: {"Content-Type": "application/json"},
+            body: JSON.stringify({ profile: { ...f, resumeFile: { name: file.name, dataUrl: rdr.result } } }) });
+        }
+        await loadAllProfiles();
+        obPhase = "working";
+        renderOb();
+      } catch (err) { $("obUpMsg").textContent = "保存失败：" + err.message; }
+    };
+    rdr.readAsDataURL(file);
+  } catch (err) { $("obUpMsg").textContent = "失败：" + err.message + "，换个 PDF 试试"; }
+}
+async function obRunAI() {
+  // 1. 生成目标岗位画像
+  try {
+    const d = await api("/api/v1/profile/suggest-job", { method: "POST" });
+    obJobSug = d.suggestion || {};
+    const w1 = $("ow1");
+    if (w1) { w1.textContent = "✓ 目标岗位画像已生成"; w1.style.opacity = 1; }
+  } catch (e) {
+    const w1 = $("ow1");
+    if (w1) w1.textContent = "⚠️ 画像生成失败，稍后可手动填";
+    obJobSug = {};
+  }
+  const w2 = $("ow2");
+  if (w2) w2.style.opacity = 1;
+  // 2. 触发职位发现（后台跑，不阻塞）
+  try { await api("/api/v1/jobs/discover/auto", { method: "POST" }); } catch (e) {}
+  if (w2) w2.textContent = "✓ 已开始全网搜索职位";
+  await new Promise((r) => setTimeout(r, 800));
+  obPhase = "approve_job";
+  renderOb();
+}
+$("obBack").onclick = () => {};
 $("obSkip").onclick = () => closeOnboarding(true);
 $("obNext").onclick = async () => {
-  // 每步保存
-  try {
-    if (obStep === 1) {
+  if (obPhase === "approve_job") {
+    // 保存用户审批后的岗位画像
+    try {
       const jr = await apiGet("/api/v1/profiles?kind=job");
       const act = (jr.profiles || []).find((p) => p.is_active);
-      if (act && $("obTitles")) {
+      if (act) {
         const salMin = $("obSalMin").value ? Number($("obSalMin").value) : null;
         const salMax = $("obSalMax").value ? Number($("obSalMax").value) : null;
         await api(`/api/v1/profiles/${act.id}`, { method: "PUT",
@@ -1663,27 +1644,20 @@ $("obNext").onclick = async () => {
             industries: splitList($("obIndustries").value),
             preferredLocations: splitList($("obLocs").value),
             salaryMin: salMin, salaryMax: salMax,
-            salaryCurrency: "CAD", salaryPeriod: "hourly",
-            remotePreference: $("obRemote").value || "any" } }) });
+            salaryCurrency: "CAD", salaryPeriod: "hourly" } }) });
         await loadAllProfiles();
       }
-    } else if (obStep === 3) {
-      await api("/api/v1/settings", { method: "PUT", headers: {"Content-Type": "application/json"},
-        body: JSON.stringify({ schedule_enabled: true,
-          schedule_time: $("obTime").value || "08:00",
-          daily_count: Number($("obCount").value) || 10 }) });
-    }
-  } catch (e) { toast("保存失败：" + e.message); return; }
-  if (obStep < OB_TOTAL - 1) { obStep++; renderObStep(); }
-  else {
+    } catch (e) { toast("保存失败：" + e.message); return; }
+    obPhase = "approve_launch";
+    renderOb();
+  } else if (obPhase === "approve_launch") {
+    obProgress(100, "完成 🎉");
     closeOnboarding(true);
-    $("obBody").innerHTML = "";
-    toast("设置完成，开始自动投递 🎉");
+    toast("全自动投递已启动 🎉 每天 8 点开工");
     showPage("home");
     loadAll();
   }
 };
-// 登录后检查
 setTimeout(checkOnboarding, 1200);
 
 /* ---------- 快捷入口 ---------- */
