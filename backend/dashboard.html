@@ -508,7 +508,19 @@ button .en{font-size:10px; opacity:.72; margin-top:1px;}
   </section>
 </main>
 </div>
-
+<div id="obModal" class="modal" style="display:none">
+  <div class="modal-box ob-box">
+    <div class="ob-progress"><div id="obBar"></div></div>
+    <div class="ob-step-tag" id="obTag">第 1 步 / 共 4 步</div>
+    <div id="obBody"></div>
+    <div class="actions ob-foot">
+      <button id="obSkip" class="ghost-btn">跳过引导</button>
+      <span style="flex:1"></span>
+      <button id="obBack" class="ghost-btn" style="display:none">← 上一步</button>
+      <button id="obNext" class="primary">下一步 →</button>
+    </div>
+  </div>
+</div>
 <script>
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s == null ? "" : s)
@@ -1925,18 +1937,5 @@ $("adviceBtn").onclick = async () => {
 };
 
 </script>
-<div id="obModal" class="modal" style="display:none">
-  <div class="modal-box ob-box">
-    <div class="ob-progress"><div id="obBar"></div></div>
-    <div class="ob-step-tag" id="obTag">第 1 步 / 共 4 步</div>
-    <div id="obBody"></div>
-    <div class="actions ob-foot">
-      <button id="obSkip" class="ghost-btn">跳过引导</button>
-      <span style="flex:1"></span>
-      <button id="obBack" class="ghost-btn" style="display:none">← 上一步</button>
-      <button id="obNext" class="primary">下一步 →</button>
-    </div>
-  </div>
-</div>
 </body>
 </html>
