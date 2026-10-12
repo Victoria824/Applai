@@ -1493,7 +1493,7 @@ async function loadTutorial() {
   box.innerHTML = steps.map((s, i) => `
     <div class="step${s.done ? " done" : ""}">
       <div class="num">${s.done ? "✓" : (i + 1)}</div>
-      <div><div class="st-t">${esc(s.t)}</div><div class="st-d">${esc(s.d)}</div></div>
+      <div><div class="st-t">${s.t}</div><div class="st-d">${s.d}</div></div>
       ${s.act ? `<div class="st-act"><button class="primary" data-goto="${s.act[0]}">${esc(s.act[1])}</button></div>` : ""}
     </div>`).join("");
   box.querySelectorAll("button[data-goto]").forEach((b) =>
