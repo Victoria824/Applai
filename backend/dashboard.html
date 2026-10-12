@@ -787,20 +787,25 @@ function pfSummaryRow(k, v) {
 }
 
 /* ----- 加载 ----- */
-async function loadKindProfiles(kind) {
-  const r = await apiGet(`/api/v1/profiles?kind=${kind}`);
-  const list = r.profiles || [];
+async function loadKindProfilesSafe(kind) {
+  const swId = kind === "person" ? "personSwitcher" : "jobSwitcher";
+  let list;
+  try {
+    const r = await apiGet(`/api/v1/profiles?kind=${kind}`);
+    list = r.profiles || [];
+  } catch (e) {
+    $(swId).innerHTML = `<div class="empty">加载失败</div>`;
+    return;
+  }
   if (kind === "person") { personProfiles = list; curPerson = list.find((p) => p.is_active) || list[0] || null; }
   else { jobProfiles = list; curJob = list.find((p) => p.is_active) || list[0] || null; }
-  renderSwitcher(kind);
-  if (kind === "person") renderPersonView(); else renderJobView();
-  updatePfWidget();
+  try { renderSwitcher(kind); } catch (e) { console.warn("switcher render failed", e); }
+  try { if (kind === "person") renderPersonView(); else renderJobView(); } catch (e) { console.warn("view render failed", e); }
+  try { updatePfWidget(); } catch (e) { console.warn("widget update failed", e); }
 }
 async function loadAllProfiles() {
-  try { await loadKindProfiles("person"); } catch (e) {
-    $("personSwitcher").innerHTML = `<div class="empty">加载失败</div>`; }
-  try { await loadKindProfiles("job"); } catch (e) {
-    $("jobSwitcher").innerHTML = `<div class="empty">加载失败</div>`; }
+  await loadKindProfilesSafe("person");
+  await loadKindProfilesSafe("job");
 }
 
 /* ----- 切换器 ----- */
@@ -1036,12 +1041,14 @@ async function saveJob() {
 
 /* ----- 侧栏 widget ----- */
 function updatePfWidget() {
-  const pn = (curPerson && (curPerson.profile.firstName || curPerson.profile.lastName))
-    ? [curPerson.profile.firstName, curPerson.profile.lastName].filter(Boolean).join(" ")
+  const pp = (curPerson && curPerson.profile) || {};
+  const pn = (pp.firstName || pp.lastName)
+    ? [pp.firstName, pp.lastName].filter(Boolean).join(" ")
     : (curPerson ? curPerson.name : "未设置");
   const jn = curJob ? curJob.name : "未设置";
-  $("pfwPerson").textContent = pn;
-  $("pfwJob").textContent = jn;
+  const pe = $("pfwPerson"), je = $("pfwJob");
+  if (pe) pe.textContent = pn;
+  if (je) je.textContent = jn;
 }
 
 $("personEditBtn").onclick = openPersonEdit;

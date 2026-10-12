@@ -894,8 +894,10 @@ def list_profiles(user_id: str, kind: str = "job") -> list:
     for r in rows:
         d = dict(r)
         try:
-            d["profile"] = json.loads(d.pop("profile_json") or "{}")
+            d["profile"] = json.loads(d.pop("profile_json") or "{}") or {}
         except Exception:
+            d["profile"] = {}
+        if not isinstance(d["profile"], dict):
             d["profile"] = {}
         d["is_active"] = bool(d["is_active"])
         d["tailor_enabled"] = bool(d["tailor_enabled"])
