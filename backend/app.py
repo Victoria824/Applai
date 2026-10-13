@@ -64,13 +64,40 @@ def _set_session_cookie(resp: Response, token: str):
 app = FastAPI(title="Applai API", version="0.2.0")
 
 
+def _background_scorer():
+    """后台打分守护线程：独立于抓取，持续给未打分职位打分。
+
+    根因修复：之前抓取时同步补打分，导致抓取卡死；现在抓取只入库，打分由这个线程慢慢补。
+    """
+    import time as _time
+    while True:
+        try:
+            jobs = db.list_unscored_jobs(limit=20)
+            if not jobs:
+                _time.sleep(30)
+                continue
+            for job in jobs:
+                try:
+                    uid = job.get("user_id")
+                    profile = db.get_active_profile(uid) or {}
+                    if profile:
+                        score_and_store(uid, job["id"], profile)
+                except Exception:
+                    pass
+                _time.sleep(1)  # 限流，避免 LLM 调用过密
+        except Exception:
+            _time.sleep(30)
+
+
 @app.on_event("startup")
 def _startup_migrate():
-    """启动时跑一次迁移，首个请求不再背迁移开销。"""
+    """启动时跑一次迁移，首个请求不再背迁移开销；同时启动后台打分线程。"""
     try:
         db.ensure_migrated()
     except Exception:
         pass
+    import threading as _threading
+    _threading.Thread(target=_background_scorer, daemon=True).start()
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"], allow_methods=["*"], allow_headers=["*"],
@@ -254,7 +281,7 @@ def _run_discover(uid: str, sources: list, limit: int = 100) -> dict:
     profile = db.get_profile(uid)
     if not profile:
         raise HTTPException(400, "profile not found, sync profile first")
-    total_new, total_seen, rescored = 0, 0, 0
+    total_new, total_seen = 0, 0
     # 14 家公司官网并行抓取（4 线程），串行最慢 14×30s=7 分钟，并行 ~1 分钟
     from concurrent.futures import ThreadPoolExecutor as _TPE
     all_postings = []
@@ -282,16 +309,7 @@ def _run_discover(uid: str, sources: list, limit: int = 100) -> dict:
                 score_and_store(uid, job["id"], profile)
             except Exception:
                 continue
-        else:
-            # 老职位：只有从未打分（score=0）才补打分，且每轮最多补 20 个，避免抓取卡死
-            if rescored < 20:
-                try:
-                    existing = db.get_job(job["id"]) or {}
-                    if (existing.get("score") or 0) == 0:
-                        score_and_store(uid, job["id"], profile)
-                        rescored += 1
-                except Exception:
-                    continue
+        # 老职位跳过打分：打分由后台 scorer 统一处理，抓取只负责入库
     return {"seen": total_seen, "new": total_new}
 
 
@@ -315,7 +333,7 @@ def _run_smart_discover(uid: str, limit: int = 60, progress=None) -> dict:
     kws, note = _keywords_for(uid, profile)
     if not kws:
         return {**out, "keywords": [], "mode": "seeds_only"}
-    agg_new, agg_seen, rescored = 0, 0, 0
+    agg_new, agg_seen = 0, 0
     stages = [("jobbank", "加拿大 Job Bank / Job Bank", lambda: ingest.fetch_jobbank(kws, 40)),
               ("arbeitnow", "聚合源 Arbeitnow", lambda: ingest.fetch_arbeitnow(kws, limit)),
               ("remotive", "聚合源 Remotive", lambda: ingest.fetch_remotive(kws, limit))]
@@ -338,15 +356,7 @@ def _run_smart_discover(uid: str, limit: int = 60, progress=None) -> dict:
             if job["is_new"]:
                 agg_new += 1
                 new_jobs.append(job["id"])
-            else:
-                if rescored < 20:
-                    try:
-                        existing = db.get_job(job["id"]) or {}
-                        if (existing.get("score") or 0) == 0:
-                            score_and_store(uid, job["id"], profile)
-                            rescored += 1
-                    except Exception:
-                        continue
+            # 老职位跳过打分：后台 scorer 统一处理
         # AI 打分（只对新职位）
         for j, jid in enumerate(new_jobs):
             pg(f"AI 打分 / Scoring（{label} {j+1}/{len(new_jobs)}）", 10 + i * 15 + int(15 * j / max(1, len(new_jobs))))

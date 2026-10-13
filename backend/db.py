@@ -1121,6 +1121,17 @@ def list_jobs(user_id: str, limit=200) -> list:
     return out
 
 
+def list_unscored_jobs(limit: int = 50) -> list:
+    """所有用户里还没打分的职位（score 为 0 或 NULL），按最新优先。"""
+    conn = get_db()
+    rows = conn.execute(
+        "SELECT * FROM jobs WHERE score IS NULL OR score = 0 ORDER BY created_at DESC LIMIT ?",
+        (limit,)).fetchall()
+    out = [dict(r) for r in rows]
+    conn.close()
+    return out
+
+
 def applied_job_ids(user_id: str) -> set:
     conn = get_db()
     rows = conn.execute(
