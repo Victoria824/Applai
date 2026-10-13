@@ -255,36 +255,43 @@ def _run_discover(uid: str, sources: list, limit: int = 100) -> dict:
     if not profile:
         raise HTTPException(400, "profile not found, sync profile first")
     total_new, total_seen, rescored = 0, 0, 0
-    for src in sources:
+    # 14 家公司官网并行抓取（4 线程），串行最慢 14×30s=7 分钟，并行 ~1 分钟
+    from concurrent.futures import ThreadPoolExecutor as _TPE
+    all_postings = []
+    def _fetch_one(src):
         try:
-            postings = ingest.fetch_source(src, limit)
+            return ingest.fetch_source(src, limit) or []
         except Exception:
+            return []
+    if sources:
+        with _TPE(max_workers=4) as _ex:
+            for postings in _ex.map(_fetch_one, sources):
+                all_postings.extend(postings or [])
+    for p in all_postings:
+        if not isinstance(p, dict) or not p.get("url"):
             continue
-        for p in (postings or []):
-            if not isinstance(p, dict) or not p.get("url"):
+        total_seen += 1
+        job = db.add_job(uid, p["url"], p["title"], p["company"],
+                         p["location"], source=p["source"], raw=p["raw"],
+                         description=p.get("description", ""))
+        if not job:
+            continue
+        if job["is_new"]:
+            total_new += 1
+            try:
+                score_and_store(uid, job["id"], profile)
+            except Exception:
                 continue
-            total_seen += 1
-            job = db.add_job(uid, p["url"], p["title"], p["company"],
-                             p["location"], source=p["source"], raw=p["raw"],
-                             description=p.get("description", ""))
-            if not job:
-                continue
-            if job["is_new"]:
-                total_new += 1
+        else:
+            # 老职位：只有从未打分（score=0）才补打分，且每轮最多补 20 个，避免抓取卡死
+            if rescored < 20:
                 try:
-                    score_and_store(uid, job["id"], profile)
+                    existing = db.get_job(job["id"]) or {}
+                    if (existing.get("score") or 0) == 0:
+                        score_and_store(uid, job["id"], profile)
+                        rescored += 1
                 except Exception:
                     continue
-            else:
-                # 老职位：只有从未打分（score=0）才补打分，且每轮最多补 20 个，避免抓取卡死
-                if rescored < 20:
-                    try:
-                        existing = db.get_job(job["id"]) or {}
-                        if (existing.get("score") or 0) == 0:
-                            score_and_store(uid, job["id"], profile)
-                            rescored += 1
-                    except Exception:
-                        continue
     return {"seen": total_seen, "new": total_new}
 
 
