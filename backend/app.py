@@ -254,7 +254,7 @@ def _run_discover(uid: str, sources: list, limit: int = 100) -> dict:
     profile = db.get_profile(uid)
     if not profile:
         raise HTTPException(400, "profile not found, sync profile first")
-    total_new, total_seen = 0, 0
+    total_new, total_seen, rescored = 0, 0, 0
     for src in sources:
         try:
             postings = ingest.fetch_source(src, limit)
@@ -276,13 +276,15 @@ def _run_discover(uid: str, sources: list, limit: int = 100) -> dict:
                 except Exception:
                     continue
             else:
-                # 老职位：只有从未打分（score=0）才补打分
-                try:
-                    existing = db.get_job(job["id"]) or {}
-                    if (existing.get("score") or 0) == 0:
-                        score_and_store(uid, job["id"], profile)
-                except Exception:
-                    continue
+                # 老职位：只有从未打分（score=0）才补打分，且每轮最多补 20 个，避免抓取卡死
+                if rescored < 20:
+                    try:
+                        existing = db.get_job(job["id"]) or {}
+                        if (existing.get("score") or 0) == 0:
+                            score_and_store(uid, job["id"], profile)
+                            rescored += 1
+                    except Exception:
+                        continue
     return {"seen": total_seen, "new": total_new}
 
 
@@ -306,7 +308,7 @@ def _run_smart_discover(uid: str, limit: int = 60, progress=None) -> dict:
     kws, note = _keywords_for(uid, profile)
     if not kws:
         return {**out, "keywords": [], "mode": "seeds_only"}
-    agg_new, agg_seen = 0, 0
+    agg_new, agg_seen, rescored = 0, 0, 0
     stages = [("jobbank", "加拿大 Job Bank / Job Bank", lambda: ingest.fetch_jobbank(kws, 40)),
               ("arbeitnow", "聚合源 Arbeitnow", lambda: ingest.fetch_arbeitnow(kws, limit)),
               ("remotive", "聚合源 Remotive", lambda: ingest.fetch_remotive(kws, limit))]
@@ -330,12 +332,14 @@ def _run_smart_discover(uid: str, limit: int = 60, progress=None) -> dict:
                 agg_new += 1
                 new_jobs.append(job["id"])
             else:
-                try:
-                    existing = db.get_job(job["id"]) or {}
-                    if (existing.get("score") or 0) == 0:
-                        score_and_store(uid, job["id"], profile)
-                except Exception:
-                    continue
+                if rescored < 20:
+                    try:
+                        existing = db.get_job(job["id"]) or {}
+                        if (existing.get("score") or 0) == 0:
+                            score_and_store(uid, job["id"], profile)
+                            rescored += 1
+                    except Exception:
+                        continue
         # AI 打分（只对新职位）
         for j, jid in enumerate(new_jobs):
             pg(f"AI 打分 / Scoring（{label} {j+1}/{len(new_jobs)}）", 10 + i * 15 + int(15 * j / max(1, len(new_jobs))))
