@@ -305,11 +305,7 @@ def _run_discover(uid: str, sources: list, limit: int = 100) -> dict:
             continue
         if job["is_new"]:
             total_new += 1
-            try:
-                score_and_store(uid, job["id"], profile)
-            except Exception:
-                continue
-        # 老职位跳过打分：打分由后台 scorer 统一处理，抓取只负责入库
+        # 不打分：打分由后台 scorer 统一处理，抓取只负责入库
     return {"seen": total_seen, "new": total_new}
 
 
@@ -357,13 +353,7 @@ def _run_smart_discover(uid: str, limit: int = 60, progress=None) -> dict:
                 agg_new += 1
                 new_jobs.append(job["id"])
             # 老职位跳过打分：后台 scorer 统一处理
-        # AI 打分（只对新职位）
-        for j, jid in enumerate(new_jobs):
-            pg(f"AI 打分 / Scoring（{label} {j+1}/{len(new_jobs)}）", 10 + i * 15 + int(15 * j / max(1, len(new_jobs))))
-            try:
-                score_and_store(uid, jid, profile)
-            except Exception:
-                continue
+        # 不打分：新职位由后台 scorer 统一打分，抓取只负责入库
     pg("完成 / Done", 100)
     return {"seen": out["seen"] + agg_seen, "new": out["new"] + agg_new,
             "keywords": kws, "note": note, "mode": "smart"}

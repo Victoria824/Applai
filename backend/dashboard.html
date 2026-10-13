@@ -741,6 +741,7 @@ $("srcFetchBtn").onclick = async () => {
   try {
     const t = await api("/api/v1/jobs/discover/auto", { method: "POST" });
     const taskId = t.task_id;
+    let pollFails = 0;
     const poll = setInterval(async () => {
       try {
         const s = await api(`/api/v1/jobs/discover/status/${taskId}`);
@@ -761,10 +762,14 @@ $("srcFetchBtn").onclick = async () => {
           }
         }
       } catch (e) {
-        clearInterval(poll);
-        btn.disabled = false;
-        $("srcStatus").textContent = "";
-        showErr("抓取失败 / Fetch failed：" + e.message);
+        // 轮询瞬时失败（如 502）不直接判失败，重试几次
+        pollFails = (pollFails || 0) + 1;
+        if (pollFails >= 3) {
+          clearInterval(poll);
+          btn.disabled = false;
+          $("srcStatus").textContent = "";
+          showErr("抓取失败 / Fetch failed：" + e.message);
+        }
       }
     }, 2000);
   } catch (e) {
