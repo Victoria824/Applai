@@ -1632,14 +1632,23 @@ function deriveLevel(years) {
   return "Principal";
 }
 async function saveJobYearsFromParse(fields) {
-  const y = fields.yearsExperience;
-  if (y == null || y === "") return;
+  // 解析出的所有 job 画像字段都写入（之前只写了年限，targetTitles/地点都丢了）
+  const payload = {};
+  if (fields.yearsExperience != null && fields.yearsExperience !== "")
+    payload.yearsExperience = fields.yearsExperience;
+  if (fields.yearsExperience != null && fields.yearsExperience !== "")
+    payload.level = deriveLevel(fields.yearsExperience);
+  if (Array.isArray(fields.targetTitles) && fields.targetTitles.length)
+    payload.targetTitles = fields.targetTitles;
+  if (Array.isArray(fields.preferredLocations) && fields.preferredLocations.length)
+    payload.preferredLocations = fields.preferredLocations;
+  if (Array.isArray(fields.industries) && fields.industries.length)
+    payload.industries = fields.industries;
+  if (Object.keys(payload).length === 0) return;
   try {
     const jr = await apiGet("/api/v1/profiles?kind=job");
     const act = (jr.profiles || []).find((p) => p.is_active) || (jr.profiles || [])[0];
-    const payload = { yearsExperience: y, level: deriveLevel(y) };
     if (!act) {
-      // 新用户上传简历时还没有 job 画像：直接创建一个，避免年限丢失
       await api("/api/v1/profiles", { method: "POST",
         headers: {"Content-Type": "application/json"},
         body: JSON.stringify({ name: "默认画像", kind: "job", profile: payload }) });
@@ -1649,7 +1658,7 @@ async function saveJobYearsFromParse(fields) {
     await api(`/api/v1/profiles/${act.id}`, { method: "PUT",
       headers: {"Content-Type": "application/json"},
       body: JSON.stringify({ profile: { ...cur, ...payload } }) });
-  } catch (e) { console.warn("save job years failed", e); }
+  } catch (e) { console.warn("save job fields failed", e); }
 }
 async function obDoUpload(e) {
   const file = e.target.files[0];
