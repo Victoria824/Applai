@@ -624,7 +624,11 @@ def suggest_job_profile(user: dict = Depends(get_current_user)):
     resume_text = _resume_text_from_profile(person)
     if not resume_text:
         raise HTTPException(400, "请先上传简历")
-    sug = llm.llm_suggest_job_profile(resume_text)
+    try:
+        sug = llm.llm_suggest_job_profile(resume_text)
+    except Exception as e:
+        import traceback as _tb
+        raise HTTPException(500, f"DEBUG suggest: {type(e).__name__}: {e}\n" + "".join(_tb.format_tb(e.__traceback__)[-4:]))
     if not sug:
         raise HTTPException(502, "AI 生成暂时失败（已自动重试多次），请点重试或稍后手动填写")
     return {"suggestion": sug}
