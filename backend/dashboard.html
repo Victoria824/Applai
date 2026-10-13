@@ -580,7 +580,10 @@ async function loadHealth() {
 }
 
 function jobCard(j) {
-  const reasons = (j.score_reasons || []).map((r) => `<li>${esc(r)}</li>`).join("");
+  let _rs = j.score_reasons;
+  if (typeof _rs === "string") { try { _rs = JSON.parse(_rs); } catch (e) { _rs = [_rs]; } }
+  if (!Array.isArray(_rs)) _rs = [];
+  const reasons = _rs.map((r) => `<li>${esc(r)}</li>`).join("");
   const tier = j.score >= 70 ? "hi" : j.score >= 40 ? "mid" : "lo";
   return `<div class="card"><div class="top">
     <div class="score ${tier}"><b>${esc(j.score)}</b><span>分</span></div>

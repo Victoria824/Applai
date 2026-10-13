@@ -1105,11 +1105,24 @@ def update_job_score(job_id: int, score: float, reasons: list, via: str = "rules
     conn.close()
 
 
+def _parse_reasons(row: dict) -> dict:
+    """score_reasons 在库里是 JSON 字符串，返回时统一转成 list。"""
+    sr = row.get("score_reasons")
+    if isinstance(sr, str):
+        try:
+            row["score_reasons"] = json.loads(sr) or []
+        except Exception:
+            row["score_reasons"] = [sr] if sr else []
+    elif sr is None:
+        row["score_reasons"] = []
+    return row
+
+
 def get_job(job_id: int) -> dict | None:
     conn = get_db()
     row = conn.execute("SELECT * FROM jobs WHERE id=?", (job_id,)).fetchone()
     conn.close()
-    return dict(row) if row else None
+    return _parse_reasons(dict(row)) if row else None
 
 
 def list_jobs(user_id: str, limit=200) -> list:
@@ -1127,7 +1140,7 @@ def list_unscored_jobs(limit: int = 50) -> list:
     rows = conn.execute(
         "SELECT * FROM jobs WHERE score IS NULL OR score = 0 ORDER BY created_at DESC LIMIT ?",
         (limit,)).fetchall()
-    out = [dict(r) for r in rows]
+    out = [_parse_reasons(dict(r)) for r in rows]
     conn.close()
     return out
 
