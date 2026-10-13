@@ -108,53 +108,6 @@ def health():
     return {"ok": True, "version": "0.2.0", "llm": llm_mod.is_configured()}
 
 
-@app.get("/api/v1/llm/diag", include_in_schema=False)
-def llm_diag(user: dict = Depends(get_current_user)):
-    """临时诊断：直接调 Bailian，返回原始错误。用完即删。"""
-    import llm as llm_mod
-    import httpx
-    cfg = llm_mod.get_config()
-    out = {"base_url": cfg["base_url"], "model": cfg["model"],
-           "key_prefix": (cfg["api_key"][:8] + "...") if cfg["api_key"] else "(empty)",
-           "key_len": len(cfg["api_key"])}
-    # 批量试模型名
-    candidates = ["qwen-turbo", "qwen-plus", "qwen-max",
-                  "qwen-turbo-2025-04-28", "qwen-plus-2025-04-28",
-                  "qwen2.5-72b-instruct", "qwen2.5-32b-instruct", "qwen2.5-7b-instruct",
-                  "qwen3-235b-a22b", "qwen3-32b", "qwen3-8b", "qwen3-4b",
-                  "qwen-turbo-latest", "qwen-plus-latest"]
-    out["tested"] = []
-    for m in candidates:
-        try:
-            r = httpx.post(
-                f"{cfg['base_url']}/chat/completions",
-                headers={"Authorization": f"Bearer {cfg['api_key']}", "Content-Type": "application/json"},
-                json={"model": m,
-                      "messages": [{"role": "user", "content": "hi"}],
-                      "max_tokens": 5},
-                timeout=20,
-            )
-            body = r.text[:200]
-            ok = r.status_code == 200
-            out["tested"].append({"model": m, "status": r.status_code, "ok": ok,
-                                  "err": "" if ok else body[:150]})
-            if ok:
-                break
-        except Exception as e:
-            out["tested"].append({"model": m, "status": 0, "ok": False, "err": str(e)[:100]})
-    return out
-
-
-def score_and_store(user_id: str, job_id: int, profile: dict):
-    """规则预筛 + LLM 精排，结果写回 DB。"""
-    job = db.get_job(job_id)
-    rs, rreasons = matcher.score_job(profile, job)
-    fs, freasons, via = matcher.hybrid_score(
-        profile, {**job, "description": db.job_description(job)}, rs, rreasons)
-    db.update_job_score(job_id, fs, freasons, via)
-    return fs, freasons, via
-
-
 @app.put("/api/v1/profile")
 def put_profile(body: ProfileIn, user: dict = Depends(get_current_user)):
     db.upsert_profile(user["app_user_id"], body.profile)
