@@ -1637,11 +1637,18 @@ async function saveJobYearsFromParse(fields) {
   try {
     const jr = await apiGet("/api/v1/profiles?kind=job");
     const act = (jr.profiles || []).find((p) => p.is_active) || (jr.profiles || [])[0];
-    if (!act) return;
+    const payload = { yearsExperience: y, level: deriveLevel(y) };
+    if (!act) {
+      // 新用户上传简历时还没有 job 画像：直接创建一个，避免年限丢失
+      await api("/api/v1/profiles", { method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({ name: "默认画像", kind: "job", profile: payload }) });
+      return;
+    }
     const cur = act.profile || {};
     await api(`/api/v1/profiles/${act.id}`, { method: "PUT",
       headers: {"Content-Type": "application/json"},
-      body: JSON.stringify({ profile: { ...cur, yearsExperience: y, level: deriveLevel(y) } }) });
+      body: JSON.stringify({ profile: { ...cur, ...payload } }) });
   } catch (e) { console.warn("save job years failed", e); }
 }
 async function obDoUpload(e) {
