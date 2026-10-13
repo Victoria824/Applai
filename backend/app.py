@@ -108,6 +108,31 @@ def health():
     return {"ok": True, "version": "0.2.0", "llm": llm_mod.is_configured()}
 
 
+@app.get("/api/v1/llm/diag", include_in_schema=False)
+def llm_diag(user: dict = Depends(get_current_user)):
+    """临时诊断：直接调 Bailian，返回原始错误。用完即删。"""
+    import llm as llm_mod
+    import httpx
+    cfg = llm_mod.get_config()
+    out = {"base_url": cfg["base_url"], "model": cfg["model"],
+           "key_prefix": (cfg["api_key"][:8] + "...") if cfg["api_key"] else "(empty)",
+           "key_len": len(cfg["api_key"])}
+    try:
+        r = httpx.post(
+            f"{cfg['base_url']}/chat/completions",
+            headers={"Authorization": f"Bearer {cfg['api_key']}", "Content-Type": "application/json"},
+            json={"model": cfg["model"],
+                  "messages": [{"role": "user", "content": "hi"}],
+                  "max_tokens": 10},
+            timeout=30,
+        )
+        out["http_status"] = r.status_code
+        out["body"] = r.text[:800]
+    except Exception as e:
+        out["error"] = f"{type(e).__name__}: {e}"
+    return out
+
+
 def score_and_store(user_id: str, job_id: int, profile: dict):
     """规则预筛 + LLM 精排，结果写回 DB。"""
     job = db.get_job(job_id)
