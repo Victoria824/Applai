@@ -19,6 +19,21 @@
       window.postMessage({ type: 'APPLAI_PONG' }, '*');
       return;
     }
+    if (e.data.type === 'APPLAI_RUN_NOW') {
+      if (!chrome.runtime || !chrome.runtime.id) {
+        window.postMessage({ type: 'APPLAI_RUN_NOW_RESULT', ok: false, error: 'context_invalidated' }, '*');
+        return;
+      }
+      try {
+        chrome.runtime.sendMessage({ type: 'AUTOAPPLY_RUN_NOW' }, (resp) => {
+          const ok = !chrome.runtime.lastError;
+          window.postMessage({ type: 'APPLAI_RUN_NOW_RESULT', ok }, '*');
+        });
+      } catch (err) {
+        window.postMessage({ type: 'APPLAI_RUN_NOW_RESULT', ok: false, error: 'context_invalidated' }, '*');
+      }
+      return;
+    }
     if (e.data.type === 'APPLAI_CONNECT' && typeof e.data.token === 'string') {
       // 插件刚被重新加载时，旧 tab 里的 content script 会失效
       if (!chrome.runtime || !chrome.runtime.id) {

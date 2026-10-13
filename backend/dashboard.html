@@ -410,7 +410,7 @@ button .en{font-size:10px; opacity:.72; margin-top:1px;}
 
   <section class="page" id="page-queue">
     <div class="page-h"><h2>今日队列<span class="en">Today's queue</span></h2><p>按匹配分数排序的待投递职位，每天定时任务自动投递。<span class="en">Ranked jobs to apply, auto-submitted by the daily task.</span></p></div>
-    <div class="sec-head"><span class="count" id="queueCount"></span><button id="refreshBtn">刷新<span class="en">Refresh</span></button></div>
+    <div class="sec-head"><span class="count" id="queueCount"></span><button class="primary" id="queueRunNowBtn">🚀 立即开始投递<span class="en">Apply now</span></button><button id="refreshBtn">刷新<span class="en">Refresh</span></button></div>
     <div id="queue" style="margin-top:12px"><div class="loading">加载中…</div></div>
   </section>
 
@@ -660,6 +660,31 @@ document.addEventListener("click", (ev) => {
   if (b) markApp(b.dataset.job, b.dataset.act);
 });
 $("refreshBtn").onclick = () => loadAll();
+$("queueRunNowBtn").onclick = () => {
+  const btn = $("queueRunNowBtn");
+  btn.disabled = true;
+  btn.textContent = "正在启动…";
+  const done = (msg) => {
+    btn.disabled = false;
+    btn.innerHTML = "🚀 立即开始投递<span class=\"en\">Apply now</span>";
+    if (msg === "ok") toast("已通知插件开始投递 ✓ 插件会在后台逐个填表提交");
+    else if (msg === "noext") toast("未检测到插件：请先安装并连接 Chrome 插件");
+    else toast("启动失败，请在插件弹窗里点“立即执行投递”");
+  };
+  const handler = (e) => {
+    if (e.source === window && e.data && e.data.type === "APPLAI_RUN_NOW_RESULT") {
+      window.removeEventListener("message", handler);
+      clearTimeout(timer);
+      done(e.data.ok ? "ok" : "fail");
+    }
+  };
+  window.addEventListener("message", handler);
+  const timer = setTimeout(() => {
+    window.removeEventListener("message", handler);
+    done("noext");
+  }, 3000);
+  window.postMessage({ type: "APPLAI_RUN_NOW" }, "*");
+};
 
 async function loadAll() {
   clearErr();

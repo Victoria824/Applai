@@ -275,6 +275,14 @@ def _run_discover(uid: str, sources: list, limit: int = 100) -> dict:
                     score_and_store(uid, job["id"], profile)
                 except Exception:
                     continue
+            else:
+                # 老职位：只有从未打分（score=0）才补打分
+                try:
+                    existing = db.get_job(job["id"]) or {}
+                    if (existing.get("score") or 0) == 0:
+                        score_and_store(uid, job["id"], profile)
+                except Exception:
+                    continue
     return {"seen": total_seen, "new": total_new}
 
 
@@ -321,6 +329,13 @@ def _run_smart_discover(uid: str, limit: int = 60, progress=None) -> dict:
             if job["is_new"]:
                 agg_new += 1
                 new_jobs.append(job["id"])
+            else:
+                try:
+                    existing = db.get_job(job["id"]) or {}
+                    if (existing.get("score") or 0) == 0:
+                        score_and_store(uid, job["id"], profile)
+                except Exception:
+                    continue
         # AI 打分（只对新职位）
         for j, jid in enumerate(new_jobs):
             pg(f"AI 打分 / Scoring（{label} {j+1}/{len(new_jobs)}）", 10 + i * 15 + int(15 * j / max(1, len(new_jobs))))
