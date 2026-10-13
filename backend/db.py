@@ -136,6 +136,18 @@ CREATE TABLE IF NOT EXISTS user_settings (
   daily_count INTEGER DEFAULT 10,
   updated_at REAL NOT NULL
 );
+CREATE TABLE IF NOT EXISTS discover_tasks (
+  task_id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL,
+  status TEXT DEFAULT 'running',
+  stage TEXT DEFAULT '',
+  done INTEGER DEFAULT 0,
+  total INTEGER DEFAULT 100,
+  new INTEGER DEFAULT 0,
+  seen INTEGER DEFAULT 0,
+  error TEXT DEFAULT '',
+  updated_at REAL NOT NULL
+);
 CREATE TABLE IF NOT EXISTS push_subscriptions (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   user_id TEXT NOT NULL,
@@ -1143,6 +1155,36 @@ def list_unscored_jobs(limit: int = 50) -> list:
     out = [_parse_reasons(dict(r)) for r in rows]
     conn.close()
     return out
+
+
+def create_discover_task(task_id: str, user_id: str):
+    conn = get_db()
+    try:
+        conn.execute(
+            "INSERT INTO discover_tasks(task_id, user_id, status, stage, done, total, new, seen, error, updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)",
+            (task_id, user_id, "running", "启动中 / Starting…", 0, 100, 0, 0, "", time.time()))
+    except _IntegrityError:
+        pass
+    conn.commit()
+    conn.close()
+
+
+def update_discover_task(task_id: str, **kw):
+    if not kw:
+        return
+    conn = get_db()
+    sets = ", ".join(f"{k}=?" for k in kw)
+    vals = list(kw.values()) + [time.time(), task_id]
+    conn.execute(f"UPDATE discover_tasks SET {sets}, updated_at=? WHERE task_id=?", vals)
+    conn.commit()
+    conn.close()
+
+
+def get_discover_task(task_id: str) -> dict | None:
+    conn = get_db()
+    row = conn.execute("SELECT * FROM discover_tasks WHERE task_id=?", (task_id,)).fetchone()
+    conn.close()
+    return dict(row) if row else None
 
 
 def applied_job_ids(user_id: str) -> set:

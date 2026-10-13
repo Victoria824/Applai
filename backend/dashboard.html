@@ -654,7 +654,7 @@ async function markApp(jobId, status) {
       headers: {"Content-Type": "application/json"},
       body: JSON.stringify({user_id: userId(), job_id: Number(jobId), status, detail: "dashboard 手动标记"})
     });
-    await loadApps();
+    await Promise.all([loadApps(), loadQueue()]);
   } catch (e) { showErr("标记失败：" + e.message); }
 }
 

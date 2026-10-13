@@ -371,13 +371,14 @@ def _run_smart_discover(uid: str, limit: int = 60, progress=None) -> dict:
 
 import uuid as _uuid
 import threading as _threading
-DISCOVER_TASKS: dict = {}  # task_id -> {status, stage, done, total, new, seen, error}
 
 
 def _discover_task_set(task_id: str, **kw):
-    t = DISCOVER_TASKS.get(task_id)
-    if t:
-        t.update(kw)
+    # 任务状态存 DB（之前存内存，进程重启/多实例时轮询 404）
+    try:
+        db.update_discover_task(task_id, **kw)
+    except Exception:
+        pass
 
 
 def _run_smart_discover_bg(uid: str, task_id: str):
@@ -397,17 +398,18 @@ def discover_auto(user: dict = Depends(get_current_user)):
     """智能抓取：立即返回任务 ID，后台执行，前端轮询进度。"""
     uid = user["app_user_id"]
     task_id = _uuid.uuid4().hex[:12]
-    DISCOVER_TASKS[task_id] = {"status": "running", "stage": "启动中 / Starting…",
-                               "done": 0, "total": 100, "new": 0, "seen": 0, "error": ""}
+    db.create_discover_task(task_id, uid)
     _threading.Thread(target=_run_smart_discover_bg, args=(uid, task_id), daemon=True).start()
     return {"ok": True, "task_id": task_id, "status": "running"}
 
 
 @app.get("/api/v1/jobs/discover/status/{task_id}")
 def discover_status(task_id: str, user: dict = Depends(get_current_user)):
-    t = DISCOVER_TASKS.get(task_id)
+    t = db.get_discover_task(task_id)
     if not t:
         raise HTTPException(404, "task not found")
+    t.pop("user_id", None)
+    t.pop("updated_at", None)
     return {"ok": True, "task_id": task_id, **t}
 
 
