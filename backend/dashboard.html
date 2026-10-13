@@ -593,7 +593,7 @@ function jobCard(j) {
     ${reasons ? `<ul class="reasons">${reasons}</ul>` : ""}
     <div class="actions">
       ${j.url ? `<a href="${esc(j.url)}" target="_blank" rel="noopener">去投递<span class=\"en\">Apply ↗</span></a>` : ""}
-      <button data-act="skip" data-job="${j.id}">跳过<span class=\"en\">Skip</span></button>
+      <button data-act="skipped" data-job="${j.id}">跳过<span class=\"en\">Skip</span></button>
     </div></div>`;
 }
 
@@ -786,6 +786,8 @@ const JOB_PF_FIELDS = [
   {k:"targetTitles", t:"目标职位（逗号分隔）", list:1},
   {k:"industries", t:"行业（逗号分隔）", list:1},
   {k:"yearsExperience", t:"工作年限", type:"number"},
+  {k:"level", t:"级别", type:"select",
+   options:[["","自动推导"],["Junior","初级 Junior"],["Mid","中级 Mid"],["Senior","高级 Senior"],["Staff","资深 Staff"],["Principal","专家 Principal"]]},
   {k:"remotePreference", t:"远程偏好", type:"select",
    options:[["any","不限"],["remote","纯远程"],["hybrid","混合"],["onsite","坐班"]]},
   {k:"preferredLocations", t:"期望地点（逗号分隔）", list:1},
@@ -1005,6 +1007,7 @@ function onResumeFile(e) {
       })
       .then((d) => {
         prefillPersonForm(d.fields || {});
+        saveJobYearsFromParse(d.fields || {});
         const n = Object.keys(d.fields || {}).length;
         if (n) showParseConfirm(n);
         else toast("未识别出有效信息，请手动填写");
@@ -1619,6 +1622,28 @@ function renderOb() {
     }).catch(() => {});
   }
 }
+function deriveLevel(years) {
+  const y = Number(years);
+  if (!isFinite(y) || y <= 0) return "";
+  if (y < 2) return "Junior";
+  if (y < 5) return "Mid";
+  if (y < 8) return "Senior";
+  if (y < 11) return "Staff";
+  return "Principal";
+}
+async function saveJobYearsFromParse(fields) {
+  const y = fields.yearsExperience;
+  if (y == null || y === "") return;
+  try {
+    const jr = await apiGet("/api/v1/profiles?kind=job");
+    const act = (jr.profiles || []).find((p) => p.is_active) || (jr.profiles || [])[0];
+    if (!act) return;
+    const cur = act.profile || {};
+    await api(`/api/v1/profiles/${act.id}`, { method: "PUT",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({ profile: { ...cur, yearsExperience: y, level: deriveLevel(y) } }) });
+  } catch (e) { console.warn("save job years failed", e); }
+}
 async function obDoUpload(e) {
   const file = e.target.files[0];
   if (!file) return;
@@ -1640,6 +1665,7 @@ async function obDoUpload(e) {
             headers: {"Content-Type": "application/json"},
             body: JSON.stringify({ profile: { ...f, resumeFile: { name: file.name, dataUrl: rdr.result } } }) });
         }
+        await saveJobYearsFromParse(f);
         await loadAllProfiles();
         obPhase = "working";
         renderOb();
