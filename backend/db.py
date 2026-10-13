@@ -1148,7 +1148,7 @@ def list_unscored_jobs(limit: int = 50) -> list:
 def applied_job_ids(user_id: str) -> set:
     conn = get_db()
     rows = conn.execute(
-        "SELECT job_id FROM applications WHERE user_id=? AND status IN ('queued','filled','submitted','needs_manual')",
+        "SELECT job_id FROM applications WHERE user_id=? AND status IN ('queued','filled','submitted','needs_manual','skipped','failed')",
         (user_id,))
     out = {r["job_id"] for r in rows}
     conn.close()
