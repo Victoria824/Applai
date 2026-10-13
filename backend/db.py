@@ -484,24 +484,40 @@ def add_job(user_id: str, url: str, title="", company="", location="", source="m
     raw = dict(raw or {})
     if description:
         raw["description"] = description[:4000]
-    try:
-        cur = conn.execute(
-            """INSERT INTO jobs(user_id, url, title, company, location, source, raw_json, created_at)
-               VALUES(?,?,?,?,?,?,?,?)""",
-            (user_id, url, title, company, location, source, json.dumps(raw, ensure_ascii=False), now),
-        )
-        job_id = cur.lastrowid
-        is_new = True
-    except _IntegrityError:
+    job_id, is_new = None, False
+    for _try in range(2):
         try:
-            conn.rollback()
-        except Exception:
-            pass
-        row = conn.execute("SELECT id FROM jobs WHERE user_id=? AND url=?", (user_id, url)).fetchone()
-        job_id = row["id"]
-        is_new = False
-    conn.commit()
+            cur = conn.execute(
+                """INSERT INTO jobs(user_id, url, title, company, location, source, raw_json, created_at)
+                   VALUES(?,?,?,?,?,?,?,?)""",
+                (user_id, url, title, company, location, source, json.dumps(raw, ensure_ascii=False), now),
+            )
+            job_id = cur.lastrowid
+            is_new = True
+            break
+        except _IntegrityError:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+            row = conn.execute("SELECT id FROM jobs WHERE user_id=? AND url=?", (user_id, url)).fetchone()
+            if row:
+                job_id = row["id"]
+                is_new = False
+                break
+            # 并发竞态：对方事务还没提交，SELECT 看不到行。短暂等待后重试一次 INSERT。
+            if _try == 0:
+                time.sleep(0.3)
+                continue
+            break
+    try:
+        conn.commit()
+    except Exception:
+        pass
     conn.close()
+    if job_id is None:
+        # 极端竞态仍拿不到 id：返回 None，调用方跳过该职位，不炸整个抓取。
+        return None
     return {"id": job_id, "is_new": is_new}
 
 

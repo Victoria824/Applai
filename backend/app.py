@@ -201,6 +201,8 @@ def add_job(body: JobIn, user: dict = Depends(get_current_user)):
     src = ingest.parse_source(body.url)
     job = db.add_job(uid, body.url, body.title, body.company,
                      body.location, source=(f"{src['type']}:{src['key']}" if src else "manual"))
+    if not job:
+        raise HTTPException(409, "职位已存在或正在写入，请稍后重试")
     profile = db.get_profile(uid)
     s, reasons, via = score_and_store(uid, job["id"], profile)
     return {"ok": True, **job, "score": s, "score_reasons": reasons, "score_via": via}
@@ -265,6 +267,8 @@ def _run_discover(uid: str, sources: list, limit: int = 100) -> dict:
             job = db.add_job(uid, p["url"], p["title"], p["company"],
                              p["location"], source=p["source"], raw=p["raw"],
                              description=p.get("description", ""))
+            if not job:
+                continue
             if job["is_new"]:
                 total_new += 1
                 try:
@@ -312,6 +316,8 @@ def _run_smart_discover(uid: str, limit: int = 60, progress=None) -> dict:
             job = db.add_job(uid, p["url"], p["title"], p["company"],
                              p["location"], source=p["source"], raw=p["raw"],
                              description=p.get("description", ""))
+            if not job:
+                continue
             if job["is_new"]:
                 agg_new += 1
                 new_jobs.append(job["id"])
