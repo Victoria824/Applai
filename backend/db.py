@@ -1158,12 +1158,21 @@ def applied_job_ids(user_id: str) -> set:
 def record_application(user_id: str, job_id: int, status: str, detail=""):
     conn = get_db()
     now = time.time()
-    conn.execute(
-        """INSERT INTO applications(user_id, job_id, status, detail, created_at, updated_at)
-           VALUES(?,?,?,?,?,?)
-           ON CONFLICT(user_id, job_id) DO UPDATE SET status=excluded.status, detail=excluded.detail, updated_at=excluded.updated_at""",
-        (user_id, job_id, status, detail, now, now),
-    )
+    try:
+        conn.execute(
+            "INSERT INTO applications(user_id, job_id, status, detail, created_at, updated_at) VALUES(?,?,?,?,?,?)",
+            (user_id, job_id, status, detail, now, now),
+        )
+    except _IntegrityError:
+        # 已存在 → UPDATE。不依赖 ON CONFLICT（Postgres 旧表可能缺 UNIQUE 约束）。
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        conn.execute(
+            "UPDATE applications SET status=?, detail=?, updated_at=? WHERE user_id=? AND job_id=?",
+            (status, detail, now, user_id, job_id),
+        )
     conn.commit()
     conn.close()
 
