@@ -124,28 +124,73 @@ RESUME_PROMPT = """从下面的简历文本中提取求职者信息，只返回 
 """
 
 
+def regex_parse_resume(text: str) -> dict:
+    """正则兜底：LLM 挂了也能抽出姓名/邮箱/电话/链接/地点，不让上传硬失败。"""
+    import re
+    out = {}
+    email = re.search(r"[\w.+-]+@[\w-]+\.[\w.-]+", text)
+    if email:
+        out["email"] = email.group(0)
+    phone = re.search(r"(?:\+?1[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}", text)
+    if phone:
+        out["phone"] = phone.group(0)
+    li = re.search(r"linkedin\.com/in/[\w-]+", text, re.I)
+    if li:
+        out["linkedin"] = "https://" + li.group(0) if not li.group(0).startswith("http") else li.group(0)
+    gh = re.search(r"github\.com/[\w-]+", text, re.I)
+    if gh:
+        out["github"] = "https://" + gh.group(0) if not gh.group(0).startswith("http") else gh.group(0)
+    # 第一行非空行当姓名（过滤掉邮箱/电话行）
+    for line in text.split("\n")[:6]:
+        line = line.strip()
+        if line and "@" not in line and not re.search(r"\d{3}", line) and len(line) < 60:
+            parts = line.split()
+            if 1 <= len(parts) <= 4 and all(len(p) > 1 for p in parts):
+                out["firstName"] = parts[0]
+                if len(parts) > 1:
+                    out["lastName"] = " ".join(parts[1:])
+                break
+    # 常见城市
+    for city in ("Toronto", "Vancouver", "Montreal", "Ottawa", "Calgary", "Waterloo",
+                 "New York", "San Francisco", "Seattle", "Beijing", "Shanghai", "Shenzhen"):
+        if city.lower() in text.lower():
+            out["location"] = city
+            break
+    return out
+
+
 def llm_parse_resume(text: str, timeout: int = 60) -> dict | None:
-    """简历文本 → 结构化字段；失败返回 None，调用方提示用户手动填写。"""
+    """简历文本 → 结构化字段。LLM 失败时用正则兜底，至少返回基础字段。"""
     cfg = get_config()
-    if not cfg["api_key"] or not text.strip():
+    if not text.strip():
         return None
-    try:
-        r = httpx.post(
-            f"{cfg['base_url']}/chat/completions",
-            headers={"Authorization": f"Bearer {cfg['api_key']}", "Content-Type": "application/json"},
-            json={
-                "model": cfg["model"],
-                "messages": [{"role": "user", "content": RESUME_PROMPT.replace("{resume}", text[:6000])}],
-                "temperature": 0.1,
-                "max_tokens": 800,
-            },
-            timeout=timeout,
-        )
-        r.raise_for_status()
-        data = _extract_json(r.json()["choices"][0]["message"]["content"])
-        return data if isinstance(data, dict) else None
-    except Exception:
-        return None
+    fallback = regex_parse_resume(text)
+    if not cfg["api_key"]:
+        return fallback or None
+    for _attempt in range(2):
+        try:
+            r = httpx.post(
+                f"{cfg['base_url']}/chat/completions",
+                headers={"Authorization": f"Bearer {cfg['api_key']}", "Content-Type": "application/json"},
+                json={
+                    "model": cfg["model"],
+                    "messages": [{"role": "user", "content": RESUME_PROMPT.replace("{resume}", text[:6000])}],
+                    "temperature": 0.1,
+                    "max_tokens": 800,
+                },
+                timeout=timeout,
+            )
+            r.raise_for_status()
+            data = _extract_json(r.json()["choices"][0]["message"]["content"])
+            if isinstance(data, dict) and data:
+                # LLM 结果合并正则结果（正则的邮箱/电话更准，优先）
+                for k in ("email", "phone", "linkedin", "github"):
+                    if fallback.get(k) and not data.get(k):
+                        data[k] = fallback[k]
+                return data
+        except Exception:
+            continue
+    return fallback or None
 
 
 KEYWORDS_PROMPT = """你是职业规划师。根据求职者画像，生成用于全网职位搜索的关键词。

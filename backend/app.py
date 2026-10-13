@@ -1097,7 +1097,7 @@ async def resume_parse(file: UploadFile = File(...), user: dict = Depends(get_cu
     import llm as llm_mod
     fields = llm_mod.llm_parse_resume(text)
     if not fields:
-        raise HTTPException(502, "简历识别服务暂不可用，请手动填写")
+        raise HTTPException(502, "简历识别失败，请手动填写关键信息")
     # 只保留白名单字段
     allowed = ("firstName", "lastName", "email", "phone", "location", "linkedin",
                "github", "website", "targetTitles", "industries", "yearsExperience",
