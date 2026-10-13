@@ -14,6 +14,7 @@ from pydantic import BaseModel, Field
 
 import db
 import email_sync
+import llm
 import gmail
 import ingest
 import matcher
@@ -106,6 +107,16 @@ class ApplicationIn(BaseModel):
 def health():
     import llm as llm_mod
     return {"ok": True, "version": "0.2.0", "llm": llm_mod.is_configured()}
+
+
+def score_and_store(user_id: str, job_id: int, profile: dict):
+    """规则预筛 + LLM 精排，结果写回 DB。"""
+    job = db.get_job(job_id)
+    rs, rreasons = matcher.score_job(profile, job)
+    fs, freasons, via = matcher.hybrid_score(
+        profile, {**job, "description": db.job_description(job)}, rs, rreasons)
+    db.update_job_score(job_id, fs, freasons, via)
+    return fs, freasons, via
 
 
 @app.put("/api/v1/profile")
@@ -624,11 +635,7 @@ def suggest_job_profile(user: dict = Depends(get_current_user)):
     resume_text = _resume_text_from_profile(person)
     if not resume_text:
         raise HTTPException(400, "请先上传简历")
-    try:
-        sug = llm.llm_suggest_job_profile(resume_text)
-    except Exception as e:
-        import traceback as _tb
-        raise HTTPException(500, f"DEBUG suggest: {type(e).__name__}: {e}\n" + "".join(_tb.format_tb(e.__traceback__)[-4:]))
+    sug = llm.llm_suggest_job_profile(resume_text)
     if not sug:
         raise HTTPException(502, "AI 生成暂时失败（已自动重试多次），请点重试或稍后手动填写")
     return {"suggestion": sug}
