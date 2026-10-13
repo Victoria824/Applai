@@ -117,19 +117,31 @@ def llm_diag(user: dict = Depends(get_current_user)):
     out = {"base_url": cfg["base_url"], "model": cfg["model"],
            "key_prefix": (cfg["api_key"][:8] + "...") if cfg["api_key"] else "(empty)",
            "key_len": len(cfg["api_key"])}
-    try:
-        r = httpx.post(
-            f"{cfg['base_url']}/chat/completions",
-            headers={"Authorization": f"Bearer {cfg['api_key']}", "Content-Type": "application/json"},
-            json={"model": cfg["model"],
-                  "messages": [{"role": "user", "content": "hi"}],
-                  "max_tokens": 10},
-            timeout=30,
-        )
-        out["http_status"] = r.status_code
-        out["body"] = r.text[:800]
-    except Exception as e:
-        out["error"] = f"{type(e).__name__}: {e}"
+    # 批量试模型名
+    candidates = ["qwen-turbo", "qwen-plus", "qwen-max",
+                  "qwen-turbo-2025-04-28", "qwen-plus-2025-04-28",
+                  "qwen2.5-72b-instruct", "qwen2.5-32b-instruct", "qwen2.5-7b-instruct",
+                  "qwen3-235b-a22b", "qwen3-32b", "qwen3-8b", "qwen3-4b",
+                  "qwen-turbo-latest", "qwen-plus-latest"]
+    out["tested"] = []
+    for m in candidates:
+        try:
+            r = httpx.post(
+                f"{cfg['base_url']}/chat/completions",
+                headers={"Authorization": f"Bearer {cfg['api_key']}", "Content-Type": "application/json"},
+                json={"model": m,
+                      "messages": [{"role": "user", "content": "hi"}],
+                      "max_tokens": 5},
+                timeout=20,
+            )
+            body = r.text[:200]
+            ok = r.status_code == 200
+            out["tested"].append({"model": m, "status": r.status_code, "ok": ok,
+                                  "err": "" if ok else body[:150]})
+            if ok:
+                break
+        except Exception as e:
+            out["tested"].append({"model": m, "status": 0, "ok": False, "err": str(e)[:100]})
     return out
 
 
