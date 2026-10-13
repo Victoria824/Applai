@@ -300,59 +300,54 @@ def _pg_fix_sequences(pg):
         pass
 
 
-def get_db():
-    if USE_PG:
-        import psycopg
-        from psycopg.rows import dict_row
-        conn = psycopg.connect(PG_URL, row_factory=dict_row, autocommit=False)
-        pg = _PGConn(conn)
-        pg.executescript(SCHEMA)
-        pg.executescript(AUTH_SCHEMA)
-        # 轻量迁移：jobs 表加 score_via 列
-        cols = {r["column_name"] for r in pg.execute(
-            "SELECT column_name FROM information_schema.columns WHERE table_name='jobs'").fetchall()}
-        if "score_via" not in cols:
-            pg.execute("ALTER TABLE jobs ADD COLUMN score_via TEXT DEFAULT 'rules'")
-            pg.commit()
-        # Phase 4: 快照表加简历版本列
-        scols = {r["column_name"] for r in pg.execute(
-            "SELECT column_name FROM information_schema.columns WHERE table_name='application_snapshots'").fetchall()}
-        if "resume_version_id" not in scols:
-            pg.execute("ALTER TABLE application_snapshots ADD COLUMN resume_version_id INTEGER DEFAULT 0")
-            pg.commit()
-        if "resume_tailored" not in scols:
-            pg.execute("ALTER TABLE application_snapshots ADD COLUMN resume_tailored INTEGER DEFAULT 0")
-            pg.commit()
-        # 画像拆分：kind 列 + 老数据拆分
-        pcols = {r["column_name"] for r in pg.execute(
-            "SELECT column_name FROM information_schema.columns WHERE table_name='profiles'").fetchall()}
-        if "kind" not in pcols:
-            pg.execute("ALTER TABLE profiles ADD COLUMN kind TEXT DEFAULT 'job'")
-            pg.commit()
-        try:
-            _migrate_split_profiles(pg)
-            pg.commit()
-        except Exception:
-            pg.rollback()
-        _pg_fix_sequences(pg)
-        return pg
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
+_MIGRATED_FOR = None  # 已迁移过的 DB 标识（PG_URL 或 DB_PATH）
+_MIGRATE_LOCK = __import__("threading").Lock()
+
+
+def _run_migrations_pg(pg):
+    """Postgres 迁移：建表 + 轻量 ALTER + 画像拆分 + 序列修复。"""
+    pg.executescript(SCHEMA)
+    pg.executescript(AUTH_SCHEMA)
+    cols = {r["column_name"] for r in pg.execute(
+        "SELECT column_name FROM information_schema.columns WHERE table_name='jobs'").fetchall()}
+    if "score_via" not in cols:
+        pg.execute("ALTER TABLE jobs ADD COLUMN score_via TEXT DEFAULT 'rules'")
+        pg.commit()
+    scols = {r["column_name"] for r in pg.execute(
+        "SELECT column_name FROM information_schema.columns WHERE table_name='application_snapshots'").fetchall()}
+    if "resume_version_id" not in scols:
+        pg.execute("ALTER TABLE application_snapshots ADD COLUMN resume_version_id INTEGER DEFAULT 0")
+        pg.commit()
+    if "resume_tailored" not in scols:
+        pg.execute("ALTER TABLE application_snapshots ADD COLUMN resume_tailored INTEGER DEFAULT 0")
+        pg.commit()
+    pcols = {r["column_name"] for r in pg.execute(
+        "SELECT column_name FROM information_schema.columns WHERE table_name='profiles'").fetchall()}
+    if "kind" not in pcols:
+        pg.execute("ALTER TABLE profiles ADD COLUMN kind TEXT DEFAULT 'job'")
+        pg.commit()
+    try:
+        _migrate_split_profiles(pg)
+        pg.commit()
+    except Exception:
+        pg.rollback()
+    _pg_fix_sequences(pg)
+
+
+def _run_migrations_sqlite(conn):
+    """SQLite 迁移（本地/测试用）。"""
     conn.executescript(SCHEMA)
     conn.executescript(AUTH_SCHEMA)
-    # 轻量迁移：jobs 表加 score_via 列
     cols = {r[1] for r in conn.execute("PRAGMA table_info(jobs)").fetchall()}
     if "score_via" not in cols:
         conn.execute("ALTER TABLE jobs ADD COLUMN score_via TEXT DEFAULT 'rules'")
         conn.commit()
-    # Phase 4: 快照表加简历版本列
     scols = {r[1] for r in conn.execute("PRAGMA table_info(application_snapshots)").fetchall()}
     if "resume_version_id" not in scols:
         conn.execute("ALTER TABLE application_snapshots ADD COLUMN resume_version_id INTEGER DEFAULT 0")
     if "resume_tailored" not in scols:
         conn.execute("ALTER TABLE application_snapshots ADD COLUMN resume_tailored INTEGER DEFAULT 0")
     conn.commit()
-    # 画像拆分：person（简历） vs job（目标岗位）
     pcols = {r[1] for r in conn.execute("PRAGMA table_info(profiles)").fetchall()}
     if "kind" not in pcols:
         conn.execute("ALTER TABLE profiles ADD COLUMN kind TEXT DEFAULT 'job'")
@@ -362,7 +357,47 @@ def get_db():
         conn.commit()
     except Exception:
         conn.rollback()
+
+
+def ensure_migrated():
+    """每个 DB 只跑一次迁移。DB_PATH 变化（测试）时重新跑。"""
+    global _MIGRATED_FOR
+    db_key = PG_URL if USE_PG else DB_PATH
+    if _MIGRATED_FOR == db_key:
+        return
+    with _MIGRATE_LOCK:
+        if _MIGRATED_FOR == db_key:
+            return
+        conn = _raw_connect()
+        try:
+            if USE_PG:
+                _run_migrations_pg(conn)
+            else:
+                _run_migrations_sqlite(conn)
+            _MIGRATED_FOR = db_key
+        finally:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+
+def _raw_connect():
+    """裸连接，不跑迁移。"""
+    if USE_PG:
+        import psycopg
+        from psycopg.rows import dict_row
+        conn = psycopg.connect(PG_URL, row_factory=dict_row, autocommit=False)
+        return _PGConn(conn)
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
     return conn
+
+
+def get_db():
+    """返回一个新连接。迁移在进程启动时跑一次，这里不再重复跑。"""
+    ensure_migrated()
+    return _raw_connect()
 
 
 PERSON_KEYS = {"firstName", "lastName", "email", "phone", "location", "linkedin",
@@ -883,7 +918,9 @@ def _ensure_default_profile(user_id: str) -> dict:
     return {"id": r["id"] if r else 0}
 
 
-def list_profiles(user_id: str, kind: str = "job") -> list:
+def list_profiles(user_id: str, kind: str = "job", include_resume: bool = False) -> list:
+    """画像列表。默认剥离 resumeFile.dataUrl（几 MB base64），只留文件名；
+    需要完整简历时传 include_resume=True。"""
     _ensure_default_profile(user_id)
     conn = get_db()
     rows = conn.execute(
@@ -899,6 +936,10 @@ def list_profiles(user_id: str, kind: str = "job") -> list:
             d["profile"] = {}
         if not isinstance(d["profile"], dict):
             d["profile"] = {}
+        if not include_resume:
+            rf = d["profile"].get("resumeFile")
+            if isinstance(rf, dict) and "dataUrl" in rf:
+                d["profile"]["resumeFile"] = {"name": rf.get("name", ""), "hasData": True}
         d["is_active"] = bool(d["is_active"])
         d["tailor_enabled"] = bool(d["tailor_enabled"])
         out.append(d)

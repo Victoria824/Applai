@@ -61,6 +61,15 @@ def _set_session_cookie(resp: Response, token: str):
                     httponly=True, secure=secure, samesite="lax", path="/")
 
 app = FastAPI(title="Applai API", version="0.2.0")
+
+
+@app.on_event("startup")
+def _startup_migrate():
+    """启动时跑一次迁移，首个请求不再背迁移开销。"""
+    try:
+        db.ensure_migrated()
+    except Exception:
+        pass
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"], allow_methods=["*"], allow_headers=["*"],
