@@ -678,30 +678,49 @@ document.addEventListener("click", (ev) => {
   if (b) markApp(b.dataset.job, b.dataset.act);
 });
 $("refreshBtn").onclick = () => loadAll();
-$("queueRunNowBtn").onclick = () => {
+$("queueRunNowBtn").onclick = async () => {
   const btn = $("queueRunNowBtn");
   btn.disabled = true;
   btn.textContent = "正在启动…";
   const done = (msg) => {
     btn.disabled = false;
     btn.innerHTML = "🚀 立即开始投递<span class=\"en\">Apply now</span>";
-    if (msg === "ok") toast("已通知插件开始投递 ✓ 插件会在后台逐个填表提交");
-    else if (msg === "noext") toast("未检测到插件：请先安装并连接 Chrome 插件");
-    else toast("启动失败，请在插件弹窗里点“立即执行投递”");
+    if (msg) toast(msg);
   };
-  const handler = (e) => {
-    if (e.source === window && e.data && e.data.type === "APPLAI_RUN_NOW_RESULT") {
-      window.removeEventListener("message", handler);
-      clearTimeout(timer);
-      done(e.data.ok ? "ok" : "fail");
-    }
-  };
-  window.addEventListener("message", handler);
-  const timer = setTimeout(() => {
-    window.removeEventListener("message", handler);
-    done("noext");
-  }, 3000);
-  window.postMessage({ type: "APPLAI_RUN_NOW" }, "*");
+  const result = await new Promise((resolve) => {
+    const handler = (e) => {
+      if (e.source === window && e.data && e.data.type === "APPLAI_RUN_NOW_RESULT") {
+        window.removeEventListener("message", handler);
+        clearTimeout(timer);
+        resolve(e.data);
+      }
+    };
+    const timer = setTimeout(() => { window.removeEventListener("message", handler); resolve(null); }, 3000);
+    window.addEventListener("message", handler);
+    window.postMessage({ type: "APPLAI_RUN_NOW" }, "*");
+  });
+  if (result && result.ok) { done(result.already ? "投递已在进行中 ✓ 插件正在后台逐个投递" : "已通知插件开始投递 ✓ 插件会在后台逐个填表提交"); return; }
+  if (result) { done("启动失败，请在插件弹窗里点“立即执行投递”"); return; }
+  // 3 秒无回应不等于没装插件：分级诊断（在不在这个页面 / 版本新旧）
+  const pong = await new Promise((resolve) => {
+    const h = (e) => {
+      if (e.source === window && e.data && e.data.type === "APPLAI_PONG") {
+        window.removeEventListener("message", h);
+        clearTimeout(t);
+        resolve(e.data);
+      }
+    };
+    const t = setTimeout(() => { window.removeEventListener("message", h); resolve(null); }, 1200);
+    window.addEventListener("message", h);
+    window.postMessage({ type: "APPLAI_PING" }, "*");
+  });
+  if (!pong) { done("未检测到插件：已安装的话请先刷新本页面（F5），还没装请先安装并连接 Chrome 插件"); return; }
+  const ver = String(pong.version || "").split(".").map((x) => parseInt(x, 10) || 0);
+  if (ver.length && (ver[0] < 0 || (ver[1] === 2 && ver[2] < 1) || ver[1] < 2)) {
+    done("插件版本过旧：请重新下载最新版插件、在 chrome://extensions 重新加载，然后刷新本页");
+    return;
+  }
+  done("插件在，但没响应投递指令：请先刷新本页面（F5）再试；仍不行请更新插件到最新版后重试");
 };
 
 async function loadAll() {

@@ -16,7 +16,9 @@
   window.addEventListener('message', (e) => {
     if (e.source !== window || !e.data || typeof e.data.type !== 'string') return;
     if (e.data.type === 'APPLAI_PING') {
-      window.postMessage({ type: 'APPLAI_PONG' }, '*');
+      let v = '';
+      try { v = (chrome.runtime && chrome.runtime.getManifest) ? chrome.runtime.getManifest().version : ''; } catch (err) { v = ''; }
+      window.postMessage({ type: 'APPLAI_PONG', version: v }, '*');
       return;
     }
     if (e.data.type === 'APPLAI_RUN_NOW') {

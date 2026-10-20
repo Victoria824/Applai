@@ -226,7 +226,14 @@ async function recordApp(userId, jobId, status, detail) {
   if (item) { item.status = status; item.detail = detail; await chrome.storage.local.set({ aap_queue: q }); }
 }
 
+let _running = false;
 async function runDailyQueue(trigger) {
+  if (_running) return; // 已有一轮在跑，避免手动+定时重叠重复投递
+  _running = true;
+  try { await _runDailyQueueImpl(trigger); } finally { _running = false; }
+}
+
+async function _runDailyQueueImpl(trigger) {
   const s = await getSettings();
   const userId = await getUserId();
   const runKey = `aap_lastrun_${new Date().toISOString().slice(0, 10)}`;
@@ -331,7 +338,10 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       await desktopNotify(msg.title || 'Applai', msg.message || '');
       sendResponse({ ok: true, ntfy: r });
     } else if (msg.type === 'AUTOAPPLY_RUN_NOW') {
-      runDailyQueue('manual').then(() => sendResponse({ ok: true }));
+      // 立即确认「已启动」：整队跑完要几分钟，等完成才回复页面必然超时误报
+      const already = _running;
+      runDailyQueue('manual');
+      sendResponse({ ok: true, started: !already, already });
     } else if (msg.type === 'AUTOAPPLY_RESCHEDULE') {
       await scheduleDaily();
       sendResponse({ ok: true });
