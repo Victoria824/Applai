@@ -580,6 +580,29 @@ def retry_application(body: RetryIn, user: dict = Depends(get_current_user)):
     return {"ok": True, "removed": removed}
 
 
+class RunProgressIn(BaseModel):
+    state: str = "running"
+    total: int = 0
+    processed: int = 0
+    submitted: int = 0
+    manual: int = 0
+    failed: int = 0
+    current_job_id: int = 0
+    current_title: str = ""
+
+
+@app.post("/api/v1/run-progress")
+def post_run_progress(body: RunProgressIn, user: dict = Depends(get_current_user)):
+    """插件投递进度上报（每步一次，失败不影响投递本身）。"""
+    db.upsert_run_progress(user["app_user_id"], body.model_dump())
+    return {"ok": True}
+
+
+@app.get("/api/v1/run-progress")
+def read_run_progress(user: dict = Depends(get_current_user)):
+    return {"progress": db.get_run_progress(user["app_user_id"])}
+
+
 @app.get("/api/v1/applications/{job_id}/snapshot")
 def get_snapshot(job_id: int, user: dict = Depends(get_current_user)):
     uid = user["app_user_id"]

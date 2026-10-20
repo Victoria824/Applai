@@ -287,6 +287,19 @@ CREATE TABLE IF NOT EXISTS resume_versions (
   created_at REAL NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_resume_ver ON resume_versions(user_id, profile_id, job_id);
+CREATE TABLE IF NOT EXISTS run_progress (
+  user_id TEXT PRIMARY KEY,
+  state TEXT DEFAULT 'running',
+  total INTEGER DEFAULT 0,
+  processed INTEGER DEFAULT 0,
+  submitted INTEGER DEFAULT 0,
+  manual INTEGER DEFAULT 0,
+  failed INTEGER DEFAULT 0,
+  current_job_id INTEGER DEFAULT 0,
+  current_title TEXT DEFAULT '',
+  started_at REAL DEFAULT 0,
+  updated_at REAL DEFAULT 0
+);
 """
 
 def _pg_fix_sequences(pg):
@@ -1223,6 +1236,50 @@ def get_discover_task(task_id: str) -> dict | None:
     row = conn.execute("SELECT * FROM discover_tasks WHERE task_id=?", (task_id,)).fetchone()
     conn.close()
     return dict(row) if row else None
+
+
+def upsert_run_progress(user_id: str, p: dict) -> None:
+    """插件每处理一步就上报一次；控制台轮询这张表显示进度（跨标签页/定时任务也可见）。"""
+    conn = get_db()
+    now = time.time()
+    try:
+        row = conn.execute(
+            "SELECT state, started_at FROM run_progress WHERE user_id=?",
+            (user_id,)).fetchone()
+        started = row["started_at"] if row else now
+        if p.get("state") == "running" and not (p.get("processed") or 0)                 and (not row or row["state"] != "running"):
+            started = now  # 新一轮开始
+        if row:
+            conn.execute(
+                """UPDATE run_progress SET state=?, total=?, processed=?, submitted=?,
+                   manual=?, failed=?, current_job_id=?, current_title=?, started_at=?, updated_at=?
+                   WHERE user_id=?""",
+                (p.get("state", "running"), int(p.get("total") or 0), int(p.get("processed") or 0),
+                 int(p.get("submitted") or 0), int(p.get("manual") or 0), int(p.get("failed") or 0),
+                 int(p.get("current_job_id") or 0), str(p.get("current_title") or "")[:200],
+                 started, now, user_id))
+        else:
+            conn.execute(
+                """INSERT INTO run_progress (user_id, state, total, processed, submitted, manual,
+                   failed, current_job_id, current_title, started_at, updated_at)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+                (user_id, p.get("state", "running"), int(p.get("total") or 0),
+                 int(p.get("processed") or 0), int(p.get("submitted") or 0), int(p.get("manual") or 0),
+                 int(p.get("failed") or 0), int(p.get("current_job_id") or 0),
+                 str(p.get("current_title") or "")[:200], started, now))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def get_run_progress(user_id: str):
+    conn = get_db()
+    try:
+        row = conn.execute("SELECT * FROM run_progress WHERE user_id=?",
+                           (user_id,)).fetchone()
+        return dict(row) if row else None
+    finally:
+        conn.close()
 
 
 def applied_job_ids(user_id: str) -> set:

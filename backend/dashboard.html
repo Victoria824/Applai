@@ -284,6 +284,15 @@ button .en{font-size:10px; opacity:.72; margin-top:1px;}
 .snap-table{width:100%; border-collapse:collapse; font-size:13px; margin:6px 0;}
 .snap-table td{border-bottom:1px solid var(--line); padding:7px 4px; vertical-align:top;}
 .snap-table tr:last-child td{border-bottom:none;}
+.prog-card{background:#eef4ff;border:1px solid #c7dbff;border-radius:12px;padding:12px 14px;margin-top:12px}
+.prog-card.done{background:#eefbf0;border-color:#bfe8c8}
+.prog-head{font-weight:700}
+.prog-bar{height:8px;background:#dbe7ff;border-radius:99px;margin:8px 0;overflow:hidden}
+.prog-fill{height:100%;background:#2f7cf6;border-radius:99px;transition:width .6s ease}
+.prog-meta{color:#445;font-size:13px}
+.badge-applying{display:inline-block;background:#2f7cf6;color:#fff;font-size:11px;border-radius:99px;padding:1px 8px;vertical-align:middle;animation:apulse 1.2s infinite}
+.badge-applying .en{color:#dceaff}
+@keyframes apulse{0%,100%{opacity:1}50%{opacity:.45}}
 </style>
 </head>
 <body>
@@ -411,6 +420,7 @@ button .en{font-size:10px; opacity:.72; margin-top:1px;}
   <section class="page" id="page-queue">
     <div class="page-h"><h2>今日队列<span class="en">Today's queue</span></h2><p>按匹配分数排序的待投递职位，每天定时任务自动投递。<span class="en">Ranked jobs to apply, auto-submitted by the daily task.</span></p></div>
     <div class="sec-head"><span class="count" id="queueCount"></span><button class="primary" id="queueRunNowBtn">🚀 立即开始投递<span class="en">Apply now</span></button><button id="refreshBtn">刷新<span class="en">Refresh</span></button></div>
+    <div id="runProgress" style="display:none"></div>
     <div id="queue" style="margin-top:12px"><div class="loading">加载中…</div></div>
   </section>
 
@@ -599,7 +609,7 @@ function jobCard(j) {
   const tier = j.score >= 70 ? "hi" : j.score >= 40 ? "mid" : "lo";
   return `<div class="card"><div class="top">
     <div class="score ${tier}"><b>${esc(j.score)}</b><span>分</span></div>
-    <div><h3>${esc(j.title)}</h3>
+    <div><h3>${esc(j.title)} ${RUNPROG && RUNPROG.state === "running" && RUNPROG.current_job_id === j.id ? `<span class="badge-applying">⏳ 投递中<span class="en">Applying</span></span>` : ""}</h3>
       <div class="meta">${esc(j.company || "")} · ${esc(j.location || "")}</div>
     </div></div>
     ${reasons ? `<ul class="reasons">${reasons}</ul>` : ""}
@@ -680,6 +690,69 @@ async function markApp(jobId, status) {
   } catch (e) { showErr("标记失败：" + e.message); }
 }
 
+/* ---------- 投递进度（插件上报到后端，页面轮询展示） ---------- */
+let RUNPROG = null;
+let _progTimer = null;
+let _lastProgProcessed = -1;
+let _lastProgJob = -1;
+
+function renderRunProgress(p) {
+  RUNPROG = p;
+  const box = $("runProgress");
+  const btn = $("queueRunNowBtn");
+  if (!box) return;
+  if (!p) { box.style.display = "none"; if (btn) btn.disabled = false; return; }
+  const age = Date.now() / 1000 - (p.updated_at || 0);
+  let state = p.state;
+  if (state === "running" && age > 1200) state = "stale";
+  if (state === "done" && age > 1800) { box.style.display = "none"; if (btn) btn.disabled = false; return; }
+  box.style.display = "block";
+  if (btn) btn.disabled = (state === "running");
+  const pct = p.total ? Math.round(100 * p.processed / p.total) : 10;
+  if (state === "running") {
+    box.innerHTML = `<div class="prog-card">
+      <div class="prog-head">🚀 投递进行中<span class="en">Applying in progress</span></div>
+      <div class="prog-bar"><div class="prog-fill" style="width:${pct}%"></div></div>
+      <div class="prog-meta">${p.total ? `已处理 <b>${p.processed}/${p.total}</b>` : "正在准备…"} · 已提交 ${p.submitted} · 待人工 ${p.manual} · 失败 ${p.failed}${p.current_title ? `<br>正在投递：${esc(p.current_title)}` : ""}</div>
+    </div>`;
+  } else if (state === "done") {
+    box.innerHTML = `<div class="prog-card done">
+      <div class="prog-head">✓ 本轮投递完成<span class="en">Run finished</span></div>
+      <div class="prog-meta">共 ${p.total} 个职位 · 已提交 ${p.submitted} · 待人工 ${p.manual} · 失败 ${p.failed}</div>
+    </div>`;
+  } else {
+    box.innerHTML = `<div class="prog-card done">
+      <div class="prog-head">上一轮投递似乎中断了<span class="en">Last run interrupted</span></div>
+      <div class="prog-meta">进度停在 ${p.processed}/${p.total}（插件或浏览器可能被关闭），重新点「立即开始投递」即可。</div>
+    </div>`;
+  }
+}
+
+async function pollRunProgress() {
+  try {
+    const d = await api("/api/v1/run-progress");
+    const p = d.progress;
+    renderRunProgress(p);
+    const fresh = p && (Date.now() / 1000 - (p.updated_at || 0)) <= 1200;
+    if (p && p.state === "running" && fresh) {
+      if (p.processed !== _lastProgProcessed || p.current_job_id !== _lastProgJob) {
+        _lastProgProcessed = p.processed;
+        _lastProgJob = p.current_job_id;
+        loadQueue();
+        loadApps();
+      }
+      if (!_progTimer) _progTimer = setInterval(pollRunProgress, 4000);
+    } else {
+      if (_progTimer) { clearInterval(_progTimer); _progTimer = null; }
+      if (p && p.state === "done" && _lastProgProcessed !== -2) {
+        _lastProgProcessed = -2;
+        loadQueue();
+        loadApps();
+      }
+    }
+  } catch (e) { /* 进度拉取失败静默 */ }
+}
+
 document.addEventListener("click", (ev) => {
   const b = ev.target.closest("button[data-act]");
   if (b) markApp(b.dataset.job, b.dataset.act);
@@ -706,7 +779,7 @@ $("queueRunNowBtn").onclick = async () => {
     window.addEventListener("message", handler);
     window.postMessage({ type: "APPLAI_RUN_NOW" }, "*");
   });
-  if (result && result.ok) { done(result.already ? "投递已在进行中 ✓ 插件正在后台逐个投递" : "已通知插件开始投递 ✓ 插件会在后台逐个填表提交"); return; }
+  if (result && result.ok) { done(result.already ? "投递已在进行中 ✓ 插件正在后台逐个投递" : "已通知插件开始投递 ✓ 插件会在后台逐个填表提交"); pollRunProgress(); return; }
   if (result) { done("启动失败，请在插件弹窗里点“立即执行投递”"); return; }
   // 3 秒无回应不等于没装插件：分级诊断（在不在这个页面 / 版本新旧）
   const pong = await new Promise((resolve) => {
@@ -734,6 +807,7 @@ async function loadAll() {
   clearErr();
   if (!userId()) return;
   await Promise.all([loadHealth(), loadAllProfiles(), loadSources(), loadQueue(), loadApps()]);
+  pollRunProgress();
 }
 
 /* ---------- 职位来源 ---------- */

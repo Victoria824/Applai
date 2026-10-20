@@ -602,3 +602,23 @@ def test_retry_failed_application():
     c.post("/api/v1/applications", json={"user_id": "ignored", "job_id": jid, "status": "submitted"})
     r2 = c.post("/api/v1/applications/retry", json={"job_id": jid})
     assert r2.json()["removed"] == 0
+
+
+def test_run_progress():
+    """投递进度上报/读取 + 用户隔离。"""
+    ca = _authed_client("prog_a")
+    cb = _authed_client("prog_b")
+    assert ca.get("/api/v1/run-progress").json()["progress"] is None
+    r = ca.post("/api/v1/run-progress", json={
+        "state": "running", "total": 10, "processed": 3, "submitted": 2,
+        "manual": 1, "failed": 0, "current_job_id": 42, "current_title": "AI Engineer"})
+    assert r.status_code == 200
+    p = ca.get("/api/v1/run-progress").json()["progress"]
+    assert p["processed"] == 3 and p["current_job_id"] == 42 and p["started_at"] > 0
+    # 同一轮后续上报不重置 started_at
+    ca.post("/api/v1/run-progress", json={
+        "state": "running", "total": 10, "processed": 4, "submitted": 3,
+        "manual": 1, "failed": 0, "current_job_id": 43, "current_title": "ML Engineer"})
+    p2 = ca.get("/api/v1/run-progress").json()["progress"]
+    assert p2["processed"] == 4 and p2["started_at"] == p["started_at"]
+    assert cb.get("/api/v1/run-progress").json()["progress"] is None

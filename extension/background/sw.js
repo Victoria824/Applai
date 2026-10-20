@@ -196,6 +196,11 @@ async function fetchBackendProfile() {
   return null;
 }
 
+async function reportProgress(patch) {
+  // 进度上报给后端，控制台轮询展示；上报失败绝不能影响投递本身
+  try { await apiPost('/api/v1/run-progress', patch); } catch (e) { /* ignore */ }
+}
+
 async function recordSnapshot(userId, job, fillResult, profile, resumeInfo) {
   try {
     const r = fillResult || {};
@@ -253,6 +258,7 @@ async function _runDailyQueueImpl(trigger) {
   const { [runKey]: already } = await chrome.storage.local.get([runKey]);
   if (trigger === 'schedule' && already) return; // 每天只跑一次
   await chrome.storage.local.set({ [runKey]: Date.now() });
+  await reportProgress({ state: 'running', total: 0, processed: 0, submitted: 0, manual: 0, failed: 0, current_job_id: 0, current_title: '正在抓取新职位…' });
 
   let queue;
   try {
@@ -290,7 +296,10 @@ async function _runDailyQueueImpl(trigger) {
     || (await chrome.storage.local.get(['aap_profile'])).aap_profile || {};
 
   let submitted = 0, manual = 0, failed = 0;
-  for (const job of queue) {
+  await reportProgress({ state: 'running', total: queue.length, processed: 0, submitted: 0, manual: 0, failed: 0, current_job_id: 0, current_title: '' });
+  for (let qi = 0; qi < queue.length; qi++) {
+    const job = queue[qi];
+    await reportProgress({ state: 'running', total: queue.length, processed: qi, submitted, manual, failed, current_job_id: job.id, current_title: job.title || '' });
     let tab = null;
     try {
       tab = await chrome.tabs.create({ url: job.url, active: false });
@@ -337,10 +346,12 @@ async function _runDailyQueueImpl(trigger) {
     } finally {
       if (tab) { try { await chrome.tabs.remove(tab.id); } catch (e) { /* ignore */ } }
     }
+    await reportProgress({ state: 'running', total: queue.length, processed: qi + 1, submitted, manual, failed, current_job_id: 0, current_title: '' });
     // 限速：每份投递间隔 20–60 秒随机，避免触发反爬
     await sleep(rand(20000, 60000));
   }
 
+  await reportProgress({ state: 'done', total: queue.length, processed: queue.length, submitted, manual, failed, current_job_id: 0, current_title: '' });
   const summary = `今日投递完成：成功 ${submitted}，待人工 ${manual}，失败 ${failed}`;
   await pushViaNtfy('Applai：' + summary, `共处理 ${queue.length} 个职位`);
   await desktopNotify('Applai', summary);
