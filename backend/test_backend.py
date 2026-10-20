@@ -574,3 +574,31 @@ def test_chat_actions():
     assert "已恢复" in r
     r = appmod._run_chat_action("u_actqa", {"action": "add_to_queue", "jobs": []}, [])
     assert "没识别" in r or "具体" in r
+
+
+def test_retry_failed_application():
+    """失败记录可删除重入队；非失败状态不受影响。"""
+    c = _authed_client("retryuser")
+    c.put("/api/v1/profile", json={"user_id": "ignored", "profile": {
+        "firstName": "Re", "email": "re@x.com", "location": "Toronto, ON",
+        "targetTitles": ["AI Engineer"], "preferredLocations": ["Toronto"],
+        "remotePreference": "any"}})
+    d = c.post("/api/v1/jobs", json={
+        "user_id": "ignored",
+        "url": "https://boards.greenhouse.io/acme/jobs/retry1",
+        "title": "AI Engineer", "company": "Acme", "location": "Toronto, ON"}).json()
+    jid = d["id"]
+    assert d["score"] >= 40, d
+    assert any(j["id"] == jid for j in c.get("/api/v1/queue").json()["jobs"])
+    rr = c.post("/api/v1/applications", json={"user_id": "ignored", "job_id": jid,
+                                              "status": "failed",
+                                              "detail": "Cannot set properties of undefined"})
+    assert rr.status_code == 200, rr.text
+    assert all(j["id"] != jid for j in c.get("/api/v1/queue").json()["jobs"])
+    r = c.post("/api/v1/applications/retry", json={"job_id": jid})
+    assert r.status_code == 200 and r.json()["removed"] == 1
+    assert any(j["id"] == jid for j in c.get("/api/v1/queue").json()["jobs"])
+    # submitted 的不能被 retry 删掉
+    c.post("/api/v1/applications", json={"user_id": "ignored", "job_id": jid, "status": "submitted"})
+    r2 = c.post("/api/v1/applications/retry", json={"job_id": jid})
+    assert r2.json()["removed"] == 0

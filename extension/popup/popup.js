@@ -486,7 +486,18 @@ $('btn-enqueue').addEventListener('click', async () => {
 /* ---------- 初始化 ---------- */
 (async function init() {
   const { aap_profile: profile, aap_settings: settings = {} } = await store.get(['aap_profile', 'aap_settings']);
-  renderProfileView(profile);
+  let cur = profile;
+  // 已连接（有 Token）时以后端画像为准并回填本地缓存，控制台改的画像插件立刻能用
+  if ((settings.apiToken || '').trim()) {
+    try {
+      const r = await apiGet('/api/v1/profile');
+      if (r && r.profile && (r.profile.email || r.profile.firstName)) {
+        cur = r.profile;
+        await store.set({ aap_profile: cur });
+      }
+    } catch (e) { /* 拉取失败用本地缓存 */ }
+  }
+  renderProfileView(cur);
   $('set-topic').value = settings.topic || '';
   $('set-autosubmit').checked = !!settings.autoSubmit;
   $('set-backend').value = settings.backendUrl || 'https://applai-backend.fly.dev';

@@ -183,6 +183,19 @@ async function getResumeForJob(jobId, profile) {
   return { name: rf.name || "", dataUrl: rf.dataUrl || "", versionId: 0, tailored: false };
 }
 
+async function fetchBackendProfile() {
+  // 控制台是画像的数据源；本地 aap_profile 只是缓存，新装/重装插件后可能从未写过
+  try {
+    const r = await apiGet('/api/v1/profile');
+    const p = (r && r.profile) || null;
+    if (p && (p.email || p.firstName || p.resumeFile)) {
+      await chrome.storage.local.set({ aap_profile: p });
+      return p;
+    }
+  } catch (e) { /* 后端不可达时退回本地缓存 */ }
+  return null;
+}
+
 async function recordSnapshot(userId, job, fillResult, profile, resumeInfo) {
   try {
     const r = fillResult || {};
@@ -272,6 +285,10 @@ async function _runDailyQueueImpl(trigger) {
     aap_queue: queue.map((j) => ({ jobId: j.id, url: j.url, title: j.title, company: j.company, status: 'queued', score: j.score })),
   });
 
+  // 画像在循环外解析一次：后端优先（附简历 dataUrl），本地缓存兜底，绝不为 undefined
+  let profile = (await fetchBackendProfile())
+    || (await chrome.storage.local.get(['aap_profile'])).aap_profile || {};
+
   let submitted = 0, manual = 0, failed = 0;
   for (const job of queue) {
     let tab = null;
@@ -281,7 +298,6 @@ async function _runDailyQueueImpl(trigger) {
       if (!loaded) throw new Error('page load timeout');
       await sleep(rand(1500, 3500)); // 等动态表单渲染
 
-      const { aap_profile: profile } = await chrome.storage.local.get(['aap_profile']);
       // 取该岗位该用的简历（画像开了改写 → 改写版；否则母版）
       const resumeInfo = await getResumeForJob(job.id, profile);
       if (resumeInfo.dataUrl) {

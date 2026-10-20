@@ -560,6 +560,26 @@ def post_snapshot(body: SnapshotIn, user: dict = Depends(get_current_user)):
     return {"ok": True}
 
 
+class RetryIn(BaseModel):
+    job_id: int
+
+
+@app.post("/api/v1/applications/retry")
+def retry_application(body: RetryIn, user: dict = Depends(get_current_user)):
+    """把一条「失败」的投递记录删掉，职位随即回到队列等下次投递（只动 failed 状态）。"""
+    uid = user["app_user_id"]
+    conn = db.get_db()
+    try:
+        cur = conn.execute(
+            "DELETE FROM applications WHERE user_id=? AND job_id=? AND status='failed'",
+            (uid, body.job_id))
+        removed = cur.rowcount or 0
+        conn.commit()
+    finally:
+        conn.close()
+    return {"ok": True, "removed": removed}
+
+
 @app.get("/api/v1/applications/{job_id}/snapshot")
 def get_snapshot(job_id: int, user: dict = Depends(get_current_user)):
     uid = user["app_user_id"]

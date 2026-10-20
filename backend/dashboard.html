@@ -612,6 +612,7 @@ function jobCard(j) {
 function appCard(a, showActions) {
   const btns = showActions ? `<div class="actions">
       ${a.url ? `<a href="${esc(a.url)}" target="_blank" rel="noopener">打开职位页<span class=\"en\">Open job ↗</span></a>` : ""}
+      ${a.status === "failed" ? `<button data-act="retry" data-job="${a.job_id}">↩ 重新入队<span class="en">Retry</span></button>` : ""}
       <button class="primary" data-act="submitted" data-job="${a.job_id}">已手动投递<span class=\"en\">Done manually</span></button>
       <button data-act="skipped" data-job="${a.job_id}">跳过</button>
     </div>` : "";
@@ -664,6 +665,12 @@ async function loadApps() {
 async function markApp(jobId, status) {
   clearErr();
   try {
+    if (status === "retry") {
+      await apiPost("/api/v1/applications/retry", { job_id: Number(jobId) });
+      toast("已重新入队：下次开始投递时会重试这个职位");
+      await Promise.all([loadApps(), loadQueue()]);
+      return;
+    }
     await api("/api/v1/applications", {
       method: "POST",
       headers: {"Content-Type": "application/json"},
