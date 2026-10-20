@@ -214,6 +214,29 @@ async function fetchBackendProfile() {
   return null;
 }
 
+function _urlToken(u) {
+  const m = String(u || '').match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|\b\d{4,}\b/i);
+  return m ? m[0].toLowerCase() : '';
+}
+function _sameOrigin(a, b) {
+  try { return new URL(a).origin === new URL(b).origin; } catch (e) { return false; }
+}
+async function findManualJob(pageUrl) {
+  // 用户打开的页面是不是一个「待人工 / 已填待提交」的职位？
+  try {
+    const d = await apiGet('/api/v1/applications?limit=100');
+    const list = (d && d.applications) || [];
+    const tok = _urlToken(pageUrl);
+    for (const a of list) {
+      if (!a || !a.url) continue;
+      if (a.status !== 'needs_manual' && a.status !== 'filled') continue;
+      if (a.url === pageUrl) return a;
+      if (tok && _sameOrigin(a.url, pageUrl) && a.url.toLowerCase().includes(tok)) return a;
+    }
+  } catch (e) { /* 查不到就不打扰 */ }
+  return null;
+}
+
 async function reportProgress(patch) {
   // 进度上报给后端，控制台轮询展示；上报失败绝不能影响投递本身
   try { await apiPost('/api/v1/run-progress', patch); } catch (e) { /* ignore */ }
@@ -388,6 +411,23 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       const already = _running;
       runDailyQueue('manual');
       sendResponse({ ok: true, started: !already, already });
+    } else if (msg.type === 'AUTOAPPLY_CHECK_MANUAL') {
+      // 跑批中不插手（跑批自己会填）；用户手动打开待人工职位页时才回传画像重填
+      if (_running) { sendResponse({ ok: true, manual: null }); }
+      else {
+        const a = await findManualJob(msg.url || '');
+        if (!a) { sendResponse({ ok: true, manual: null }); }
+        else {
+          let profile = (await fetchBackendProfile())
+            || (await chrome.storage.local.get(['aap_profile'])).aap_profile || {};
+          const resumeInfo = await getResumeForJob(a.job_id, profile);
+          if (resumeInfo.dataUrl) {
+            resumeInfo.name = displayResumeName(profile, resumeInfo.name);
+            profile = { ...profile, resumeFile: { name: resumeInfo.name, dataUrl: resumeInfo.dataUrl } };
+          }
+          sendResponse({ ok: true, manual: { jobId: a.job_id, detail: a.detail || '' }, profile });
+        }
+      }
     } else if (msg.type === 'AUTOAPPLY_RESCHEDULE') {
       await scheduleDaily();
       sendResponse({ ok: true });

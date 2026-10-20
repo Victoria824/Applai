@@ -21,7 +21,8 @@
         "content/captcha.js",
         "content/submit.js",
         "content/bridge.js",
-        "content/connect.js"
+        "content/connect.js",
+        "content/manual.js"
       ],
       "matches": [
         "<all_urls>"
@@ -52,7 +53,7 @@
     "notifications",
     "alarms"
   ],
-  "version": "0.2.6",
+  "version": "0.2.7",
   "icons": {
     "16": "icons/icon16.png",
     "48": "icons/icon48.png",
