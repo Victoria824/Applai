@@ -968,6 +968,19 @@ def report_advice(user: dict = Depends(get_current_user)):
         raise HTTPException(500, str(e)[:200])
 
 
+def _resume_display_name(uid: str) -> str:
+    """投递时用的简历文件名：招聘方会看到，必须专业 —— First_Last_Resume.pdf。"""
+    import re as _re
+    person = (db.get_active_person(uid) or {}).get("profile") or {}
+
+    def clean(v):
+        v = _re.sub(r"[^\w\s-]", "", str(v or ""), flags=_re.UNICODE).strip()
+        return _re.sub(r"\s+", "_", v)
+    first, last = clean(person.get("firstName")), clean(person.get("lastName"))
+    name = "_".join(x for x in (first, last) if x)
+    return f"{name}_Resume.pdf" if name else "Resume.pdf"
+
+
 def _resume_text_from_profile(profile: dict) -> str:
     """从画像的简历 PDF 提取文本。"""
     rf = profile.get("resumeFile") or {}
@@ -1024,7 +1037,7 @@ def tailor_resume(body: dict, user: dict = Depends(get_current_user)):
     pdf_bytes = resume_pdf.generate_pdf(tailored, profile)
     pdf_b64 = "data:application/pdf;base64," + _b64.b64encode(pdf_bytes).decode()
     pdf_hash = _hl.sha256(pdf_b64.encode()).hexdigest()
-    db.save_resume_blob(pdf_hash, f"tailored-{job_id}.pdf", pdf_b64)
+    db.save_resume_blob(pdf_hash, _resume_display_name(uid), pdf_b64)
     vid = db.save_resume_version(uid, pid, job_id, "tailored", tailored, pdf_hash)
     return {"version_id": vid, "pdf_hash": pdf_hash, "cached": False}
 
@@ -1053,13 +1066,13 @@ def resume_for_job(job_id: int, user: dict = Depends(get_current_user)):
                     pdf_bytes = resume_pdf.generate_pdf(tailored, profile)
                     pdf_b64 = "data:application/pdf;base64," + _b64.b64encode(pdf_bytes).decode()
                     pdf_hash = _hl.sha256(pdf_b64.encode()).hexdigest()
-                    db.save_resume_blob(pdf_hash, f"tailored-{job_id}.pdf", pdf_b64)
+                    db.save_resume_blob(pdf_hash, _resume_display_name(uid), pdf_b64)
                     vid = db.save_resume_version(uid, pid, job_id, "tailored", tailored, pdf_hash)
                     v = {"id": vid, "pdf_hash": pdf_hash}
             except Exception:
                 v = None
         if v:
-            return {"pdf_hash": v["pdf_hash"], "filename": f"tailored-{job_id}.pdf",
+            return {"pdf_hash": v["pdf_hash"], "filename": _resume_display_name(uid),
                     "version_id": v["id"], "tailored": True}
     # 母版
     rf = profile.get("resumeFile") or {}

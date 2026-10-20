@@ -622,3 +622,18 @@ def test_run_progress():
     p2 = ca.get("/api/v1/run-progress").json()["progress"]
     assert p2["processed"] == 4 and p2["started_at"] == p["started_at"]
     assert cb.get("/api/v1/run-progress").json()["progress"] is None
+
+
+def test_resume_display_name():
+    """投递简历文件名必须专业：First_Last_Resume.pdf；无姓名时退回 Resume.pdf。"""
+    import app as appmod
+    c = _authed_client("nameuser")
+    me = c.get("/api/v1/auth/me").json()
+    uid = me.get("app_user_id") or me.get("user_id") or me.get("id")
+    c.put("/api/v1/profile", json={"user_id": "ignored", "profile": {
+        "firstName": "Emma", "lastName": "Stone", "email": "e@x.com"}})
+    assert appmod._resume_display_name(uid) == "Emma_Stone_Resume.pdf"
+    c2 = _authed_client("noname")
+    me2 = c2.get("/api/v1/auth/me").json()
+    uid2 = me2.get("app_user_id") or me2.get("user_id") or me2.get("id")
+    assert appmod._resume_display_name(uid2) == "Resume.pdf"

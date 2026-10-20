@@ -546,7 +546,7 @@ def add_job(user_id: str, url: str, title="", company="", location="", source="m
     now = time.time()
     raw = dict(raw or {})
     if description:
-        raw["description"] = description[:4000]
+        raw["description"] = description[:20000]
     job_id, is_new = None, False
     for _try in range(2):
         try:

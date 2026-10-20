@@ -293,6 +293,13 @@ button .en{font-size:10px; opacity:.72; margin-top:1px;}
 .badge-applying{display:inline-block;background:#2f7cf6;color:#fff;font-size:11px;border-radius:99px;padding:1px 8px;vertical-align:middle;animation:apulse 1.2s infinite}
 .badge-applying .en{color:#dceaff}
 @keyframes apulse{0%,100%{opacity:1}50%{opacity:.45}}
+.jd-box{max-height:300px;overflow-y:auto;margin-top:6px;line-height:1.55}
+.jd-h{font-weight:700;margin:10px 0 3px;color:var(--ink,#1a1a1a)}
+.jd-p{margin:3px 0}
+.jd-ul{margin:3px 0 3px 18px;padding:0}
+.jd-ul li{margin:2px 0}
+.snap-guide{background:#eef4ff;border:1px solid #c7dbff;border-radius:10px;padding:10px 12px;margin:0 0 12px;font-size:13px;line-height:1.6}
+.snap-guide .btn-link{display:inline-block;margin-top:6px;background:#111;color:#fff;border-radius:8px;padding:6px 14px;text-decoration:none;font-size:13px}
 </style>
 </head>
 <body>
@@ -631,7 +638,7 @@ function appCard(a, showActions) {
   return `<div class="card"><div class="top"><div>
     <h3>${esc(a.title || "(未知职位)")} ${stBadge(a.status)}</h3>
     <div class="meta">${esc(a.company || "")}</div></div></div>
-    ${a.detail ? `<div class="detail">${esc(a.detail)}</div>` : ""}
+    ${a.detail ? `<div class="detail">${fmtDetail(a.detail)}</div>` : ""}
     <div class="time">更新于 ${esc(fmtTime(a.updated_at))}</div>
     ${btns}${snapBtn}</div>`;
 }
@@ -1983,6 +1990,64 @@ $("parseModalSave").onclick = async () => {
 $("parseModal").addEventListener("click", (e) => { if (e.target.id === "parseModal") hideParseModal(); });
 
 
+/* ---------- 可读化：待人工原因 + JD 排版 ---------- */
+const INTENT_LABELS = {
+  sponsorship: "签证担保 Sponsorship", resume: "简历文件 Resume", coverLetter: "求职信 Cover letter",
+  workAuth: "工作许可 Work authorization", salary: "期望薪资 Salary", salaryMin: "期望薪资 Salary",
+  location: "所在地 Location", linkedin: "LinkedIn 链接", github: "GitHub 链接", website: "个人网站 Website",
+  phone: "电话号码 Phone", email: "邮箱 Email", firstName: "名 First name", lastName: "姓 Last name",
+  name: "姓名 Name", startDate: "可入职日期 Start date", yearsExperience: "工作年限 Experience",
+  education: "学历 Education", gender: "性别 Gender", veteran: "退伍军人身份 Veteran",
+  disability: "残障状况 Disability", citizenship: "公民身份 Citizenship", relocate: "是否接受搬迁 Relocation",
+  travel: "是否接受出差 Travel", remote: "远程意愿 Remote", notice: "通知期 Notice period",
+};
+function intentLabel(tok) {
+  const t = String(tok || "").trim();
+  if (!t) return "";
+  if (INTENT_LABELS[t]) return INTENT_LABELS[t];
+  const m = t.match(/^(.+?)\((\w+)\)$/);  // 已是「中文(english)」友好格式 → 原样
+  if (m) return t;
+  return esc(t);
+}
+function fmtDetail(detail) {
+  const d = String(detail || "");
+  const m = d.match(/缺失字段[:：]\s*([^;；]+)[;；]\s*待确认[:：]\s*(.+)$/);
+  if (!m) return esc(d);
+  const split = (s) => s.split(/[,，、]/).map((x) => x.trim()).filter((x) => x && x !== "无");
+  const miss = split(m[1]);
+  const conf = split(m[2]);
+  return `缺失字段（画像里没有答案）：${miss.length ? miss.map(intentLabel).join("、") : "无"}<br>`
+    + `待确认（插件拿不准、没敢替你答）：${conf.length ? conf.map(intentLabel).join("、") : "无"}`;
+}
+const JD_HEAD_SET = new Set(["about the role","about the job","about us","about the company","the role","role overview","position summary","job summary","summary","responsibilities","key responsibilities","what you'll do","what you will do","your role","what we're looking for","what we are looking for","requirements","qualifications","required qualifications","preferred qualifications","minimum qualifications","basic qualifications","skills","experience","what you bring","benefits","perks","compensation","salary","how to apply","equal opportunity","why join","who you are","about you","what you'll bring","nice to have","bonus points","our values","the team","about the team"]);
+function formatJD(text) {
+  let t = String(text || "").replace(/\r/g, "");
+  if ((t.match(/\n/g) || []).length < 6) {
+    const HEADS = ["About the Role","About the Job","About the Company","What You'll Do","What You Will Do","Key Responsibilities","What We're Looking For","What We Are Looking For","Minimum Qualifications","Preferred Qualifications","Required Qualifications","Basic Qualifications","How to Apply","Equal Opportunity","Responsibilities","Requirements","Qualifications","Benefits","Compensation"];
+    for (const h of HEADS) t = t.split(h).join("\n" + h + "\n");
+    t = t.replace(/\s•\s/g, "\n• ");
+  }
+  const lines = t.split("\n").map((s) => s.trim()).filter(Boolean);
+  const isHead = (s) => s.length <= 70 && !/[.!?。！？]$/.test(s) && (s.endsWith(":") || JD_HEAD_SET.has(s.toLowerCase().replace(/:$/, "")));
+  const isBullet = (s) => /^[•·▪◦*\-–—]\s+/.test(s);
+  let html = "", inList = false;
+  const closeList = () => { if (inList) { html += "</ul>"; inList = false; } };
+  for (const ln of lines) {
+    if (isBullet(ln)) {
+      if (!inList) { html += '<ul class="jd-ul">'; inList = true; }
+      html += `<li>${esc(ln.replace(/^[•·▪◦*\-–—]\s+/, ""))}</li>`;
+    } else if (isHead(ln)) {
+      closeList();
+      html += `<div class="jd-h">${esc(ln.replace(/:$/, ""))}</div>`;
+    } else {
+      closeList();
+      html += `<p class="jd-p">${esc(ln)}</p>`;
+    }
+  }
+  closeList();
+  return html;
+}
+
 /* ---------- 投递快照 ---------- */
 document.addEventListener("click", (e) => {
   const b = e.target.closest("[data-snap]");
@@ -2002,7 +2067,8 @@ async function openSnapshot(jobId) {
       `<tr><td style="color:var(--muted);width:34%">${esc(f.label || f.intent)}</td><td style="word-break:break-word">${esc(f.value || "")}</td></tr>`).join("");
     const OC_LABEL = { needs_manual: "⚠️ 待人工原因 / Why manual", submitted: "✅ 投递结果 / Outcome",
       failed: "❌ 失败原因 / Why failed", filled: "📝 填写结果 / Outcome", skipped: "⏭️ 已跳过 / Skipped" };
-    const outcome = a.detail ? `<div class="snap-outcome oc-${esc(a.status || "")}"><div class="oc-k">${OC_LABEL[a.status] || "结果 / Outcome"}</div><div>${esc(a.detail)}</div></div>` : "";
+    const outcome = a.detail ? `<div class="snap-outcome oc-${esc(a.status || "")}"><div class="oc-k">${OC_LABEL[a.status] || "结果 / Outcome"}</div><div>${fmtDetail(a.detail)}</div></div>` : "";
+    const manualGuide = (a.status === "needs_manual" && s.job_url) ? `<div class="snap-guide">👉 怎么处理<span class="en">What to do</span><br>打开职位页 —— 插件已经把能填的都填好了，你只需补上上面这几项、检查无误后点提交即可。<span class="en">Open the job page — everything else is already filled in; just answer the items above and submit.</span><br><a class="btn-link" href="${esc(s.job_url)}" target="_blank" rel="noopener">打开职位页处理 ↗</a></div>` : "";
     const facts = [];
     facts.push(`<div class="snap-fact"><div class="k">投递网站<span class="en">Site</span></div><div class="v">${esc(s.site || "未知")}${s.job_url ? ` · <a href="${esc(s.job_url)}" target="_blank" rel="noopener">职位页 ↗</a>` : ""}</div></div>`);
     if (s.has_resume) facts.push(`<div class="snap-fact"><div class="k">使用的简历<span class="en">Resume used</span></div><div class="v">${esc(s.resume_name || "resume.pdf")}${s.resume_tailored ? ' <span class="tag-ai">AI 按岗定制</span>' : ""}<br><button class="ghost-btn" id="snapResumeBtn" style="margin-top:6px;padding:5px 12px;font-size:12px">下载简历<span class="en">Download</span></button></div></div>`);
@@ -2014,6 +2080,7 @@ async function openSnapshot(jobId) {
         <div class="snap-sub"><span>${esc(a.company || "")}</span>${a.status ? stBadge(a.status) : ""}</div>
       </div>
       ${outcome}
+      ${manualGuide}
       <div class="snap-facts">${facts.join("")}</div>
       <div class="card-title" style="font-size:14px;margin-top:14px">填写的字段（${fields.length}，已过滤隐私）<span class="en">Filled fields (PII excluded)</span></div>
       ${fieldsHtml ? `<table class="snap-table"><tbody>${fieldsHtml}</tbody></table>` : '<div class="hint">无字段记录</div>'}
@@ -2021,7 +2088,7 @@ async function openSnapshot(jobId) {
         <div class="detail" style="white-space:pre-wrap;max-height:220px;overflow-y:auto">${esc(s.cover_letter)}</div>` : ""}
       ${s.jd_text ? `<div class="card-title" style="font-size:14px;margin-top:12px">岗位描述<span class="en">Job description</span></div>
         <details><summary style="cursor:pointer;color:var(--blue);font-size:13px">展开查看（${s.jd_text.length} 字）/ Expand</summary>
-        <div class="detail" style="white-space:pre-wrap;max-height:260px;overflow-y:auto;margin-top:6px">${esc(s.jd_text.slice(0, 8000))}</div></details>` : ""}`;
+        <div class="detail jd-box">${formatJD(s.jd_text.slice(0, 12000))}</div></details>` : ""}`;
     const rb = $("snapResumeBtn");
     if (rb) rb.onclick = async () => {
       try {

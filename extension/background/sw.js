@@ -169,6 +169,24 @@ async function sha256hex(str) {
   return Array.from(new Uint8Array(buf)).map((b) => b.toString(16).padStart(2, '0')).join('');
 }
 
+function displayResumeName(profile, fallback) {
+  // 投递时简历必须用专业文件名（招聘方可见）：First_Last_Resume.pdf
+  const clean = (v) => String(v || '').replace(/[^\p{L}\p{N}\s-]/gu, '').trim().replace(/\s+/g, '_');
+  const p = profile || {};
+  const name = [clean(p.firstName), clean(p.lastName)].filter(Boolean).join('_');
+  const ext = ((String(fallback || '').match(/\.[A-Za-z0-9]+$/) || ['.pdf'])[0]).toLowerCase();
+  if (name) return name + '_Resume' + ext;
+  if (fallback && !/^tailored-\d+\./i.test(fallback)) return fallback;
+  return 'Resume' + ext;
+}
+
+const INTENT_ZH = { sponsorship: '签证担保', resume: '简历文件', coverLetter: '求职信',
+  workAuth: '工作许可', salary: '期望薪资', location: '所在地', linkedin: 'LinkedIn',
+  github: 'GitHub', website: '个人网站', phone: '电话', email: '邮箱', startDate: '可入职日期',
+  yearsExperience: '工作年限', education: '学历', gender: '性别', veteran: '退伍军人身份',
+  disability: '残障状况', citizenship: '公民身份' };
+const intentLbl = (i) => INTENT_ZH[i] ? `${INTENT_ZH[i]}(${i})` : i;
+
 async function getResumeForJob(jobId, profile) {
   // 问后端该用哪版简历（画像开了改写 → 改写版 PDF；否则母版）
   try {
@@ -310,6 +328,7 @@ async function _runDailyQueueImpl(trigger) {
       // 取该岗位该用的简历（画像开了改写 → 改写版；否则母版）
       const resumeInfo = await getResumeForJob(job.id, profile);
       if (resumeInfo.dataUrl) {
+        resumeInfo.name = displayResumeName(profile, resumeInfo.name);
         profile.resumeFile = { name: resumeInfo.name, dataUrl: resumeInfo.dataUrl };
       }
       const fill = await sendToTab(tab.id, { type: 'AUTOAPPLY_FILL', profile: profile || {}, options: {} }, 120000);
@@ -324,7 +343,7 @@ async function _runDailyQueueImpl(trigger) {
         await pushViaNtfy('Applai：需要人工处理验证码', `${job.title} @ ${job.company}\n${job.url}`);
       } else if (r.missing.length || r.needsReview.length) {
         await recordApp(userId, job.id, 'needs_manual',
-          `缺失字段: ${r.missing.map((m) => m.intent).join(',') || '无'}; 待确认: ${r.needsReview.map((m) => m.intent).join(',') || '无'}`);
+          `缺失字段: ${r.missing.map((m) => intentLbl(m.intent)).join(',') || '无'}; 待确认: ${r.needsReview.map((m) => intentLbl(m.intent)).join(',') || '无'}`);
         manual++;
       } else if (s.autoSubmit) {
         const sub = await sendToTab(tab.id, { type: 'AUTOAPPLY_SUBMIT', timeoutMs: 15000 }, 60000);
