@@ -316,6 +316,40 @@ _MIGRATED_FOR = None  # 已迁移过的 DB 标识（PG_URL 或 DB_PATH）
 _MIGRATE_LOCK = __import__("threading").Lock()
 
 
+def _ensure_chat_tables(pg):
+    """chat 表结构自愈：补缺列、补 id 的序列默认值。
+
+    生产 PG 的 chat 表若是早期脚本建的（非 SERIAL），id 没有 nextval 默认值，
+    INSERT 不显式给 id 就会失败 —— 表现为带 conversation_id 的 chat 请求 500、
+    消息存不进去，而建会话（另一张表）正常。这里按信息模式逐项补齐。"""
+    want = {
+        "chat_conversations": {"user_id": "TEXT NOT NULL DEFAULT ''", "title": "TEXT DEFAULT ''",
+                               "created_at": "DOUBLE PRECISION NOT NULL DEFAULT 0",
+                               "updated_at": "DOUBLE PRECISION NOT NULL DEFAULT 0"},
+        "chat_messages": {"conv_id": "INTEGER NOT NULL DEFAULT 0", "user_id": "TEXT NOT NULL DEFAULT ''",
+                          "role": "TEXT NOT NULL DEFAULT ''", "content": "TEXT NOT NULL DEFAULT ''",
+                          "created_at": "DOUBLE PRECISION NOT NULL DEFAULT 0"},
+    }
+    for tbl, cols in want.items():
+        have = {r["column_name"] for r in pg.execute(
+            "SELECT column_name FROM information_schema.columns WHERE table_name=%s", (tbl,)).fetchall()}
+        if not have:
+            continue  # 表不存在时 SCHEMA 的 CREATE TABLE IF NOT EXISTS 负责（自带 SERIAL）
+        for col, ddl in cols.items():
+            if col not in have:
+                pg.execute(f"ALTER TABLE {tbl} ADD COLUMN {col} {ddl}")
+        pg.commit()
+        dflt = pg.execute(
+            "SELECT column_default FROM information_schema.columns "
+            "WHERE table_name=%s AND column_name='id'", (tbl,)).fetchone()
+        if not (dflt and dflt["column_default"]):
+            seq = f"{tbl}_id_seq"
+            pg.execute(f"CREATE SEQUENCE IF NOT EXISTS {seq}")
+            pg.execute(f"ALTER TABLE {tbl} ALTER COLUMN id SET DEFAULT nextval('{seq}')")
+            pg.execute(f"SELECT setval('{seq}', COALESCE((SELECT MAX(id) FROM {tbl}), 0) + 1, false)")
+            pg.commit()
+
+
 def _run_migrations_pg(pg):
     """Postgres 迁移：建表 + 轻量 ALTER + 画像拆分 + 序列修复。"""
     pg.executescript(SCHEMA)
@@ -338,6 +372,10 @@ def _run_migrations_pg(pg):
     if "kind" not in pcols:
         pg.execute("ALTER TABLE profiles ADD COLUMN kind TEXT DEFAULT 'job'")
         pg.commit()
+    try:
+        _ensure_chat_tables(pg)
+    except Exception:
+        pg.rollback()
     try:
         _migrate_split_profiles(pg)
         pg.commit()

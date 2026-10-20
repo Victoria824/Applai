@@ -1252,7 +1252,10 @@ def chat(body: ChatIn, user: dict = Depends(get_current_user)):
     if cid and db.get_conversation(uid, cid):
         for m in db.get_chat_messages(uid, cid, 200)[-8:]:
             history.append({"role": m["role"], "content": str(m["content"])[:1500]})
-        db.add_chat_message(uid, cid, "user", msg)
+        try:
+            db.add_chat_message(uid, cid, "user", msg)
+        except Exception:
+            import traceback; traceback.print_exc()
         # 首条消息自动取标题
         if len(db.get_chat_messages(uid, cid, 2)) <= 1:
             db.rename_conversation(uid, cid, msg[:24])
@@ -1281,7 +1284,10 @@ def chat(body: ChatIn, user: dict = Depends(get_current_user)):
     if not reply:
         raise HTTPException(502, "助手暂不可用，请稍后重试")
     if cid and db.get_conversation(uid, cid):
-        db.add_chat_message(uid, cid, "assistant", reply)
+        try:
+            db.add_chat_message(uid, cid, "assistant", reply)
+        except Exception:
+            import traceback; traceback.print_exc()
     return {"reply": reply, "conversation_id": cid}
 
 
