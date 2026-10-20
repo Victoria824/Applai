@@ -91,6 +91,17 @@
     }
   }
 
+  /* 画像里「明确给出」的布尔答案；没明确给过返回 ''。
+   * valueForKey('sponsorship') 对未表态者默认 'no'，那不算明确答案，
+   * 不能据此在「没找到问题」时凭空标人工（问题不在本页 = 假警报）。 */
+  function explicitBoolValue(key, p) {
+    if (!p) return '';
+    if (key === 'sponsorship') return typeof p.needsSponsorship === 'boolean' ? (p.needsSponsorship ? 'yes' : 'no') : '';
+    if (key === 'workAuth') return valueForKey('workAuth', p);
+    if (key === 'relocate') return typeof p.willingToRelocate === 'boolean' ? (p.willingToRelocate ? 'yes' : 'no') : '';
+    return '';
+  }
+
   /* ---------- 富 label 签名 ---------- */
   function fieldSignature(el) {
     const parts = [];
@@ -221,10 +232,10 @@
   }
 
   // 命中则返回 true；任何失败（无数据、非简历框、API 不可用）返回 false → 上游走人工队列
-  function attachResume(el, profile) {
+  function attachResume(el, profile, force) {
     const rf = profile && profile.resumeFile;
     if (!rf || !rf.dataUrl) return false;
-    if (!isResumeFileInput(el)) return false;
+    if (!force && !isResumeFileInput(el)) return false;
     try {
       const file = dataUrlToFile(rf.dataUrl, rf.name);
       if (!file) return false;
@@ -348,6 +359,61 @@
     }
   }
 
+  function containerSignature(container) {
+    const parts = [];
+    if (container) {
+      const q = container.querySelector('legend, label:not([for]), [class*="question" i], [class*="label" i], [class*="title" i], h1, h2, h3, h4');
+      if (q) parts.push(q.textContent);
+      if (container.getAttribute) {
+        parts.push(container.getAttribute('data-automation-id') || '');
+        parts.push(container.getAttribute('data-field-path') || '');
+      }
+    }
+    return parts.join(' ').replace(/\s+/g, ' ').trim();
+  }
+
+  /* 按钮式 Yes/No：如 Ashby 的布尔问题是两个 <button>，不是 radio/select。
+   * 只认领「容器签名命中布尔字段 + 组内 >=2 个布尔按钮」的组，避免误点页面按钮。 */
+  function fillBoolButtons(profile, report, filledKeys) {
+    const M = window.__autofillMatch;
+    const BOOL_TEXTS = new Set(['yes', 'no', 'y', 'n', 'true', 'false', '是', '否', '是的', '愿意', '不愿意']);
+    const btns = Array.from(document.querySelectorAll('button')).filter((b) =>
+      isVisible(b) && BOOL_TEXTS.has(M.normalizeLabel(b.textContent || '')));
+    if (btns.length < 2) return;
+    const groups = new Map();
+    for (const b of btns) {
+      const c = (b.closest && (b.closest('[data-field-path]') || b.closest('fieldset') ||
+        b.closest('[role="radiogroup"]'))) || b.parentElement;
+      if (!c) continue;
+      if (!groups.has(c)) groups.set(c, []);
+      groups.get(c).push(b);
+    }
+    for (const [container, gbtns] of groups) {
+      if (gbtns.length < 2) continue;
+      const sig = containerSignature(container);
+      const key = matchKey(sig);
+      if (!key || !BOOL_KEYS.has(key) || filledKeys.has(key)) continue;
+      const value = valueForKey(key, profile);
+      if (value !== 'yes' && value !== 'no') {
+        report.needsReview.push({ intent: key, label: shortLabel(sig), reason: '按钮题需人工确认作答' });
+        filledKeys.add(key);
+        continue;
+      }
+      const labels = gbtns.map((b) => (b.textContent || '').trim());
+      const m = M.boolToOption(value === 'yes', labels, BOOL_SYNONYMS);
+      if (m && gbtns[m.index]) {
+        gbtns[m.index].click();
+        mark(gbtns[m.index], true);
+        filledKeys.add(key);
+        report.filled.push({ intent: key, label: shortLabel(sig), value: snapValue(key, labels[m.index] || value) });
+      } else {
+        gbtns.forEach((b) => mark(b, false));
+        report.needsReview.push({ intent: key, label: shortLabel(sig), reason: '按钮选项无法匹配' });
+        filledKeys.add(key);
+      }
+    }
+  }
+
   /* 快照用：把填入值截断成可读字符串 */
   function snapValue(key, value) {
     let s = String(value == null ? '' : value);
@@ -397,13 +463,15 @@
       }
     }
 
-    // radio 组
+    // radio 组 + 按钮式 Yes/No 组（Ashby）
     fillRadioGroups(profile, report, filledKeys);
+    fillBoolButtons(profile, report, filledKeys);
 
-    // bool 类 key 有值但没填上 → 标人工（避免静默跳过）
+    // bool 类 key 画像里有「明确答案」但没填上 → 标人工（避免静默跳过）；
+    // 没明确给过的答案不凭空标人工（问题不在本页时是假警报，docebo 9 连挂即此因）
     for (const key of BOOL_KEYS) {
       if (!filledKeys.has(key)) {
-        const v = valueForKey(key, profile);
+        const v = explicitBoolValue(key, profile);
         if (v === 'yes' || v === 'no') {
           report.needsReview.push({ intent: key, label: key, reason: '未找到对应问题，请人工确认' });
         }
@@ -411,10 +479,12 @@
     }
 
     // 文件上传：简历意图 + 画像有简历数据 → 自动附上；其余（作品集附件、无简历数据、失败）走人工队列
-    const fileInputs = Array.from(document.querySelectorAll('input[type="file"]')).filter(isVisible);
+    const fileInputs = Array.from(document.querySelectorAll('input[type="file"]')).filter((el) => !el.disabled);
     const manualFiles = [];
+    const onlyOneFile = fileInputs.length === 1;
     for (const f of fileInputs) {
-      if (attachResume(f, profile)) {
+      const force = onlyOneFile && !/cover letter|求职信|portfolio|作品集|transcript|附件/i.test(fieldSignature(f));
+      if (attachResume(f, profile, force)) {
         mark(f, true);
         report.filled.push({ intent: 'resume', label: shortLabel(fieldSignature(f)),
           value: (profile.resumeFile && profile.resumeFile.name) || '已附简历' });

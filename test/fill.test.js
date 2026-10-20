@@ -277,12 +277,74 @@ console.log('\n[12] 排除词回归');
   void r;
 }
 
+await testAshbyStyle();
+await testNoPhantomSponsorship();
 await testResumeAutoAttach();
 await testResumeFallbackNoData();
 await testResumeZhAndMalformed();
 
 console.log(`\n结果：${passed} 通过，${failed} 失败`);
 process.exit(failed ? 1 : 0);
+}
+
+/* ---------- 16. Ashby 风格：隐藏文件框 + 按钮式 sponsorship ---------- */
+async function testAshbyStyle() {
+console.log('\n[16] Ashby 风格表单（docebo 复现）');
+{
+  const prof = { ...PROFILE, needsSponsorship: false,
+    resumeFile: { name: 'Victoria_Liu_Resume.pdf', size: 1024, dataUrl: 'data:application/pdf;base64,JVBERi0=' } };
+  const w = makeDom(`<html><body><form>
+    <label for="nm">Full Name *</label><input id="nm">
+    <div data-field-path="field_resume"><span>Resume *</span>
+      <button type="button">Upload</button>
+      <input type="file" id="cv" style="display:none">
+    </div>
+    <div data-field-path="field_sponsorship"><label>Will you now or in the future require sponsorship to work in Canada?</label>
+      <button type="button">Yes</button><button type="button">No</button>
+    </div>
+  </form></body></html>`, 'https://jobs.ashbyhq.com/docebo/abc/application');
+
+  const cv = w.document.getElementById('cv');
+  let files = null;
+  Object.defineProperty(cv, 'files', { configurable: true, get: () => files, set: (v) => { files = v; } });
+  let clicked = '';
+  w.document.querySelectorAll('button').forEach((b) =>
+    b.addEventListener('click', () => { clicked = b.textContent.trim(); }));
+
+  const r = await w.__autoapply.fillApplication(prof, {});
+  check('隐藏简历框被附上 File', !!(files && files[0] && files[0].name === 'Victoria_Liu_Resume.pdf'),
+    JSON.stringify(files && files[0] && files[0].name));
+  check('简历记为已填、不再标待确认', r.filled.some((x) => x.intent === 'resume') &&
+    !r.needsReview.some((x) => x.intent === 'resume') && !r.missing.some((x) => x.intent === 'resume'),
+    JSON.stringify({ nr: r.needsReview, miss: r.missing }));
+  check('sponsorship 点了 No 按钮', clicked === 'No', clicked);
+  check('sponsorship 记为已填、不再标待确认', r.filled.some((x) => x.intent === 'sponsorship') &&
+    !r.needsReview.some((x) => x.intent === 'sponsorship'), JSON.stringify(r.needsReview));
+}
+}
+
+/* ---------- 17. 没有 sponsorship 问题时不凭空标人工 ---------- */
+async function testNoPhantomSponsorship() {
+console.log('\n[17] 无 sponsorship 问题 + 画像未表态 → 无假警报');
+{
+  const prof = { ...PROFILE };
+  delete prof.needsSponsorship;
+  const w = makeDom(`<html><body><form>
+    <label for="nm">Full Name *</label><input id="nm">
+    <label for="em">Email *</label><input id="em">
+  </form></body></html>`, 'https://jobs.lever.co/acme/xyz');
+  const r = await w.__autoapply.fillApplication(prof, {});
+  check('未表态时不标 sponsorship 待确认', !r.needsReview.some((x) => x.intent === 'sponsorship'),
+    JSON.stringify(r.needsReview));
+
+  const prof2 = { ...PROFILE, needsSponsorship: false };
+  const w2 = makeDom(`<html><body><form>
+    <label for="nm">Full Name *</label><input id="nm">
+  </form></body></html>`, 'https://jobs.lever.co/acme/xyz');
+  const r2 = await w2.__autoapply.fillApplication(prof2, {});
+  check('明确表态但问题不在本页 → 仍标人工（设计行为）', r2.needsReview.some((x) => x.intent === 'sponsorship'),
+    JSON.stringify(r2.needsReview));
+}
 }
 
 /* ---------- 13. 简历自动上传（DataTransfer） ---------- */

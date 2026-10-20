@@ -87,6 +87,8 @@ h2 .count{font-size:12px; color:var(--muted); font-weight:500; background:#fff;
 .st-needs_manual{background:var(--orange-bg); color:var(--orange);}
 .st-failed{background:var(--red-bg); color:var(--red);}
 .st-skipped{background:var(--gray-bg); color:var(--gray);}
+.st-interviewing{background:var(--purple-bg); color:var(--purple);}
+.st-rejected{background:var(--red-bg); color:var(--red);}
 .detail{font-size:13px; color:var(--muted); background:var(--gray-bg); border-radius:12px;
   padding:10px 12px; margin-top:10px; word-break:break-word;}
 .time{font-size:12px; color:var(--muted); margin-top:8px;}
@@ -266,6 +268,19 @@ button .en{font-size:10px; opacity:.72; margin-top:1px;}
 .prog-bar{height:100%; background:linear-gradient(90deg,#1677FF,#69b1ff); border-radius:99px; transition:width .4s;}
 #srcFetchBtn:disabled{opacity:.55; cursor:wait;}
 
+.snap-head{margin-bottom:12px;}
+.snap-title{font-size:17px; font-weight:800; line-height:1.35;}
+.snap-sub{display:flex; align-items:center; gap:8px; flex-wrap:wrap; color:var(--muted); font-size:13px; margin-top:5px;}
+.snap-outcome{border-radius:12px; padding:10px 14px; font-size:13.5px; margin:0 0 14px; background:var(--gray-bg);}
+.snap-outcome .oc-k{font-size:11.5px; font-weight:700; color:var(--muted); margin-bottom:2px;}
+.snap-outcome.oc-needs_manual{background:var(--orange-bg);}
+.snap-outcome.oc-submitted{background:var(--green-bg);}
+.snap-outcome.oc-failed{background:var(--red-bg);}
+.snap-facts{display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:10px; margin-bottom:4px;}
+.snap-fact{border:1px solid var(--line); border-radius:12px; padding:10px 12px;}
+.snap-fact .k{font-size:11.5px; color:var(--muted); font-weight:700; margin-bottom:3px;}
+.snap-fact .v{font-size:13.5px; font-weight:600; word-break:break-word;}
+.tag-ai{display:inline-block; font-size:10.5px; font-weight:700; background:var(--purple-bg); color:var(--purple); border-radius:999px; padding:2px 8px; vertical-align:1px;}
 .snap-table{width:100%; border-collapse:collapse; font-size:13px; margin:6px 0;}
 .snap-table td{border-bottom:1px solid var(--line); padding:7px 4px; vertical-align:top;}
 .snap-table tr:last-child td{border-bottom:none;}
@@ -437,7 +452,7 @@ button .en{font-size:10px; opacity:.72; margin-top:1px;}
     </div>
   </section>
     <div id="snapModal" class="modal" style="display:none">
-      <div class="modal-box" style="max-width:640px">
+      <div class="modal-box" style="max-width:680px;max-height:88vh;overflow-y:auto">
         <div class="card-title">投递快照<span class="en">Application snapshot</span>
           <button class="ghost-btn" id="snapClose" style="margin-left:auto">关闭<span class="en">Close</span></button></div>
         <div id="snapBody"><div class="loading">加载中…</div></div>
@@ -534,7 +549,11 @@ const STATUS_LABEL = {
   queued:"待投递<span class=\"en\">Pending</span>", filled:"已填写<span class=\"en\">Filled</span>", submitted:"已投递<span class=\"en\">Submitted</span>",
   needs_manual:"待人工<span class=\"en\">Manual</span>", failed:"失败<span class=\"en\">Failed</span>", skipped:"已跳过<span class=\"en\">Skipped</span>"
 };
-const stBadge = (s) => `<span class="st st-${esc(s)}">${esc(STATUS_LABEL[s] || s)}</span>`;
+const stBadge = (s) => {
+  const L = STATUS_LABEL[s];
+  if (Array.isArray(L)) return `<span class="st st-${esc(s)}">${esc(L[0])}</span>`;
+  return `<span class="st st-${esc(s)}">${L || esc(s)}</span>`;
+};
 const fmtTime = (ts) => {
   if (!ts) return "";
   const d = new Date(ts * 1000);
@@ -628,6 +647,9 @@ async function loadApps() {
   let apps = [];
   try { apps = (await api(`/api/v1/applications?user_id=${uid}`)).applications || []; }
   catch (e) { showErr("申请记录加载失败：" + e.message); return; }
+
+  window._appByJob = {};
+  apps.forEach((a) => { window._appByJob[a.job_id] = a; });
 
   const manual = apps.filter((a) => a.status === "needs_manual");
   $("manualCount").textContent = `共 ${manual.length} 个`;
@@ -1881,32 +1903,39 @@ async function openSnapshot(jobId) {
   try {
     const d = await api(`/api/v1/applications/${jobId}/snapshot?user_id=${encodeURIComponent(userId())}`);
     const s = d.snapshot;
-    const fields = (s.filled_fields || []).map((f) =>
-      `<tr><td style="color:var(--muted);width:38%">${esc(f.label || f.intent)}</td><td>${esc(f.value || "")}</td></tr>`).join("");
+    const a = (window._appByJob || {})[jobId] || {};
+    const fields = s.filled_fields || [];
+    const fieldsHtml = fields.map((f) =>
+      `<tr><td style="color:var(--muted);width:34%">${esc(f.label || f.intent)}</td><td style="word-break:break-word">${esc(f.value || "")}</td></tr>`).join("");
+    const OC_LABEL = { needs_manual: "⚠️ 待人工原因 / Why manual", submitted: "✅ 投递结果 / Outcome",
+      failed: "❌ 失败原因 / Why failed", filled: "📝 填写结果 / Outcome", skipped: "⏭️ 已跳过 / Skipped" };
+    const outcome = a.detail ? `<div class="snap-outcome oc-${esc(a.status || "")}"><div class="oc-k">${OC_LABEL[a.status] || "结果 / Outcome"}</div><div>${esc(a.detail)}</div></div>` : "";
+    const facts = [];
+    facts.push(`<div class="snap-fact"><div class="k">投递网站<span class="en">Site</span></div><div class="v">${esc(s.site || "未知")}${s.job_url ? ` · <a href="${esc(s.job_url)}" target="_blank" rel="noopener">职位页 ↗</a>` : ""}</div></div>`);
+    if (s.has_resume) facts.push(`<div class="snap-fact"><div class="k">使用的简历<span class="en">Resume used</span></div><div class="v">${esc(s.resume_name || "resume.pdf")}${s.resume_tailored ? ' <span class="tag-ai">AI 按岗定制</span>' : ""}<br><button class="ghost-btn" id="snapResumeBtn" style="margin-top:6px;padding:5px 12px;font-size:12px">下载简历<span class="en">Download</span></button></div></div>`);
+    if (s.salary_info) facts.push(`<div class="snap-fact"><div class="k">填写的薪资<span class="en">Salary filled</span></div><div class="v">${esc(s.salary_info)}</div></div>`);
+    facts.push(`<div class="snap-fact"><div class="k">快照时间<span class="en">Snapshot at</span></div><div class="v">${esc(fmtTime(s.created_at))}</div></div>`);
     $("snapBody").innerHTML = `
-      <div class="meta" style="margin-bottom:10px">
-        ${s.job_url ? `<a href="${esc(s.job_url)}" target="_blank" rel="noopener">岗位原链接 ↗</a> · ` : ""}
-        投递网站：${esc(s.site || "未知")}<br>
-        <span style="color:var(--muted);font-size:12px">快照时间：${esc(fmtTime(s.created_at))}</span>
+      <div class="snap-head">
+        <div class="snap-title">${esc(a.title || "投递快照")}</div>
+        <div class="snap-sub"><span>${esc(a.company || "")}</span>${a.status ? stBadge(a.status) : ""}</div>
       </div>
-      ${s.salary_info ? `<div class="card-title" style="font-size:14px">填写的薪资<span class=\"en\">Salary filled</span></div>
-        <div class="detail">${esc(s.salary_info)}</div>` : ""}
-      <div class="card-title" style="font-size:14px">填写的字段（已过滤姓名电话等隐私）<span class=\"en\">Filled fields (PII excluded)</span></div>
-      ${fields ? `<table class="snap-table"><tbody>${fields}</tbody></table>` : '<div class="hint">无字段记录</div>'}
-      ${s.cover_letter ? `<div class="card-title" style="font-size:14px;margin-top:12px">发出的求职信<span class=\"en\">Cover letter sent</span></div>
+      ${outcome}
+      <div class="snap-facts">${facts.join("")}</div>
+      <div class="card-title" style="font-size:14px;margin-top:14px">填写的字段（${fields.length}，已过滤隐私）<span class="en">Filled fields (PII excluded)</span></div>
+      ${fieldsHtml ? `<table class="snap-table"><tbody>${fieldsHtml}</tbody></table>` : '<div class="hint">无字段记录</div>'}
+      ${s.cover_letter ? `<div class="card-title" style="font-size:14px;margin-top:12px">发出的求职信<span class="en">Cover letter sent</span></div>
         <div class="detail" style="white-space:pre-wrap;max-height:220px;overflow-y:auto">${esc(s.cover_letter)}</div>` : ""}
-      ${s.jd_text ? `<div class="card-title" style="font-size:14px;margin-top:12px">岗位描述<span class=\"en\">Job description</span></div>
-        <details><summary style="cursor:pointer;color:var(--blue);font-size:13px">展开查看 / Expand</summary>
-        <div class="detail" style="white-space:pre-wrap;max-height:260px;overflow-y:auto;margin-top:6px">${esc(s.jd_text.slice(0, 4000))}</div></details>` : ""}
-      ${s.has_resume ? `<div class="actions" style="margin-top:12px">
-        <button class="primary" id="snapResumeBtn">下载当时投递的简历<span class=\"en\">Download resume</span></button></div>` : ""}`;
+      ${s.jd_text ? `<div class="card-title" style="font-size:14px;margin-top:12px">岗位描述<span class="en">Job description</span></div>
+        <details><summary style="cursor:pointer;color:var(--blue);font-size:13px">展开查看（${s.jd_text.length} 字）/ Expand</summary>
+        <div class="detail" style="white-space:pre-wrap;max-height:260px;overflow-y:auto;margin-top:6px">${esc(s.jd_text.slice(0, 8000))}</div></details>` : ""}`;
     const rb = $("snapResumeBtn");
     if (rb) rb.onclick = async () => {
       try {
         const r = await api(`/api/v1/resume-blob/${s.resume_hash}?user_id=${encodeURIComponent(userId())}`);
-        const a = document.createElement("a");
-        a.href = r.data_url; a.download = r.filename || "resume.pdf";
-        document.body.appendChild(a); a.click(); a.remove();
+        const a2 = document.createElement("a");
+        a2.href = r.data_url; a2.download = r.filename || "resume.pdf";
+        document.body.appendChild(a2); a2.click(); a2.remove();
       } catch (err) { toast("下载失败 / Download failed: " + err.message); }
     };
   } catch (e) {
