@@ -368,6 +368,10 @@ async function _runDailyQueueImpl(trigger) {
         await recordApp(userId, job.id, 'needs_manual', `验证码（${r.captcha.type}）`);
         manual++;
         await pushViaNtfy('Applai：需要人工处理验证码', `${job.title} @ ${job.company}\n${job.url}`);
+      } else if (r.noForm) {
+        await recordApp(userId, job.id, 'needs_manual',
+          '未找到申请表：职位页上没有可填字段（表单可能藏在 Application 标签下，插件已尝试自动打开仍未找到）');
+        manual++;
       } else if (r.missing.length || r.needsReview.length) {
         await recordApp(userId, job.id, 'needs_manual',
           `缺失字段: ${r.missing.map((m) => intentLbl(m.intent)).join(',') || '无'}; 待确认: ${r.needsReview.map((m) => intentLbl(m.intent)).join(',') || '无'}`);

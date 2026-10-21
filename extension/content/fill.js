@@ -423,6 +423,20 @@
   }
 
   /* ---------- 主流程 ---------- */
+  // 分标签布局（Ashby 的 Overview | Application）：申请表藏在 Application
+  // 标签下，落地页没有表单。像真人一样先把标签点开。
+  function findApplicationTab() {
+    const links = Array.from(document.querySelectorAll('a[href]'));
+    const link = links.find((a) => /\/application\/?($|\?)/.test(a.getAttribute('href') || ''));
+    if (link) return link;
+    if (/ashbyhq\.com/i.test(location.hostname)) {
+      const tab = Array.from(document.querySelectorAll('[role="tab"], a, button'))
+        .find((el) => (el.textContent || '').trim() === 'Application');
+      if (tab) return tab;
+    }
+    return null;
+  }
+
   async function fillApplication(profile, options) {
     options = options || {};
     const M = window.__autofillMatch;
@@ -439,7 +453,15 @@
     if (report.captcha.present) return report;
 
     const filledKeys = new Set();
-    const fields = discoverFields();
+    let fields = discoverFields();
+    if (!fields.length) {
+      const tabEl = findApplicationTab();
+      if (tabEl) {
+        try { tabEl.click(); } catch (e) { /* ignore */ }
+        await new Promise((r) => setTimeout(r, 1600));
+        fields = discoverFields();
+      }
+    }
 
     for (const f of fields) {
       const key = matchKey(f.sig);
@@ -506,6 +528,10 @@
     if (eeoHit) {
       report.needsReview.push({ intent: 'eeo', label: 'EEO/多样性问卷', reason: '默认不自动作答，请人工处理' });
     }
+
+    // 整页没有任何可填字段（多半是没进入申请表）：标记出来，让上层
+    // 给出真实原因，而不是误导性的「缺失字段： 无」。
+    if (!fields.length && !fileInputs.length) report.noForm = true;
 
     // 自动提交（默认关闭；原型阶段仅记录意图，不自动点）
     if (options.autoSubmit && !report.missing.length && !report.needsReview.length) {

@@ -63,8 +63,8 @@
   const filledSomething = (result) => actedOn(result)
     && ((result.filled || []).length > 0 || hasFormFields());
 
-  async function tryRefill(api, profile) {
-    await sleep(1200); // 等 ATS 表单渲染
+  async function tryRefill(api, profile, initialDelay = 1200) {
+    await sleep(initialDelay); // 等 ATS 表单渲染
     let result = null;
     for (let attempt = 0; attempt < 2; attempt++) {
       try { result = await api.fillApplication(profile, { autoSubmit: false }); }
@@ -113,25 +113,29 @@
     }
     if (done) return;
 
-    // SPA 站内跳转（如点 Apply 不刷新整页跳到表单页）：URL 变了再重填一次
+    // 表单可能稍后才出现：Ashby 分标签页要先点 Application 标签
+    // （引擎重填时会自动点；用户手动点也一样）——轮询等表单出现，
+    // 一出现就重填。URL 不一定会变，所以不盯 URL、盯表单本身。
     if (typeof setInterval !== 'function') return;
-    let lastUrl = location.href;
     let ticks = 0;
+    let busy = false;
     const watcher = setInterval(async () => {
       ticks++;
-      if (done || ticks > 30) { clearInterval(watcher); return; }
-      if (location.href === lastUrl) return;
-      lastUrl = location.href;
-      const r2 = await checkManual();
-      if (!r2 || !r2.ok || !r2.manual || !r2.profile) return;
-      const res2 = await tryRefill(api, r2.profile);
-      if (filledSomething(res2)) {
-        done = true;
-        const old = document.getElementById('applai-manual-banner');
-        if (old) old.remove();
-        showResultBanner(res2);
-        clearInterval(watcher);
-      }
+      if (done || ticks > 45) { clearInterval(watcher); return; }
+      if (busy || !hasFormFields()) return;
+      busy = true;
+      try {
+        const r2 = await checkManual();
+        if (!r2 || !r2.ok || !r2.manual || !r2.profile) return;
+        const res2 = await tryRefill(api, r2.profile, 300);
+        if (filledSomething(res2)) {
+          done = true;
+          const old = document.getElementById('applai-manual-banner');
+          if (old) old.remove();
+          showResultBanner(res2);
+          clearInterval(watcher);
+        }
+      } finally { busy = false; }
     }, 2000);
   }
 

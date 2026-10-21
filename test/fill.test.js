@@ -283,6 +283,7 @@ await testResumeAutoAttach();
 await testResumeFallbackNoData();
 await testResumeZhAndMalformed();
 await testManualRefill();
+await testTabbedAshbyLayout();
 
 console.log(`\n结果：${passed} 通过，${failed} 失败`);
 process.exit(failed ? 1 : 0);
@@ -484,6 +485,55 @@ console.log('\n[17] manual.js 待人工自动重填');
   const banner2 = await waitFor(() => w2.document.getElementById('applai-manual-banner'));
   check('无表单页弹指引横幅（不静默）', !!(banner2 && banner2.textContent.includes('待人工职位')),
     banner2 ? banner2.textContent.slice(0, 60) : 'no banner');
+
+  // 模拟用户点开 Application 标签：表单随后出现 → 轮询应触发重填并换横幅
+  const host = w2.document.createElement('div');
+  host.innerHTML = `<form>
+    <label for="mfn">First Name *</label><input id="mfn">
+    <label for="mem">Email *</label><input id="mem" type="email">
+  </form>`;
+  w2.document.body.appendChild(host);
+  const filledName = await waitFor(() => {
+    const el = w2.document.getElementById('mfn');
+    return el && el.value === 'Victoria' ? el : null;
+  }, 15000);
+  check('表单出现后轮询自动重填', !!filledName);
+  const banner3 = w2.document.getElementById('applai-manual-banner');
+  check('重填后横幅换成已填写', !!(banner3 && banner3.textContent.includes('已自动填写')),
+    banner3 ? banner3.textContent.slice(0, 60) : 'no banner');
+}
+}
+
+
+/* ---------- 18. 分标签布局：引擎自动点开 Application 标签；无表单标记 noForm ---------- */
+async function testTabbedAshbyLayout() {
+console.log('\n[18] Ashby 分标签布局（Overview | Application）');
+{
+  const formHtml = `<form>
+    <label for="fn">First Name *</label><input id="fn">
+    <label for="em">Email *</label><input id="em" type="email">
+    <label>Resume</label><input type="file" id="cvf">
+  </form>`;
+  const w = makeDom(`<html><body>
+    <div role="tablist"><a role="tab" id="apptab">Application</a></div>
+    <h1>Job overview text only</h1><div id="formhost"></div>
+  </body></html>`, 'https://jobs.ashbyhq.com/1password/11111111-2222-3333-4444-555555555555');
+  let clicked = false;
+  w.document.getElementById('apptab').addEventListener('click', () => {
+    clicked = true;
+    w.document.getElementById('formhost').innerHTML = formHtml;
+  });
+  const prof = { ...PROFILE, resumeFile: { name: 'Emma_Resume.pdf', size: 10, dataUrl: 'data:application/pdf;base64,JVBERi0=' } };
+  const r = await w.__autoapply.fillApplication(prof, {});
+  check('无字段时自动点开 Application 标签', clicked);
+  check('点开后重扫并填上名', w.document.getElementById('fn').value === 'Victoria',
+    w.document.getElementById('fn') && w.document.getElementById('fn').value);
+  check('有表单时不打 noForm', !r.noForm);
+
+  const w2 = makeDom(`<html><body><h1>Just a description, no form, no tab</h1></body></html>`,
+    'https://jobs.ashbyhq.com/acme/22222222-3333-4444-5555-666666666666');
+  const r2 = await w2.__autoapply.fillApplication(prof, {});
+  check('整页无表单打 noForm 标记', r2.noForm === true, JSON.stringify({ noForm: r2.noForm, filled: r2.filled.length }));
 }
 }
 
