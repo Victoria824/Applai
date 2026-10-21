@@ -1137,6 +1137,12 @@ def save_resume_version(user_id: str, profile_id: int, job_id: int,
         (user_id, profile_id, job_id, kind, json.dumps(content, ensure_ascii=False),
          pdf_hash, time.time()))
     vid = cur.lastrowid
+    if not vid:
+        row = conn.execute(
+            "SELECT id FROM resume_versions WHERE user_id=? AND profile_id=? "
+            "AND job_id=? AND pdf_hash=? ORDER BY id DESC LIMIT 1",
+            (user_id, profile_id, job_id, pdf_hash)).fetchone()
+        vid = row["id"] if row else 0
     conn.commit()
     conn.close()
     return vid

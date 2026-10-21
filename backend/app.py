@@ -975,6 +975,8 @@ def _resume_display_name(uid: str) -> str:
 
     def clean(v):
         v = _re.sub(r"[^\w\s-]", "", str(v or ""), flags=_re.UNICODE).strip()
+        if len(v) > 1 and v.upper() == v and any(c.isalpha() for c in v):
+            v = v.title()  # 全大写的名字（EMMA）转成正常大小写（Emma）
         return _re.sub(r"\s+", "_", v)
     first, last = clean(person.get("firstName")), clean(person.get("lastName"))
     name = "_".join(x for x in (first, last) if x)

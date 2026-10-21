@@ -171,7 +171,11 @@ async function sha256hex(str) {
 
 function displayResumeName(profile, fallback) {
   // 投递时简历必须用专业文件名（招聘方可见）：First_Last_Resume.pdf
-  const clean = (v) => String(v || '').replace(/[^\p{L}\p{N}\s-]/gu, '').trim().replace(/\s+/g, '_');
+  const clean = (v) => {
+    let s = String(v || '').replace(/[^\p{L}\p{N}\s-]/gu, '').trim();
+    if (s.length > 1 && s === s.toUpperCase() && /\p{L}/u.test(s)) s = s.toLowerCase().replace(/(^|\s)(\p{L})/gu, (m, a, b) => a + b.toUpperCase());
+    return s.replace(/\s+/g, '_');
+  };
   const p = profile || {};
   const name = [clean(p.firstName), clean(p.lastName)].filter(Boolean).join('_');
   const ext = ((String(fallback || '').match(/\.[A-Za-z0-9]+$/) || ['.pdf'])[0]).toLowerCase();
