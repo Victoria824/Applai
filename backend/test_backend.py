@@ -637,3 +637,42 @@ def test_resume_display_name():
     me2 = c2.get("/api/v1/auth/me").json()
     uid2 = me2.get("app_user_id") or me2.get("user_id") or me2.get("id")
     assert appmod._resume_display_name(uid2) == "Resume.pdf"
+
+
+def test_resume_pdf_one_page():
+    """定制简历 PDF：内容再多也必须恰好一页（缩放+删减兜底）。"""
+    import io
+    from pypdf import PdfReader
+    import resume_pdf
+    prof = {"firstName": "Emma", "lastName": "Stone", "email": "e@x.com"}
+    exps = [{"company": f"C{i}", "title": "Senior Engineer", "dates": "2018 — 2020",
+             "bullets": ["Delivered a large distributed system with measurable impact on revenue, reliability and team velocity across regions."] * 7}
+            for i in range(5)]
+    content = {"summary": "Engineer. " * 10, "experiences": exps,
+               "skills": [f"S{k}" for k in range(20)], "education": "U of T — BSc"}
+    pdf = resume_pdf.generate_pdf(content, prof)
+    assert pdf[:4] == b"%PDF"
+    assert len(PdfReader(io.BytesIO(pdf)).pages) == 1
+    small = resume_pdf.generate_pdf({"summary": "Hi", "experiences": [], "skills": [], "education": ""}, prof)
+    assert len(PdfReader(io.BytesIO(small)).pages) == 1
+
+
+def test_for_job_prefers_existing_tailored_version():
+    """手动生成过定制版，即使没开自动定制开关，for-job 也要用它。"""
+    import db as dbmod
+    c = _authed_client("forjobuser")
+    me = c.get("/api/v1/auth/me").json()
+    uid = me.get("app_user_id") or me.get("user_id") or me.get("id")
+    c.put("/api/v1/profile", json={"user_id": "ignored", "profile": {
+        "firstName": "Emma", "lastName": "Stone", "email": "e@x.com",
+        "targetTitles": ["AI Engineer"]}})
+    d = c.post("/api/v1/jobs", json={"user_id": "ignored",
+        "url": "https://jobs.ashbyhq.com/acme/12345678-1234-1234-1234-123456789012",
+        "title": "AI Engineer", "company": "Acme", "location": "Toronto, ON"}).json()
+    jid = d["id"]
+    ap = dbmod.get_active_profile(uid)
+    dbmod.save_resume_blob("deadbeef" * 8, "x.pdf", "data:application/pdf;base64,AAAA")
+    dbmod.save_resume_version(uid, ap["id"], jid, "tailored", {"summary": "s"}, "deadbeef" * 8)
+    r = c.get("/api/v1/resume/for-job", params={"job_id": jid}).json()
+    assert r["tailored"] is True and r["pdf_hash"] == "deadbeef" * 8
+    assert r["filename"] == "Emma_Stone_Resume.pdf"

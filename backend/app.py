@@ -1051,9 +1051,9 @@ def resume_for_job(job_id: int, user: dict = Depends(get_current_user)):
     ap = db.get_active_profile(uid)
     pid = ap.get("id", 0)
     profile = ap.get("profile", {})
-    if ap.get("tailor_enabled"):
-        v = db.get_resume_version(uid, pid, job_id)
-        if not v:
+    # 已有定制版（无论自动开关）优先用——用户手动生成过就是明确意图
+    v = db.get_resume_version(uid, pid, job_id)
+    if not v and ap.get("tailor_enabled"):
             # 现场生成（约 20-40 秒）
             try:
                 job = db.get_job(job_id) or {}
@@ -1071,9 +1071,9 @@ def resume_for_job(job_id: int, user: dict = Depends(get_current_user)):
                     v = {"id": vid, "pdf_hash": pdf_hash}
             except Exception:
                 v = None
-        if v:
-            return {"pdf_hash": v["pdf_hash"], "filename": _resume_display_name(uid),
-                    "version_id": v["id"], "tailored": True}
+    if v:
+        return {"pdf_hash": v["pdf_hash"], "filename": _resume_display_name(uid),
+                "version_id": v["id"], "tailored": True}
     # 母版
     rf = profile.get("resumeFile") or {}
     return {"pdf_hash": "", "filename": rf.get("name", ""),

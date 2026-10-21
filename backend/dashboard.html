@@ -300,6 +300,8 @@ button .en{font-size:10px; opacity:.72; margin-top:1px;}
 .jd-ul li{margin:2px 0}
 .snap-guide{background:#eef4ff;border:1px solid #c7dbff;border-radius:10px;padding:10px 12px;margin:0 0 12px;font-size:13px;line-height:1.6}
 .snap-guide .btn-link{display:inline-block;margin-top:6px;background:#111;color:#fff;border-radius:8px;padding:6px 14px;text-decoration:none;font-size:13px}
+.hl-flash{animation:hlflash 1.2s ease 2;border-radius:8px}
+@keyframes hlflash{0%,100%{background:transparent;box-shadow:none}50%{background:#fff0bf;box-shadow:0 0 0 3px #ffe08a}}
 </style>
 </head>
 <body>
@@ -626,10 +628,19 @@ function jobCard(j) {
     </div></div>`;
 }
 
+function manualActionBtns(a) {
+  const pend = parsePending(a.detail || "");
+  const profKeys = pend.filter((i) => PROFILE_INTENTS.has(i)).map((i) => INTENT_FIELD[i] || i);
+  const out = [];
+  if (profKeys.length) out.push(`<button data-fixprofile="${profKeys.join(",")}">✏️ 去完善画像<span class="en">Fix profile</span></button>`);
+  if (pend.includes("resume")) out.push(`<button data-tailor="${a.job_id}">✨ 生成 1 页定制简历<span class="en">Tailored resume</span></button>`);
+  return out.join("");
+}
 function appCard(a, showActions) {
   const btns = showActions ? `<div class="actions">
       ${a.url ? `<a href="${esc(a.url)}" target="_blank" rel="noopener">打开职位页<span class=\"en\">Open job ↗</span></a>` : ""}
       ${a.status === "failed" ? `<button data-act="retry" data-job="${a.job_id}">↩ 重新入队<span class="en">Retry</span></button>` : ""}
+      ${a.status === "needs_manual" ? manualActionBtns(a) : ""}
       <button class="primary" data-act="submitted" data-job="${a.job_id}">已手动投递<span class=\"en\">Done manually</span></button>
       <button data-act="skipped" data-job="${a.job_id}">跳过</button>
     </div>` : "";
@@ -2009,6 +2020,52 @@ function intentLabel(tok) {
   if (m) return t;
   return esc(t);
 }
+const PROFILE_INTENTS = new Set(["sponsorship","workAuth","salary","salaryMin","location","yearsExperience","startDate","education","relocate","travel","citizenship","remote"]);
+const INTENT_FIELD = { sponsorship: "needsSponsorship", workAuth: "workAuth", salary: "salaryMin", salaryMin: "salaryMin", location: "preferredLocations", yearsExperience: "yearsExperience" };
+function parsePending(detail) {
+  const d = String(detail || "");
+  const m = d.match(/缺失字段[:：]\s*([^;；]+)[;；]\s*待确认[:：]\s*(.+)$/);
+  if (!m) return [];
+  const grab = (s) => (s || "").split(/[,，、]/).map((x) => x.trim()).filter((x) => x && x !== "无")
+    .map((x) => { const mm = x.match(/\((\w+)\)$/); return mm ? mm[1] : x; });
+  return [...new Set([...grab(m[1]), ...grab(m[2])])];
+}
+function gotoProfileFor(keys) {
+  const nav = document.querySelector('[data-page="profile"]');
+  if (nav) nav.click();
+  setTimeout(() => {
+    let opened = false;
+    for (const k of keys) if (JOB_PF_FIELDS.some((f) => f.k === k)) { openJobEdit(); opened = true; break; }
+    if (!opened) for (const k of keys) if (PERSON_PF_FIELDS.some((f) => f.k === k)) { openPersonEdit(); break; }
+    setTimeout(() => {
+      for (const k of keys) {
+        const el = $("jp_" + k) || $("pp_" + k);
+        if (el) {
+          const lab = el.closest("label") || el;
+          lab.scrollIntoView({ behavior: "smooth", block: "center" });
+          lab.classList.add("hl-flash");
+          setTimeout(() => lab.classList.remove("hl-flash"), 3000);
+          if (el.focus) el.focus();
+          break;
+        }
+      }
+    }, 300);
+  }, 300);
+}
+async function tailorForJobBtn(jobId, btn) {
+  const oldHtml = btn.innerHTML;
+  btn.disabled = true;
+  btn.textContent = "生成中…（约 20–40 秒）";
+  try {
+    await apiPost("/api/v1/resume/tailor", { job_id: jobId });
+    btn.textContent = "✓ 已生成，重新打开职位页会自动附上";
+    toast("1 页定制简历已生成 ✓");
+  } catch (err) {
+    btn.disabled = false;
+    btn.innerHTML = oldHtml;
+    toast("生成失败：" + err.message);
+  }
+}
 function fmtDetail(detail) {
   const d = String(detail || "");
   const m = d.match(/缺失字段[:：]\s*([^;；]+)[;；]\s*待确认[:：]\s*(.+)$/);
@@ -2050,6 +2107,10 @@ function formatJD(text) {
 
 /* ---------- 投递快照 ---------- */
 document.addEventListener("click", (e) => {
+  const fp = e.target.closest("[data-fixprofile]");
+  if (fp) { gotoProfileFor(fp.dataset.fixprofile.split(",")); return; }
+  const tb = e.target.closest("[data-tailor]");
+  if (tb) { tailorForJobBtn(+tb.dataset.tailor, tb); return; }
   const b = e.target.closest("[data-snap]");
   if (b) openSnapshot(+b.dataset.snap);
 });
@@ -2068,7 +2129,9 @@ async function openSnapshot(jobId) {
     const OC_LABEL = { needs_manual: "⚠️ 待人工原因 / Why manual", submitted: "✅ 投递结果 / Outcome",
       failed: "❌ 失败原因 / Why failed", filled: "📝 填写结果 / Outcome", skipped: "⏭️ 已跳过 / Skipped" };
     const outcome = a.detail ? `<div class="snap-outcome oc-${esc(a.status || "")}"><div class="oc-k">${OC_LABEL[a.status] || "结果 / Outcome"}</div><div>${fmtDetail(a.detail)}</div></div>` : "";
-    const manualGuide = (a.status === "needs_manual" && s.job_url) ? `<div class="snap-guide">👉 怎么处理<span class="en">What to do</span><br>打开职位页后，插件会<b>自动把能填的重新填上</b>（页面右上角会弹出提示，告诉你还剩哪几项），你只需补上上面这几项、检查无误后点提交即可。<span class="en">Open the job page — the extension will re-fill everything it can (a banner in the top-right corner will tell you what's left); just answer the items above and submit.</span><br><a class="btn-link" href="${esc(s.job_url)}" target="_blank" rel="noopener">打开职位页处理 ↗</a></div>` : "";
+    const _pend = parsePending(a.detail || "");
+    const _profKeys = _pend.filter((i) => PROFILE_INTENTS.has(i)).map((i) => INTENT_FIELD[i] || i);
+    const manualGuide = (a.status === "needs_manual" && s.job_url) ? `<div class="snap-guide">👉 怎么处理<span class="en">What to do</span><br>打开职位页后，插件会<b>自动把能填的重新填上</b>（页面右上角会弹出提示，告诉你还剩哪几项），你只需补上上面这几项、检查无误后点提交即可。<span class="en">Open the job page — the extension will re-fill everything it can (a banner in the top-right corner will tell you what's left); just answer the items above and submit.</span><br><a class="btn-link" href="${esc(s.job_url)}" target="_blank" rel="noopener">打开职位页处理 ↗</a>${(_profKeys.length || _pend.includes("resume")) ? `<div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap">${_profKeys.length ? '<button class="ghost-btn" id="snapFixProfileBtn" style="padding:6px 12px;font-size:12px">✏️ 去完善画像<span class="en">Complete profile</span></button>' : ""}${_pend.includes("resume") ? '<button class="ghost-btn" id="snapTailorBtn" style="padding:6px 12px;font-size:12px">✨ 生成 1 页定制简历<span class="en">1-page tailored resume</span></button>' : ""}</div>` : ""}</div>` : "";
     const facts = [];
     facts.push(`<div class="snap-fact"><div class="k">投递网站<span class="en">Site</span></div><div class="v">${esc(s.site || "未知")}${s.job_url ? ` · <a href="${esc(s.job_url)}" target="_blank" rel="noopener">职位页 ↗</a>` : ""}</div></div>`);
     if (s.has_resume) facts.push(`<div class="snap-fact"><div class="k">使用的简历<span class="en">Resume used</span></div><div class="v">${esc(s.resume_name || "resume.pdf")}${s.resume_tailored ? ' <span class="tag-ai">AI 按岗定制</span>' : ""}<br><button class="ghost-btn" id="snapResumeBtn" style="margin-top:6px;padding:5px 12px;font-size:12px">下载简历<span class="en">Download</span></button></div></div>`);
@@ -2089,6 +2152,10 @@ async function openSnapshot(jobId) {
       ${s.jd_text ? `<div class="card-title" style="font-size:14px;margin-top:12px">岗位描述<span class="en">Job description</span></div>
         <details><summary style="cursor:pointer;color:var(--blue);font-size:13px">展开查看（${s.jd_text.length} 字）/ Expand</summary>
         <div class="detail jd-box">${formatJD(s.jd_text.slice(0, 12000))}</div></details>` : ""}`;
+    const _fb = $("snapFixProfileBtn");
+    if (_fb) _fb.onclick = () => { $("snapModal").style.display = "none"; gotoProfileFor(_profKeys); };
+    const _tb = $("snapTailorBtn");
+    if (_tb) _tb.onclick = () => tailorForJobBtn(jobId, _tb);
     const rb = $("snapResumeBtn");
     if (rb) rb.onclick = async () => {
       try {
