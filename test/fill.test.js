@@ -282,6 +282,7 @@ await testNoPhantomSponsorship();
 await testResumeAutoAttach();
 await testResumeFallbackNoData();
 await testResumeZhAndMalformed();
+await testManualRefill();
 
 console.log(`\n结果：${passed} 通过，${failed} 失败`);
 process.exit(failed ? 1 : 0);
@@ -420,6 +421,69 @@ console.log('\n[15] 中文简历框与异常 dataUrl');
     r2.missing.some((m) => m.intent === 'resume') && !r2.filled.some((x) => x.intent === 'resume'),
     JSON.stringify(r2.missing));
   void r;
+}
+}
+
+
+/* ---------- 17. manual.js：待人工页自动重填 + 无表单时指引横幅 ---------- */
+function makeManualDom(html, url, resp) {
+  const dom = new JSDOM(html, { url });
+  const { window } = dom;
+  window.chrome = { runtime: {
+    onMessage: { addListener() {} },
+    lastError: undefined,
+    sendMessage: (msg, cb) => setTimeout(() => cb(resp), 10),
+  } };
+  const DataTransferImpl = window.DataTransfer || function MockDataTransfer() {
+    const items = [];
+    this.items = { add: (f) => { items.push(f); } };
+    Object.defineProperty(this, 'files', { get: () => items });
+  };
+  const sandbox = {
+    window, document: window.document, location: window.location,
+    chrome: window.chrome,
+    Event: window.Event, MouseEvent: window.MouseEvent, KeyboardEvent: window.KeyboardEvent,
+    PointerEvent: window.PointerEvent, Node: window.Node, navigator: window.navigator, CSS: window.CSS,
+    File: window.File, DataTransfer: DataTransferImpl, atob: window.atob.bind(window),
+    setTimeout, clearTimeout, setInterval, clearInterval,
+  };
+  sandbox.globalThis = sandbox;
+  vm.createContext(sandbox);
+  for (const f of ['lib/match.js', 'lib/combobox.js', 'ats.js', 'fill.js', 'captcha.js', 'manual.js']) {
+    vm.runInContext(fs.readFileSync(path.join(EXT, f), 'utf8'), sandbox, { filename: f });
+  }
+  return window;
+}
+async function waitFor(fn, timeout = 12000) {
+  const t0 = Date.now();
+  while (Date.now() - t0 < timeout) {
+    const v = fn();
+    if (v) return v;
+    await new Promise((r) => setTimeout(r, 200));
+  }
+  return null;
+}
+async function testManualRefill() {
+console.log('\n[17] manual.js 待人工自动重填');
+{
+  const url = 'https://jobs.ashbyhq.com/1password/11111111-2222-3333-4444-555555555555';
+  const resp = { ok: true, manual: { jobId: 3705, detail: '' }, profile: PROFILE };
+  const w = makeManualDom(`<html><body><form>
+    <label for="first_name">First Name *</label><input id="first_name">
+    <label for="last_name">Last Name *</label><input id="last_name">
+    <label for="email">Email *</label><input id="email" type="email">
+  </form></body></html>`, url, resp);
+  const banner = await waitFor(() => w.document.getElementById('applai-manual-banner'));
+  check('表单页自动重填名', w.document.getElementById('first_name').value === 'Victoria',
+    w.document.getElementById('first_name').value);
+  check('表单页弹出已填写横幅', !!(banner && banner.textContent.includes('已自动填写')),
+    banner ? banner.textContent.slice(0, 60) : 'no banner');
+
+  const w2 = makeManualDom(`<html><body><h1>Principal Solutions Engineer</h1>
+    <p>Job description only, no form on this page.</p></body></html>`, url, resp);
+  const banner2 = await waitFor(() => w2.document.getElementById('applai-manual-banner'));
+  check('无表单页弹指引横幅（不静默）', !!(banner2 && banner2.textContent.includes('待人工职位')),
+    banner2 ? banner2.textContent.slice(0, 60) : 'no banner');
 }
 }
 
