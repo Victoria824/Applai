@@ -634,7 +634,6 @@ function manualActionBtns(a) {
   const profKeys = pend.filter((i) => PROFILE_INTENTS.has(i)).map((i) => INTENT_FIELD[i] || i);
   const out = [];
   if (profKeys.length) out.push(`<button data-fixprofile="${profKeys.join(",")}">✏️ 去完善画像<span class="en">Fix profile</span></button>`);
-  if (pend.includes("resume")) out.push(`<button data-tailor="${a.job_id}">✨ 生成 1 页定制简历<span class="en">Tailored resume</span></button>`);
   return out.join("");
 }
 function appCard(a, showActions) {
@@ -650,7 +649,7 @@ function appCard(a, showActions) {
   return `<div class="card"><div class="top"><div>
     <h3>${esc(a.title || "(未知职位)")} ${stBadge(a.status)}</h3>
     <div class="meta">${esc(a.company || "")}</div></div></div>
-    ${a.detail ? `<div class="detail">${fmtDetail(a.detail)}</div>` : ""}
+    ${a.detail && fmtDetail(a.detail) ? `<div class="detail">${fmtDetail(a.detail)}</div>` : ""}
     <div class="time">更新于 ${esc(fmtTime(a.updated_at))}</div>
     ${btns}${snapBtn}</div>`;
 }
@@ -937,7 +936,8 @@ const JOB_PF_FIELDS = [
   {k:"salaryPeriod", t:"计薪周期", type:"select",
    options:[["hourly","按小时 / Hourly"],["annual","按年 / Annual"]]},
   {k:"workAuth", t:"工作许可"},
-  {k:"needsSponsorship", t:"需要雇主担保签证", type:"checkbox"},
+  {k:"needsSponsorship", t:"雇主担保签证 Sponsorship", type:"select", boolSelect:1,
+   options:[["","未设置（遇到这类问题转待人工）"],["no","不需要雇主担保"],["yes","需要雇主担保"]]},
 ];
 const TAILOR_HINT = "按岗位自动优化简历（AI 按每份 JD 改写措辞，不编造经历）";
 let personProfiles = [], jobProfiles = [];
@@ -1039,7 +1039,7 @@ function renderJobView() {
     pfSummaryRow("期望地点", p.preferredLocations) +
     pfSummaryRow("远程偏好", {any:"不限", remote:"纯远程", hybrid:"混合", onsite:"坐班"}[p.remotePreference]) +
     pfSummaryRow("工作许可", p.workAuth) +
-    (p.needsSponsorship ? pfSummaryRow("签证担保", "需要雇主担保") : "") +
+    (p.needsSponsorship === true ? pfSummaryRow("签证担保", "需要雇主担保") : p.needsSponsorship === false ? pfSummaryRow("签证担保", "不需要雇主担保") : "") +
     pfSummaryRow("简历改写", curJob.tailor_enabled ? "已开启（按岗位自动优化）" : "未开启");
 }
 
@@ -1054,8 +1054,10 @@ function renderFormFields(f, p, fields) {
   fields.forEach((fd) => {
     const id = f + "_" + fd.k;
     if (fd.type === "select") {
+      const cur = fd.boolSelect ? (p[fd.k] === true ? "yes" : p[fd.k] === false ? "no" : "")
+        : String(p[fd.k] == null ? "" : p[fd.k]);
       const opts = fd.options.map(([v, t]) =>
-        `<option value="${v}"${String(p[fd.k] || "") === v ? " selected" : ""}>${esc(t)}</option>`).join("");
+        `<option value="${v}"${cur === v ? " selected" : ""}>${esc(t)}</option>`).join("");
       h += `<label>${esc(fd.t)}<select id="${id}">${opts}</select></label>`;
     } else if (fd.type === "checkbox") {
       h += `<label class="check"><input type="checkbox" id="${id}"${p[fd.k] ? " checked" : ""}> ${esc(fd.t)}</label>`;
@@ -1172,6 +1174,7 @@ function collectForm(f, fields) {
     const el = $(f + "_" + fd.k);
     if (!el) return;
     if (fd.type === "checkbox") { p[fd.k] = el.checked; return; }
+    if (fd.boolSelect) { p[fd.k] = el.value === "yes" ? true : el.value === "no" ? false : null; return; }
     if (fd.list) { p[fd.k] = splitList(el.value); return; }
     const v = el.value.trim();
     p[fd.k] = (fd.type === "number") ? (v === "" ? null : Number(v)) : v;
@@ -2053,20 +2056,6 @@ function gotoProfileFor(keys) {
     }, 300);
   }, 300);
 }
-async function tailorForJobBtn(jobId, btn) {
-  const oldHtml = btn.innerHTML;
-  btn.disabled = true;
-  btn.textContent = "生成中…（约 20–40 秒）";
-  try {
-    await apiPost("/api/v1/resume/tailor", { job_id: jobId });
-    btn.textContent = "✓ 已生成，重新打开职位页会自动附上";
-    toast("1 页定制简历已生成 ✓");
-  } catch (err) {
-    btn.disabled = false;
-    btn.innerHTML = oldHtml;
-    toast("生成失败：" + err.message);
-  }
-}
 function fmtDetail(detail) {
   const d = String(detail || "");
   const m = d.match(/缺失字段[:：]\s*([^;；]+)[;；]\s*待确认[:：]\s*(.+)$/);
@@ -2074,8 +2063,10 @@ function fmtDetail(detail) {
   const split = (s) => s.split(/[,，、]/).map((x) => x.trim()).filter((x) => x && x !== "无");
   const miss = split(m[1]);
   const conf = split(m[2]);
-  return `缺失字段（画像里没有答案）：${miss.length ? miss.map(intentLabel).join("、") : "无"}<br>`
-    + `待确认（插件拿不准、没敢替你答）：${conf.length ? conf.map(intentLabel).join("、") : "无"}`;
+  const lines = [];
+  if (miss.length) lines.push(`缺失字段（画像里没有答案）：${miss.map(intentLabel).join("、")}`);
+  if (conf.length) lines.push(`待确认（插件拿不准、没敢替你答）：${conf.map(intentLabel).join("、")}`);
+  return lines.join("<br>");
 }
 const JD_HEAD_SET = new Set(["about the role","about the job","about us","about the company","the role","role overview","position summary","job summary","summary","responsibilities","key responsibilities","what you'll do","what you will do","your role","what we're looking for","what we are looking for","requirements","qualifications","required qualifications","preferred qualifications","minimum qualifications","basic qualifications","skills","experience","what you bring","benefits","perks","compensation","salary","how to apply","equal opportunity","why join","who you are","about you","what you'll bring","nice to have","bonus points","our values","the team","about the team"]);
 function formatJD(text) {
@@ -2110,8 +2101,6 @@ function formatJD(text) {
 document.addEventListener("click", (e) => {
   const fp = e.target.closest("[data-fixprofile]");
   if (fp) { gotoProfileFor(fp.dataset.fixprofile.split(",")); return; }
-  const tb = e.target.closest("[data-tailor]");
-  if (tb) { tailorForJobBtn(+tb.dataset.tailor, tb); return; }
   const b = e.target.closest("[data-snap]");
   if (b) openSnapshot(+b.dataset.snap);
 });
@@ -2129,10 +2118,10 @@ async function openSnapshot(jobId) {
       `<tr><td style="color:var(--muted);width:34%">${esc(f.label || f.intent)}</td><td style="word-break:break-word">${esc(f.value || "")}</td></tr>`).join("");
     const OC_LABEL = { needs_manual: "⚠️ 待人工原因 / Why manual", submitted: "✅ 投递结果 / Outcome",
       failed: "❌ 失败原因 / Why failed", filled: "📝 填写结果 / Outcome", skipped: "⏭️ 已跳过 / Skipped" };
-    const outcome = a.detail ? `<div class="snap-outcome oc-${esc(a.status || "")}"><div class="oc-k">${OC_LABEL[a.status] || "结果 / Outcome"}</div><div>${fmtDetail(a.detail)}</div></div>` : "";
+    const outcome = a.detail ? `<div class="snap-outcome oc-${esc(a.status || "")}"><div class="oc-k">${OC_LABEL[a.status] || "结果 / Outcome"}</div><div>${fmtDetail(a.detail) || "无待处理项 / Nothing pending"}</div></div>` : "";
     const _pend = parsePending(a.detail || "");
     const _profKeys = _pend.filter((i) => PROFILE_INTENTS.has(i)).map((i) => INTENT_FIELD[i] || i);
-    const manualGuide = (a.status === "needs_manual" && s.job_url) ? `<div class="snap-guide">👉 怎么处理<span class="en">What to do</span><br>打开职位页后，插件会<b>自动把能填的重新填上</b>（页面右上角会弹出提示，告诉你还剩哪几项），你只需补上上面这几项、检查无误后点提交即可。<span class="en">Open the job page — the extension will re-fill everything it can (a banner in the top-right corner will tell you what's left); just answer the items above and submit.</span><br><a class="btn-link" href="${esc(safeUrl(s.job_url))}" target="_blank" rel="noopener">打开职位页处理 ↗</a>${(_profKeys.length || _pend.includes("resume")) ? `<div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap">${_profKeys.length ? '<button class="ghost-btn" id="snapFixProfileBtn" style="padding:6px 12px;font-size:12px">✏️ 去完善画像<span class="en">Complete profile</span></button>' : ""}${_pend.includes("resume") ? '<button class="ghost-btn" id="snapTailorBtn" style="padding:6px 12px;font-size:12px">✨ 生成 1 页定制简历<span class="en">1-page tailored resume</span></button>' : ""}</div>` : ""}</div>` : "";
+    const manualGuide = (a.status === "needs_manual" && s.job_url) ? `<div class="snap-guide">👉 怎么处理<span class="en">What to do</span><br>打开职位页后，插件会<b>自动把能填的重新填上</b>（页面右上角会弹出提示，告诉你还剩哪几项），你只需补上上面这几项、检查无误后点提交即可。<span class="en">Open the job page — the extension will re-fill everything it can (a banner in the top-right corner will tell you what's left); just answer the items above and submit.</span><br><a class="btn-link" href="${esc(safeUrl(s.job_url))}" target="_blank" rel="noopener">打开职位页处理 ↗</a>${_profKeys.length ? `<div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap"><button class="ghost-btn" id="snapFixProfileBtn" style="padding:6px 12px;font-size:12px">✏️ 去完善画像<span class="en">Complete profile</span></button></div>` : ""}${_pend.includes("resume") ? `<div style="margin-top:8px">📄 简历文件：系统已在后台按此岗位自动生成 1 页定制简历，打开职位页会自动附上，无需单独操作。<span class="en">A tailored 1-page resume is generated automatically in the background and will be attached when you open the job page — no action needed.</span></div>` : ""}</div>` : "";
     const facts = [];
     facts.push(`<div class="snap-fact"><div class="k">投递网站<span class="en">Site</span></div><div class="v">${esc(s.site || "未知")}${safeUrl(s.job_url) ? ` · <a href="${esc(safeUrl(s.job_url))}" target="_blank" rel="noopener">职位页 ↗</a>` : ""}</div></div>`);
     if (s.has_resume) facts.push(`<div class="snap-fact"><div class="k">使用的简历<span class="en">Resume used</span></div><div class="v">${esc(s.resume_name || "resume.pdf")}${s.resume_tailored ? ' <span class="tag-ai">AI 按岗定制</span>' : ""}<br><button class="ghost-btn" id="snapResumeBtn" style="margin-top:6px;padding:5px 12px;font-size:12px">下载简历<span class="en">Download</span></button></div></div>`);
@@ -2155,8 +2144,6 @@ async function openSnapshot(jobId) {
         <div class="detail jd-box">${formatJD(s.jd_text.slice(0, 12000))}</div></details>` : ""}`;
     const _fb = $("snapFixProfileBtn");
     if (_fb) _fb.onclick = () => { $("snapModal").style.display = "none"; gotoProfileFor(_profKeys); };
-    const _tb = $("snapTailorBtn");
-    if (_tb) _tb.onclick = () => tailorForJobBtn(jobId, _tb);
     const rb = $("snapResumeBtn");
     if (rb) rb.onclick = async () => {
       try {

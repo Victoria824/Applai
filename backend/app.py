@@ -637,6 +637,7 @@ def post_application(body: ApplicationIn, user: dict = Depends(get_current_user)
     uid = user["app_user_id"]
     db.record_application(uid, body.job_id, body.status, body.detail)
     if body.status == "needs_manual":
+        _maybe_auto_tailor(uid, body.job_id, body.detail)
         try:
             job = db.get_job(body.job_id) or {}
             send_web_push(uid, "Applai：有职位需要人工处理",
@@ -649,7 +650,11 @@ def post_application(body: ApplicationIn, user: dict = Depends(get_current_user)
 @app.get("/api/v1/applications")
 def get_applications(user: dict = Depends(get_current_user), limit: int = 200):
     uid = user["app_user_id"]
-    return {"user_id": uid, "applications": db.list_applications(uid, limit)}
+    apps = db.list_applications(uid, limit)
+    for a in apps:
+        if a.get("status") == "needs_manual":
+            _maybe_auto_tailor(uid, a.get("job_id"), a.get("detail") or "")
+    return {"user_id": uid, "applications": apps}
 
 
 @app.get("/api/v1/stats")
@@ -1023,6 +1028,11 @@ def tailor_resume(body: dict, user: dict = Depends(get_current_user)):
         ap = db.get_active_profile(uid)
         profile = ap.get("profile", {})
         pid = ap.get("id", 0)
+    return _generate_tailored(uid, job_id, pid, profile)
+
+
+def _generate_tailored(uid, job_id, pid, profile):
+    """生成（或取已有）按岗定制简历版本。手动端点与后台自动生成共用。"""
     # 已有改写版本直接返回（幂等）
     existing = db.get_resume_version(uid, pid, job_id)
     if existing:
@@ -1047,6 +1057,34 @@ def tailor_resume(body: dict, user: dict = Depends(get_current_user)):
     db.save_resume_blob(pdf_hash, _resume_display_name(uid), pdf_b64)
     vid = db.save_resume_version(uid, pid, job_id, "tailored", tailored, pdf_hash)
     return {"version_id": vid, "pdf_hash": pdf_hash, "cached": False}
+
+
+_tailor_inflight = set()
+
+
+def _maybe_auto_tailor(uid, job_id, detail):
+    """待人工且待确认包含简历时，后台自动生成 1 页定制简历（Victoria 要求：
+    投递环节自动完成，用户不需要再单独点生成）。打开职位页自动重填时，
+    for-job 会优先取这份定制版附上。失败静默——重填会退回母版简历。"""
+    if not job_id or "resume" not in (detail or "").lower():
+        return
+    key = (uid, job_id)
+    if key in _tailor_inflight:
+        return
+    _tailor_inflight.add(key)
+
+    def _run():
+        try:
+            ap = db.get_active_profile(uid)
+            pid = ap.get("id", 0)
+            if not db.get_resume_version(uid, pid, job_id):
+                _generate_tailored(uid, job_id, pid, ap.get("profile", {}))
+        except Exception:
+            pass
+        finally:
+            _tailor_inflight.discard(key)
+
+    _threading.Thread(target=_run, daemon=True).start()
 
 
 @app.get("/api/v1/resume/for-job")

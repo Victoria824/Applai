@@ -817,3 +817,59 @@ def test_export_includes_resume_blobs():
     out = c.get("/api/v1/account/export").json()
     blobs = out.get("resume_blobs") or []
     assert any(b["hash"] == h and b["data_url"].endswith("BBBB") for b in blobs)
+
+
+def test_auto_tailor_when_manual_needs_resume():
+    """待人工且待确认包含简历时，后台自动生成定制简历（用户无需单独点）；
+    不含简历的待人工不触发。"""
+    import base64 as _b64
+    import time as _time
+    import db as dbmod
+    import llm as llmmod
+    import resume_pdf
+
+    orig = llmmod.llm_tailor_resume
+    llmmod.llm_tailor_resume = lambda text, jd: {
+        "summary": "Tailored summary for the role.",
+        "experiences": [{"company": "Acme", "title": "AI Engineer",
+                         "dates": "2023 — 2026", "bullets": ["Built LLM systems."]}],
+        "skills": ["Python", "LLM"], "education": "U of T — BSc"}
+    try:
+        c = _authed_client("autotailor")
+        uid = c.get("/api/v1/auth/me").json()["app_user_id"]
+        pdf = resume_pdf.generate_pdf(
+            {"summary": "AI engineer with five years of experience building products.",
+             "experiences": [{"company": "Acme", "title": "AI Engineer",
+                              "dates": "2023 — 2026", "bullets": ["Built LLM systems."]}],
+             "skills": ["Python"], "education": "U of T"},
+            {"firstName": "Auto", "lastName": "Taylor", "email": "at@x.com"})
+        data_url = "data:application/pdf;base64," + _b64.b64encode(pdf).decode()
+        c.put("/api/v1/profile", json={"user_id": "ignored", "profile": {
+            "firstName": "Auto", "lastName": "Taylor", "email": "at@x.com",
+            "targetTitles": ["AI Engineer"],
+            "resumeFile": {"name": "Auto_Taylor_Resume.pdf", "dataUrl": data_url}}})
+        pid = dbmod.get_active_profile(uid)["id"]
+        j1 = dbmod.add_job(uid, "https://jobs.ashbyhq.com/acme/at-1", "AI Engineer",
+                           "Acme", "Toronto, ON",
+                           description="We are hiring an AI engineer to build LLM products.")
+        j2 = dbmod.add_job(uid, "https://jobs.ashbyhq.com/acme/at-2", "AI Engineer",
+                           "Acme", "Toronto, ON",
+                           description="Another AI engineer role with LLM focus.")
+        r = c.post("/api/v1/applications", json={
+            "user_id": "ignored", "job_id": j1["id"], "status": "needs_manual",
+            "detail": "缺失字段: 无; 待确认: 简历文件(resume)"})
+        assert r.status_code == 200
+        ver = None
+        for _ in range(40):
+            ver = dbmod.get_resume_version(uid, pid, j1["id"])
+            if ver:
+                break
+            _time.sleep(0.25)
+        assert ver and ver["pdf_hash"]  # 后台自动生成完成
+        c.post("/api/v1/applications", json={
+            "user_id": "ignored", "job_id": j2["id"], "status": "needs_manual",
+            "detail": "缺失字段: 无; 待确认: 签证担保(sponsorship)"})
+        _time.sleep(1.5)
+        assert dbmod.get_resume_version(uid, pid, j2["id"]) is None  # 无简历项不触发
+    finally:
+        llmmod.llm_tailor_resume = orig
