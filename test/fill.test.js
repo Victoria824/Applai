@@ -434,6 +434,7 @@ function makeManualDom(html, url, resp) {
     onMessage: { addListener() {} },
     lastError: undefined,
     sendMessage: (msg, cb) => setTimeout(() => cb(resp), 10),
+    getManifest: () => ({ version: '9.9.9-test' }),
   } };
   const DataTransferImpl = window.DataTransfer || function MockDataTransfer() {
     const items = [];
@@ -485,17 +486,19 @@ console.log('\n[17] manual.js 待人工自动重填');
   const banner2 = await waitFor(() => w2.document.getElementById('applai-manual-banner'));
   check('无表单页弹指引横幅（不静默）', !!(banner2 && banner2.textContent.includes('待人工职位')),
     banner2 ? banner2.textContent.slice(0, 60) : 'no banner');
+  check('横幅带版本号（截图可自证版本）', !!(banner2 && banner2.textContent.includes('9.9.9-test')),
+    banner2 ? banner2.textContent.slice(-40) : 'no banner');
 
   // 模拟用户点开 Application 标签：表单随后出现 → 轮询应触发重填并换横幅
   const host = w2.document.createElement('div');
-  host.innerHTML = `<form>
-    <label for="mfn">First Name *</label><input id="mfn">
-    <label for="mem">Email *</label><input id="mem" type="email">
-  </form>`;
+  host.setAttribute('role', 'tabpanel');
+  host.innerHTML = `
+    <div><label for="mfn">Full Name *</label><input id="mfn"></div>
+    <div><label for="mem">Email *</label><input id="mem" type="email"></div>`;
   w2.document.body.appendChild(host);
   const filledName = await waitFor(() => {
     const el = w2.document.getElementById('mfn');
-    return el && el.value === 'Victoria' ? el : null;
+    return el && el.value === 'Victoria Liu' ? el : null;
   }, 15000);
   check('表单出现后轮询自动重填', !!filledName);
   const banner3 = w2.document.getElementById('applai-manual-banner');

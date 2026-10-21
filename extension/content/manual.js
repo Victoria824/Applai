@@ -55,11 +55,11 @@
 
   // 页面上到底有没有申请表：没表单时引擎会把未填项一股脑报成待确认，
   // 不能据此弹「已填写」横幅——那是职位展示页，要给指引而不是假结果。
+  // 注意：新版 Ashby 根本不用 <form> 元素，输入框直接躺在 tabpanel 里，
+  // 也没有 data-testid——只能数真实的输入控件（2026-10-21 实测教训）。
   const hasFormFields = () => !!document.querySelector(
-    'form input, form select, form textarea, '
-    + '[data-testid="ashby-application-form"] input, '
-    + '[data-testid="ashby-application-form"] select, '
-    + '[data-testid="ashby-application-form"] textarea');
+    'input:not([type="hidden"]), textarea, select, [role="combobox"]');
+  const onApplicationPath = () => /\/application\/?$/.test(location.pathname);
   const filledSomething = (result) => actedOn(result)
     && ((result.filled || []).length > 0 || hasFormFields());
 
@@ -75,6 +75,13 @@
     return result;
   }
 
+  const versionTag = () => {
+    try {
+      const v = chrome.runtime.getManifest().version;
+      return `<div style="margin-top:6px;color:#999;font-size:11px">Applai 插件 v${v}</div>`;
+    } catch (e) { return ''; }
+  };
+
   function showResultBanner(result) {
     const filledCount = (result.filled || []).length;
     const todo = [...(result.missing || []), ...(result.needsReview || [])]
@@ -84,13 +91,15 @@
     if (todo.length) html += `<br>还需要你处理：<b>${todo.join('、')}</b>`;
     else html += '<br>没有遗留项，检查一遍即可提交';
     html += '<br><span style="color:#666">检查无误后，请手动点击页面的提交按钮。</span>';
+    html += versionTag();
     showBanner(html);
   }
 
   function showGuideBanner() {
     showBanner('<b>📌 Applai：这是你的待人工职位</b>'
       + '<br>这一页还没找到申请表——进入申请表页面后会自动重填；'
-      + '如果已经在申请表页，刷新一次页面再试。');
+      + '如果已经在申请表页，刷新一次页面再试。'
+      + versionTag());
   }
 
   async function boot() {
@@ -122,7 +131,7 @@
     const watcher = setInterval(async () => {
       ticks++;
       if (done || ticks > 45) { clearInterval(watcher); return; }
-      if (busy || !hasFormFields()) return;
+      if (busy || !(hasFormFields() || onApplicationPath())) return;
       busy = true;
       try {
         const r2 = await checkManual();
