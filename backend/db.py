@@ -287,6 +287,12 @@ CREATE TABLE IF NOT EXISTS resume_versions (
   created_at REAL NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_resume_ver ON resume_versions(user_id, profile_id, job_id);
+CREATE TABLE IF NOT EXISTS invite_uses (
+  code TEXT NOT NULL,
+  user_id TEXT NOT NULL,
+  used_at REAL NOT NULL,
+  PRIMARY KEY (code, user_id)
+);
 CREATE TABLE IF NOT EXISTS run_progress (
   user_id TEXT PRIMARY KEY,
   state TEXT DEFAULT 'running',
@@ -693,6 +699,23 @@ def get_resume_blob(file_hash: str):
     return dict(r) if r else None
 
 
+def user_owns_resume_hash(uid: str, h: str) -> bool:
+    """该用户是否引用过这份简历（快照或定制版本）——防凭 hash 下载他人简历。"""
+    conn = get_db()
+    try:
+        r = conn.execute(
+            "SELECT 1 FROM application_snapshots WHERE user_id=? AND resume_hash=? LIMIT 1",
+            (uid, h)).fetchone()
+        if r:
+            return True
+        r = conn.execute(
+            "SELECT 1 FROM resume_versions WHERE user_id=? AND pdf_hash=? LIMIT 1",
+            (uid, h)).fetchone()
+        return bool(r)
+    finally:
+        conn.close()
+
+
 def get_resume_blob_data(file_hash: str):
     conn = get_db()
     r = conn.execute("SELECT data_url, filename FROM resume_blobs WHERE hash=?", (file_hash,)).fetchone()
@@ -746,7 +769,7 @@ def snapshot_job_ids(uid: str) -> set:
 
 
 def create_invite(created_by: str, note: str = "") -> dict:
-    code = secrets.token_hex(4).upper()  # 8 位可读码
+    code = secrets.token_hex(6).upper()  # 12 位可读码（老 8 位码继续有效）
     conn = get_db()
     conn.execute("INSERT INTO invites(code, created_by, note, created_at) VALUES(?,?,?,?)",
                  (code, created_by, note or "", time.time()))
@@ -760,10 +783,27 @@ def list_invites(created_by: str) -> list:
     rows = conn.execute(
         "SELECT code, note, created_at, used_by, used_at FROM invites WHERE created_by=? ORDER BY created_at DESC",
         (created_by,)).fetchall()
+    def _friend_progress(conn, fuid):
+        prof = get_profile(fuid) or {}
+        has_resume = bool((prof.get("resumeFile") or {}).get("name"))
+        toks = conn.execute(
+            "SELECT 1 FROM api_tokens t JOIN auth_users u ON u.id=t.user_id WHERE u.app_user_id=? LIMIT 1",
+            (fuid,)).fetchone()
+        un = conn.execute("SELECT username FROM auth_users WHERE app_user_id=?",
+                          (fuid,)).fetchone()
+        return {"friend": (un["username"] if un else "?"),
+                "has_profile": bool(prof.get("targetTitles")),
+                "has_resume": has_resume, "has_token": bool(toks)}
+
     out = []
     for r in rows:
         d = dict(r)
-        # 好友进度：画像 / 简历 / 插件 Token
+        use_rows = conn.execute(
+            "SELECT user_id, used_at FROM invite_uses WHERE code=? ORDER BY used_at",
+            (d["code"],)).fetchall()
+        d["uses"] = [{"user_id": u["user_id"], "used_at": u["used_at"],
+                      **_friend_progress(conn, u["user_id"])} for u in use_rows]
+        # 好友进度：画像 / 简历 / 插件 Token（used_by = 第一位使用者，兼容旧前端）
         if d["used_by"]:
             prof = get_profile(d["used_by"]) or {}
             has_resume = bool((prof.get("resumeFile") or {}).get("name"))
@@ -783,14 +823,22 @@ def list_invites(created_by: str) -> list:
 
 
 def redeem_invite(code: str, used_by: str) -> bool:
-    """使用邀请码。返回是否成功（码存在且未被用过）。"""
+    """使用邀请码。一个码可供多人注册（Victoria 的分发方式），每次使用都记入
+    invite_uses 供邀请人追踪每位朋友的进度；invites.used_by 只记第一位（兼容）。"""
+    code = (code or "").upper()
     conn = get_db()
-    r = conn.execute("SELECT used_by FROM invites WHERE code=?", (code.upper(),)).fetchone()
-    if not r or r["used_by"]:
+    r = conn.execute("SELECT used_by FROM invites WHERE code=?", (code,)).fetchone()
+    if not r:
         conn.close()
         return False
-    conn.execute("UPDATE invites SET used_by=?, used_at=? WHERE code=?",
-                 (used_by, time.time(), code.upper()))
+    seen = conn.execute("SELECT 1 FROM invite_uses WHERE code=? AND user_id=?",
+                        (code, used_by)).fetchone()
+    if not seen:
+        conn.execute("INSERT INTO invite_uses (code, user_id, used_at) VALUES (?,?,?)",
+                     (code, used_by, time.time()))
+    if not r["used_by"]:
+        conn.execute("UPDATE invites SET used_by=?, used_at=? WHERE code=?",
+                     (used_by, time.time(), code))
     conn.commit()
     conn.close()
     return True
@@ -811,7 +859,7 @@ def export_user_data(uid: str) -> dict:
                     "SELECT m.role, m.content, m.created_at FROM chat_messages m JOIN chat_conversations c ON c.id=m.conv_id WHERE c.user_id=? ORDER BY m.id", (uid,)).fetchall()
             elif tbl == "application_snapshots":
                 rows = conn.execute(
-                    "SELECT job_id, job_url, site, filled_fields, salary_info, cover_letter, resume_name, created_at FROM application_snapshots WHERE user_id=?", (uid,)).fetchall()
+                    "SELECT job_id, job_url, site, filled_fields, salary_info, cover_letter, resume_name, resume_hash, created_at FROM application_snapshots WHERE user_id=?", (uid,)).fetchall()
             elif tbl == "invites":
                 rows = conn.execute("SELECT code, note, created_at, used_by, used_at FROM invites WHERE created_by=?", (uid,)).fetchall()
             else:
@@ -819,11 +867,20 @@ def export_user_data(uid: str) -> dict:
             data[tbl] = [dict(r) for r in rows]
         except Exception:
             data[tbl] = []
-    # 简历 blob（只导自己快照引用到的）
+    # 简历 blob（自己快照 + 定制版本引用到的，含内容供完整备份）
     hashes = {s.get("resume_hash") for s in data.get("application_snapshots", []) if s.get("resume_hash")}
-    prof = data.get("profile") or {}
-    rf = prof.get("resumeFile") or {}
-    data["resume_blobs"] = []
+    try:
+        for r in conn.execute("SELECT pdf_hash FROM resume_versions WHERE user_id=?", (uid,)).fetchall():
+            if r["pdf_hash"]:
+                hashes.add(r["pdf_hash"])
+    except Exception:
+        pass
+    blobs = []
+    for h in hashes:
+        b = get_resume_blob_data(h)
+        if b:
+            blobs.append({"hash": h, "filename": b.get("filename", ""), "data_url": b.get("data_url", "")})
+    data["resume_blobs"] = blobs
     conn.close()
     return data
 
@@ -848,7 +905,10 @@ def delete_user_data(uid: str):
         conn.execute("DELETE FROM invites WHERE created_by=?", (uid,))
     except Exception:
         pass
-    for tbl in ("users", "user_settings", "profiles", "resume_versions"):
+    for tbl in ("users", "user_settings", "profiles", "resume_versions",
+                "gmail_tokens", "gmail_oauth_states", "email_events",
+                "push_subscriptions", "job_sources", "discover_tasks",
+                "run_progress"):
         try:
             cur = conn.execute(f"DELETE FROM {tbl} WHERE user_id=?", (uid,))
             stats[tbl] = cur.rowcount
@@ -866,6 +926,10 @@ def delete_user_data(uid: str):
             stats["auth_users"] = cur.rowcount
         except Exception:
             pass
+    try:
+        conn.execute("DELETE FROM invite_uses WHERE user_id=?", (uid,))
+    except Exception:
+        pass
     conn.commit()
     conn.close()
     return stats
@@ -1288,6 +1352,16 @@ def get_run_progress(user_id: str):
         conn.close()
 
 
+def queued_job_ids(user_id: str) -> list:
+    """chatbot 手动加入队列（status='queued'）的职位，按记录时间倒序。"""
+    conn = get_db()
+    rows = conn.execute(
+        "SELECT job_id FROM applications WHERE user_id=? AND status='queued' "
+        "ORDER BY updated_at DESC", (user_id,)).fetchall()
+    conn.close()
+    return [r["job_id"] for r in rows]
+
+
 def applied_job_ids(user_id: str) -> set:
     conn = get_db()
     rows = conn.execute(
@@ -1436,12 +1510,16 @@ def verify_login(username: str, password: str) -> dict | None:
 
 SESSION_DAYS = 30
 
+def _sess_hash(token: str) -> str:
+    return hashlib.sha256((token or "").encode()).hexdigest()
+
+
 def create_session(auth_id: int) -> str:
     token = secrets.token_hex(32)
     now = int(time.time())
     conn = get_db()
     conn.execute("INSERT INTO auth_sessions (token, user_id, created_at, expires_at) VALUES (?,?,?,?)",
-                 (token, auth_id, now, now + SESSION_DAYS * 86400))
+                 (_sess_hash(token), auth_id, now, now + SESSION_DAYS * 86400))
     # 顺手清理过期会话
     conn.execute("DELETE FROM auth_sessions WHERE expires_at < ?", (now,))
     conn.commit()
@@ -1455,13 +1533,13 @@ def get_session_user(token: str) -> dict | None:
     r = conn.execute(
         "SELECT u.id, u.app_user_id, u.username FROM auth_sessions s "
         "JOIN auth_users u ON u.id = s.user_id "
-        "WHERE s.token=? AND s.expires_at > ?", (token, int(time.time()))).fetchone()
+        "WHERE s.token=? AND s.expires_at > ?", (_sess_hash(token), int(time.time()))).fetchone()
     conn.close()
     return dict(r) if r else None
 
 def delete_session(token: str):
     conn = get_db()
-    conn.execute("DELETE FROM auth_sessions WHERE token=?", (token,))
+    conn.execute("DELETE FROM auth_sessions WHERE token=?", (_sess_hash(token),))
     conn.commit()
     conn.close()
 
@@ -1516,6 +1594,11 @@ def claim_old_data(new_app_user_id: str, old_app_user_id: str) -> dict:
         has_p = conn.execute("SELECT 1 FROM profiles WHERE user_id=?", (old_app_user_id,)).fetchone()
         if not has and not has_p:
             raise ValueError("找不到该旧用户 ID 的数据")
+        # 安全：旧 ID 若属于某个注册账号，绝不允许迁移（防账号数据窃取）
+        is_acct = conn.execute("SELECT 1 FROM auth_users WHERE app_user_id=?",
+                               (old_app_user_id,)).fetchone()
+        if is_acct:
+            raise ValueError("该 ID 属于注册账号，不能迁移")
         # 职位 URL 冲突时保留新账号的（新账号刚注册通常为空）
         conn.execute("DELETE FROM jobs WHERE user_id=? AND url IN "
                      "(SELECT url FROM jobs WHERE user_id=?)",

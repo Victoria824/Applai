@@ -556,6 +556,7 @@ const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s == null ? "" : s)
   .replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;")
   .replace(/"/g,"&quot;").replace(/'/g,"&#39;");
+const safeUrl = (u) => { const s = String(u || ""); return /^https?:\/\//i.test(s) ? s : ""; };
 const STATUS_LABEL = {
   interviewing: ["面试中", "#7c3aed"], rejected: ["已拒", "#dc2626"],
   queued:"待投递<span class=\"en\">Pending</span>", filled:"已填写<span class=\"en\">Filled</span>", submitted:"已投递<span class=\"en\">Submitted</span>",
@@ -623,7 +624,7 @@ function jobCard(j) {
     </div></div>
     ${reasons ? `<ul class="reasons">${reasons}</ul>` : ""}
     <div class="actions">
-      ${j.url ? `<a href="${esc(j.url)}" target="_blank" rel="noopener">去投递<span class=\"en\">Apply ↗</span></a>` : ""}
+      ${safeUrl(j.url) ? `<a href="${esc(safeUrl(j.url))}" target="_blank" rel="noopener">去投递<span class=\"en\">Apply ↗</span></a>` : ""}
       <button data-act="skipped" data-job="${j.id}">跳过<span class=\"en\">Skip</span></button>
     </div></div>`;
 }
@@ -638,7 +639,7 @@ function manualActionBtns(a) {
 }
 function appCard(a, showActions) {
   const btns = showActions ? `<div class="actions">
-      ${a.url ? `<a href="${esc(a.url)}" target="_blank" rel="noopener">打开职位页<span class=\"en\">Open job ↗</span></a>` : ""}
+      ${safeUrl(a.url) ? `<a href="${esc(safeUrl(a.url))}" target="_blank" rel="noopener">打开职位页<span class=\"en\">Open job ↗</span></a>` : ""}
       ${a.status === "failed" ? `<button data-act="retry" data-job="${a.job_id}">↩ 重新入队<span class="en">Retry</span></button>` : ""}
       ${a.status === "needs_manual" ? manualActionBtns(a) : ""}
       <button class="primary" data-act="submitted" data-job="${a.job_id}">已手动投递<span class=\"en\">Done manually</span></button>
@@ -2131,9 +2132,9 @@ async function openSnapshot(jobId) {
     const outcome = a.detail ? `<div class="snap-outcome oc-${esc(a.status || "")}"><div class="oc-k">${OC_LABEL[a.status] || "结果 / Outcome"}</div><div>${fmtDetail(a.detail)}</div></div>` : "";
     const _pend = parsePending(a.detail || "");
     const _profKeys = _pend.filter((i) => PROFILE_INTENTS.has(i)).map((i) => INTENT_FIELD[i] || i);
-    const manualGuide = (a.status === "needs_manual" && s.job_url) ? `<div class="snap-guide">👉 怎么处理<span class="en">What to do</span><br>打开职位页后，插件会<b>自动把能填的重新填上</b>（页面右上角会弹出提示，告诉你还剩哪几项），你只需补上上面这几项、检查无误后点提交即可。<span class="en">Open the job page — the extension will re-fill everything it can (a banner in the top-right corner will tell you what's left); just answer the items above and submit.</span><br><a class="btn-link" href="${esc(s.job_url)}" target="_blank" rel="noopener">打开职位页处理 ↗</a>${(_profKeys.length || _pend.includes("resume")) ? `<div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap">${_profKeys.length ? '<button class="ghost-btn" id="snapFixProfileBtn" style="padding:6px 12px;font-size:12px">✏️ 去完善画像<span class="en">Complete profile</span></button>' : ""}${_pend.includes("resume") ? '<button class="ghost-btn" id="snapTailorBtn" style="padding:6px 12px;font-size:12px">✨ 生成 1 页定制简历<span class="en">1-page tailored resume</span></button>' : ""}</div>` : ""}</div>` : "";
+    const manualGuide = (a.status === "needs_manual" && s.job_url) ? `<div class="snap-guide">👉 怎么处理<span class="en">What to do</span><br>打开职位页后，插件会<b>自动把能填的重新填上</b>（页面右上角会弹出提示，告诉你还剩哪几项），你只需补上上面这几项、检查无误后点提交即可。<span class="en">Open the job page — the extension will re-fill everything it can (a banner in the top-right corner will tell you what's left); just answer the items above and submit.</span><br><a class="btn-link" href="${esc(safeUrl(s.job_url))}" target="_blank" rel="noopener">打开职位页处理 ↗</a>${(_profKeys.length || _pend.includes("resume")) ? `<div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap">${_profKeys.length ? '<button class="ghost-btn" id="snapFixProfileBtn" style="padding:6px 12px;font-size:12px">✏️ 去完善画像<span class="en">Complete profile</span></button>' : ""}${_pend.includes("resume") ? '<button class="ghost-btn" id="snapTailorBtn" style="padding:6px 12px;font-size:12px">✨ 生成 1 页定制简历<span class="en">1-page tailored resume</span></button>' : ""}</div>` : ""}</div>` : "";
     const facts = [];
-    facts.push(`<div class="snap-fact"><div class="k">投递网站<span class="en">Site</span></div><div class="v">${esc(s.site || "未知")}${s.job_url ? ` · <a href="${esc(s.job_url)}" target="_blank" rel="noopener">职位页 ↗</a>` : ""}</div></div>`);
+    facts.push(`<div class="snap-fact"><div class="k">投递网站<span class="en">Site</span></div><div class="v">${esc(s.site || "未知")}${safeUrl(s.job_url) ? ` · <a href="${esc(safeUrl(s.job_url))}" target="_blank" rel="noopener">职位页 ↗</a>` : ""}</div></div>`);
     if (s.has_resume) facts.push(`<div class="snap-fact"><div class="k">使用的简历<span class="en">Resume used</span></div><div class="v">${esc(s.resume_name || "resume.pdf")}${s.resume_tailored ? ' <span class="tag-ai">AI 按岗定制</span>' : ""}<br><button class="ghost-btn" id="snapResumeBtn" style="margin-top:6px;padding:5px 12px;font-size:12px">下载简历<span class="en">Download</span></button></div></div>`);
     if (s.salary_info) facts.push(`<div class="snap-fact"><div class="k">填写的薪资<span class="en">Salary filled</span></div><div class="v">${esc(s.salary_info)}</div></div>`);
     facts.push(`<div class="snap-fact"><div class="k">快照时间<span class="en">Snapshot at</span></div><div class="v">${esc(fmtTime(s.created_at))}</div></div>`);
@@ -2179,17 +2180,21 @@ async function loadInvites() {
     const list = d.invites || [];
     box.innerHTML = list.length ? list.map((v) => {
       const link = `https://applai-backend.fly.dev/?invite=${v.code}`;
+      const friends = (v.uses && v.uses.length) ? v.uses
+        : (v.used_by ? [{ friend: v.friend, has_profile: v.has_profile, has_resume: v.has_resume, has_token: v.has_token }] : []);
       let prog;
-      if (!v.used_by) prog = '<span class="hint">等待注册 / Waiting</span>';
+      if (!friends.length) prog = '<span class="hint">等待注册 / Waiting</span>';
       else {
-        const steps = [
-          ["已注册 / Joined", true],
-          ["画像 / Profile", v.has_profile],
-          ["简历 / Resume", v.has_resume],
-          ["插件 / Extension", v.has_token],
-        ];
-        prog = `<b>${esc(v.friend || "?")}</b> ` + steps.map(([t, ok]) =>
-          `<span style="color:${ok ? "#059669" : "#ccc"}">${ok ? "●" : "○"} ${t}</span>`).join(" ");
+        prog = friends.map((f) => {
+          const steps = [
+            ["已注册 / Joined", true],
+            ["画像 / Profile", f.has_profile],
+            ["简历 / Resume", f.has_resume],
+            ["插件 / Extension", f.has_token],
+          ];
+          return `<div><b>${esc(f.friend || "?")}</b> ` + steps.map(([t, ok]) =>
+            `<span style="color:${ok ? "#059669" : "#ccc"}">${ok ? "●" : "○"} ${t}</span>`).join(" ") + "</div>";
+        }).join("");
       }
       return `<div class="card" style="margin:8px 0;padding:12px 14px">
         <div style="font-size:13px;margin-bottom:4px"><code>${v.code}</code>

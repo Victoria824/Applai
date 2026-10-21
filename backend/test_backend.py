@@ -492,7 +492,7 @@ def test_invites():
     c = _authed_client("invqa")
     # 创建邀请
     d = c.post("/api/v1/invites", json={"note": "朋友A"}).json()
-    assert len(d["code"]) == 8 and d["link"].endswith(d["code"])
+    assert len(d["code"]) == 12 and d["link"].endswith(d["code"])
     # 朋友用邀请码注册
     f = TestClient(app.app)
     r = f.post("/api/v1/auth/register", json={
@@ -676,3 +676,144 @@ def test_for_job_prefers_existing_tailored_version():
     r = c.get("/api/v1/resume/for-job", params={"job_id": jid}).json()
     assert r["tailored"] is True and r["pdf_hash"] == "deadbeef" * 8
     assert r["filename"] == "Emma_Stone_Resume.pdf"
+
+
+def test_claim_cannot_steal_registered_account():
+    """审计修复：claim 迁移绝不能把注册账号的数据迁走。"""
+    a = _authed_client("claimvictim")
+    b = _authed_client("claimattacker")
+    a_uid = a.get("/api/v1/auth/me").json()["app_user_id"]
+    r = b.post("/api/v1/auth/claim", json={"old_user_id": a_uid})
+    assert r.status_code == 400
+    # 受害者数据完好
+    assert a.get("/api/v1/auth/me").status_code == 200
+
+
+def test_delete_account_wipes_gmail_push_progress():
+    """审计修复：删号必须清 Gmail token、Push 订阅、投递进度等全部表。"""
+    import db as dbmod
+    c = _authed_client("delwipe")
+    uid = c.get("/api/v1/auth/me").json()["app_user_id"]
+    dbmod.save_gmail_token(uid, "delwipe@gmail.com", "fake-refresh-token")
+    dbmod.add_push_subscription(uid, "https://fcm.googleapis.com/fcm/send/x", "k", "a")
+    dbmod.upsert_run_progress(uid, {"state": "running", "total": 3, "processed": 1})
+    assert c.delete("/api/v1/account").json()["ok"]
+    assert dbmod.get_gmail_token(uid) is None
+    assert dbmod.get_run_progress(uid) is None
+    conn = dbmod.get_db()
+    n = conn.execute("SELECT COUNT(*) c FROM push_subscriptions WHERE user_id=?",
+                     (uid,)).fetchone()["c"]
+    conn.close()
+    assert n == 0
+
+
+def test_manual_queued_job_enters_queue():
+    """审计修复：chatbot 的 add_to_queue（status='queued'）必须真的进队列，
+    哪怕分数不够 40；被投递后又自动离开队列。"""
+    c = _authed_client("manualqueue")
+    c.put("/api/v1/profile", json={"user_id": "ignored", "profile": {
+        "firstName": "MQ", "email": "mq@x.com", "targetTitles": ["AI Engineer"]}})
+    d = c.post("/api/v1/jobs", json={"user_id": "ignored",
+        "url": "https://jobs.lever.co/acme/barista-1", "title": "Barista",
+        "company": "Acme", "location": "Vancouver, BC"}).json()
+    jid = d["id"]
+    q0 = c.get("/api/v1/queue").json()["jobs"]
+    assert all(j["id"] != jid for j in q0)  # 低分默认不在队列
+    r = c.post("/api/v1/applications", json={"user_id": "ignored", "job_id": jid,
+                                             "status": "queued", "detail": "chatbot 手动加入"})
+    assert r.status_code == 200, r.text
+    q1 = c.get("/api/v1/queue").json()["jobs"]
+    assert any(j["id"] == jid for j in q1)  # 手动加入后进队列
+    c.post("/api/v1/applications", json={"user_id": "ignored", "job_id": jid,
+                                         "status": "submitted", "detail": "done"})
+    q2 = c.get("/api/v1/queue").json()["jobs"]
+    assert all(j["id"] != jid for j in q2)  # 投递后离开队列
+
+
+def test_invite_code_multi_use_tracking():
+    """审计修复：一个邀请码可供多人注册，且每位朋友的进度都可追踪。"""
+    a = _authed_client("invhost2")
+    code = a.post("/api/v1/invites", json={"note": "组局"}).json()["code"]
+    assert len(code) == 12  # 新码 12 位
+    from fastapi.testclient import TestClient
+    import app as appmod
+    for name in ("invpal1", "invpal2"):
+        tc = TestClient(appmod.app)
+        r = tc.post("/api/v1/auth/register", json={
+            "username": name, "password": "password123", "invite_code": code})
+        assert r.status_code == 200, r.text
+    invs = a.get("/api/v1/invites").json()["invites"]
+    mine = [i for i in invs if i["code"] == code][0]
+    friends = {u["friend"] for u in mine.get("uses", [])}
+    assert friends == {"invpal1", "invpal2"}
+
+
+def test_resume_blob_requires_ownership():
+    """审计修复：简历 blob 只能被引用过它的用户下载（凭 hash 猜/拿不能下）。"""
+    import db as dbmod
+    a = _authed_client("blobowner")
+    b = _authed_client("blobstranger")
+    a_uid = a.get("/api/v1/auth/me").json()["app_user_id"]
+    h = "cafe" * 16
+    dbmod.save_resume_blob(h, "A_Resume.pdf", "data:application/pdf;base64,AAAA")
+    ap = dbmod.get_active_profile(a_uid)
+    dbmod.save_resume_version(a_uid, ap["id"], 999001, "tailored",
+                              {"summary": "s"}, h)
+    assert b.get(f"/api/v1/resume-blob/{h}").status_code == 404
+    r = a.get(f"/api/v1/resume-blob/{h}")
+    assert r.status_code == 200 and r.json()["filename"] == "A_Resume.pdf"
+
+
+def test_session_token_stored_hashed():
+    """审计修复：auth_sessions 里存的是 session token 的 SHA-256，不是明文。"""
+    import db as dbmod
+    c = _authed_client("sesshash")
+    raw = c.cookies.get("aap_session")
+    assert raw
+    conn = dbmod.get_db()
+    rows = conn.execute("SELECT token FROM auth_sessions").fetchall()
+    conn.close()
+    stored = {r["token"] for r in rows}
+    assert raw not in stored
+    import hashlib as _hl
+    assert _hl.sha256(raw.encode()).hexdigest() in stored
+
+
+def test_push_subscribe_endpoint_allowlist():
+    """审计修复：Push 订阅 endpoint 必须是已知推送服务域名，防 SSRF。"""
+    c = _authed_client("pushguard")
+    bad = c.post("/api/v1/push/subscribe", json={
+        "endpoint": "https://evil.example.com/hook", "p256dh": "k", "auth": "a"})
+    assert bad.status_code == 400
+    good = c.post("/api/v1/push/subscribe", json={
+        "endpoint": "https://fcm.googleapis.com/fcm/send/abc123",
+        "p256dh": "k", "auth": "a"})
+    assert good.status_code == 200
+
+
+def test_discover_status_ownership():
+    """审计修复：抓取任务状态只能由任务主人查看。"""
+    import db as dbmod
+    a = _authed_client("taskowner")
+    b = _authed_client("taskstranger")
+    a_uid = a.get("/api/v1/auth/me").json()["app_user_id"]
+    dbmod.create_discover_task("task-audit-1", a_uid)
+    assert b.get("/api/v1/jobs/discover/status/task-audit-1").status_code == 404
+    assert a.get("/api/v1/jobs/discover/status/task-audit-1").status_code == 200
+
+
+def test_export_includes_resume_blobs():
+    """审计修复：数据导出要真正带上简历 blob（旧实现恒为空）。"""
+    import db as dbmod
+    c = _authed_client("exporter1")
+    uid = c.get("/api/v1/auth/me").json()["app_user_id"]
+    d = c.post("/api/v1/jobs", json={"user_id": "ignored",
+        "url": "https://jobs.ashbyhq.com/acme/exp-1", "title": "AI Engineer",
+        "company": "Acme", "location": "Toronto, ON"}).json()
+    h = "beef" * 16
+    dbmod.save_resume_blob(h, "Exp_Resume.pdf", "data:application/pdf;base64,BBBB")
+    dbmod.save_snapshot(uid, d["id"], {"job_url": "https://x", "site": "ashby",
+                                       "resume_hash": h, "resume_name": "Exp_Resume.pdf"})
+    out = c.get("/api/v1/account/export").json()
+    blobs = out.get("resume_blobs") or []
+    assert any(b["hash"] == h and b["data_url"].endswith("BBBB") for b in blobs)

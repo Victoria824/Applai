@@ -100,7 +100,7 @@ def _startup_migrate():
     _threading.Thread(target=_background_scorer, daemon=True).start()
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"], allow_methods=["*"], allow_headers=["*"],
+    allow_origins=["https://applai-backend.fly.dev"], allow_methods=["*"], allow_headers=["*"],
 )
 
 
@@ -396,7 +396,7 @@ def discover_auto(user: dict = Depends(get_current_user)):
 @app.get("/api/v1/jobs/discover/status/{task_id}")
 def discover_status(task_id: str, user: dict = Depends(get_current_user)):
     t = db.get_discover_task(task_id)
-    if not t:
+    if not t or t.get("user_id") != user["app_user_id"]:
         raise HTTPException(404, "task not found")
     t.pop("user_id", None)
     t.pop("updated_at", None)
@@ -461,13 +461,16 @@ def discover(body: DiscoverIn, user: dict = Depends(get_current_user)):
 
 
 def _queue_jobs(uid: str, top_n: int = 10) -> list:
-    """待投递队列：用入库时的混合分数排序，排除已处理过的职位。"""
+    """待投递队列：chatbot 手动加入的（status='queued'）最优先，其余按混合
+    分数排序并排除已处理过的职位。"""
     jobs = db.list_jobs(uid, limit=500)
+    by_id = {j["id"]: j for j in jobs}
     done = db.applied_job_ids(uid)
+    manual = [by_id[i] for i in db.queued_job_ids(uid) if i in by_id]
     fresh = [j for j in jobs
              if j["id"] not in done and (j.get("score") or 0) >= 40]
-    fresh.sort(key=lambda j: (-j["score"], j.get("created_at", 0)))
-    return fresh[:top_n]
+    fresh.sort(key=lambda j: (-(j.get("score") or 0), j.get("created_at", 0)))
+    return (manual + fresh)[:top_n]
 
 
 @app.get("/api/v1/queue")
@@ -619,6 +622,8 @@ def get_resume_blob(file_hash: str, user: dict = Depends(get_current_user)):
     # 简单校验 hash 格式，避免路径遍历
     if not re.fullmatch(r"[0-9a-f]{16,128}", file_hash or ""):
         raise HTTPException(400, "bad hash")
+    if not db.user_owns_resume_hash(user["app_user_id"], file_hash):
+        raise HTTPException(404, "resume not found")
     blob = db.get_resume_blob_data(file_hash)
     if not blob:
         raise HTTPException(404, "resume not found")
@@ -1409,7 +1414,12 @@ def vapid_public_key():
 
 @app.post("/api/v1/push/subscribe")
 def push_subscribe(body: PushSubIn, user: dict = Depends(get_current_user)):
-    if not body.endpoint.startswith("https://"):
+    from urllib.parse import urlparse as _up
+    _host = (_up(body.endpoint).hostname or "").lower()
+    _push_ok = _host in ("fcm.googleapis.com", "web.push.apple.com",
+                         "updates.push.services.mozilla.com") \
+        or _host.endswith(".notify.windows.com") or _host.endswith(".push.apple.com")
+    if not body.endpoint.startswith("https://") or not _push_ok:
         raise HTTPException(400, "endpoint 无效")
     db.add_push_subscription(user["app_user_id"], body.endpoint, body.p256dh, body.auth)
     return {"ok": True}
