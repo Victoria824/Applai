@@ -1686,7 +1686,11 @@ let obPhase = "upload";  // upload | working | approve_job | approve_launch | do
 let obJobSug = null;
 let obJobErr = "";
 async function checkOnboarding() {
-  if (localStorage.getItem("applai_onboarded")) return;
+  // 向导完成标记必须按账号存：旧代码用裸 applai_onboarded（按浏览器），
+  // 同一浏览器上一个账号走完向导后，删号重注册的新账号也被判定为已引导。
+  // app_user_id 删号后不复用，重注册同名也不会误判。
+  const obKey = "applai_onboarded_" + (ME && ME.app_user_id ? ME.app_user_id : "");
+  if (localStorage.getItem(obKey)) return;
   try {
     const d = await api("/api/v1/profile");
     const p = (d && d.profile) || {};
@@ -1701,7 +1705,7 @@ function openOnboarding() {
 }
 function closeOnboarding(done) {
   $("obModal").style.display = "none";
-  if (done) localStorage.setItem("applai_onboarded", "1");
+  if (done) localStorage.setItem("applai_onboarded_" + (ME && ME.app_user_id ? ME.app_user_id : ""), "1");
 }
 function obProgress(pct, tag) {
   $("obBar").style.width = pct + "%";
