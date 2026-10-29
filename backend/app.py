@@ -398,6 +398,13 @@ def discover_status(task_id: str, user: dict = Depends(get_current_user)):
     t = db.get_discover_task(task_id)
     if not t or t.get("user_id") != user["app_user_id"]:
         raise HTTPException(404, "task not found")
+    # 残留任务：后台线程随进程重启死亡后，任务会永久停在 running，
+    # 前端将无限轮询。正常一次抓取约 2-3 分钟，20 分钟无更新即判中断，
+    # 给前端一个终态而不是永远转圈。
+    if t.get("status") == "running" and t.get("updated_at") and time.time() - t["updated_at"] > 20 * 60:
+        db.update_discover_task(task_id, status="error", stage="任务中断 / Interrupted",
+                                error="任务中断：服务器重启或执行超时，请重新点击抓取。")
+        t = db.get_discover_task(task_id)
     t.pop("user_id", None)
     t.pop("updated_at", None)
     return {"ok": True, "task_id": task_id, **t}

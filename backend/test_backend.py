@@ -873,3 +873,30 @@ def test_auto_tailor_when_manual_needs_resume():
         assert dbmod.get_resume_version(uid, pid, j2["id"]) is None  # 无简历项不触发
     finally:
         llmmod.llm_tailor_resume = orig
+
+
+def test_discover_stale_task_marked_error():
+    """残留 running 任务（后台线程随进程重启死亡）不再无限轮询：20 分钟无更新即判中断。"""
+    import db as dbmod
+    import sqlite3 as _sqlite3
+    import time as _time
+    c = _authed_client("stale_tester")
+    uid = c.get("/api/v1/auth/me").json()["app_user_id"]
+    tid = "staletask001"
+    dbmod.create_discover_task(tid, uid)
+    # 新任务保持 running
+    r = c.get(f"/api/v1/jobs/discover/status/{tid}")
+    assert r.status_code == 200 and r.json()["status"] == "running"
+    # 把 updated_at 拨回 21 分钟前，模拟进程重启后残留的任务
+    conn = _sqlite3.connect(dbmod.DB_PATH)
+    conn.execute("UPDATE discover_tasks SET updated_at=? WHERE task_id=?",
+                 (_time.time() - 21 * 60, tid))
+    conn.commit()
+    conn.close()
+    r = c.get(f"/api/v1/jobs/discover/status/{tid}")
+    assert r.status_code == 200
+    assert r.json()["status"] == "error"
+    assert "中断" in r.json()["error"]
+    # 他人任务仍 404
+    c2 = _authed_client("stale_other")
+    assert c2.get(f"/api/v1/jobs/discover/status/{tid}").status_code == 404

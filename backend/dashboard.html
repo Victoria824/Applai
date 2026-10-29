@@ -870,46 +870,62 @@ $("srcFetchBtn").onclick = async () => {
   const btn = $("srcFetchBtn");
   btn.disabled = true;
   $("srcStatus").innerHTML = `<div class="prog"><div class="prog-bar" id="discBar" style="width:2%"></div></div>
-    <div class="hint" id="discStage" style="margin-top:6px">启动中…</div>`;
-  try {
-    const t = await api("/api/v1/jobs/discover/auto", { method: "POST" });
-    const taskId = t.task_id;
-    let pollFails = 0;
-    const poll = setInterval(async () => {
-      try {
-        const s = await api(`/api/v1/jobs/discover/status/${taskId}`);
-        const pct = s.total ? Math.min(99, Math.round(s.done / s.total * 100)) : 2;
-        const bar = $("discBar"), stage = $("discStage");
-        if (bar) bar.style.width = pct + "%";
-        if (stage) stage.textContent = s.stage || "";
-        if (s.status === "done" || s.status === "error") {
-          clearInterval(poll);
-          btn.disabled = false;
-          if (s.status === "done") {
-            $("srcStatus").innerHTML = `抓取完成：看到 ${s.seen} 个职位，新增 ${s.new} 个。<span class=\"en\">Done: ${s.seen} seen, ${s.new} new.</span>`;
-            await loadQueue();
-            toast("抓取完成 ✓ / Done");
-          } else {
-            $("srcStatus").textContent = "";
-            showErr("抓取失败 / Fetch failed：" + (s.error || "未知错误"));
-          }
-        }
-      } catch (e) {
-        // 轮询瞬时失败（如 502）不直接判失败，重试几次
-        pollFails = (pollFails || 0) + 1;
-        if (pollFails >= 3) {
-          clearInterval(poll);
-          btn.disabled = false;
-          $("srcStatus").textContent = "";
-          showErr("抓取失败 / Fetch failed：" + e.message);
-        }
-      }
-    }, 2000);
-  } catch (e) {
+    <div class="hint" id="discStage" style="margin-top:6px">启动中…（通常需要 2-3 分钟，公司官网阶段进度条会停留较久，并非卡住）</div>`;
+  // 网络层失败（Failed to fetch 等）与业务错误区分开：业务错误（请求失败 + 状态码、
+  // 未登录）立即报错；网络抖动则重试——抓取任务在服务端继续跑，丢一次响应不应判死刑。
+  const isNetErr = (e) => e && !String(e.message || "").startsWith("请求失败") && e.message !== "未登录";
+  let t = null, lastErr = null;
+  for (let attempt = 0; attempt < 3 && !t; attempt++) {
+    try {
+      t = await api("/api/v1/jobs/discover/auto", { method: "POST" });
+    } catch (e) {
+      lastErr = e;
+      if (!isNetErr(e)) break;
+      if (attempt < 2) await new Promise((r) => setTimeout(r, 1500 * (attempt + 1)));
+    }
+  }
+  if (!t) {
     btn.disabled = false;
     $("srcStatus").textContent = "";
-    showErr("抓取失败 / Fetch failed：" + e.message);
+    showErr("抓取失败 / Fetch failed：" + (lastErr ? lastErr.message : "未知错误"));
+    return;
   }
+  const taskId = t.task_id;
+  let pollFails = 0;
+  const poll = setInterval(async () => {
+    try {
+      const s = await api(`/api/v1/jobs/discover/status/${taskId}`);
+      pollFails = 0;
+      const pct = s.total ? Math.min(99, Math.round(s.done / s.total * 100)) : 2;
+      const bar = $("discBar"), stage = $("discStage");
+      if (bar) bar.style.width = pct + "%";
+      if (stage) stage.textContent = s.stage || "";
+      if (s.status === "done" || s.status === "error") {
+        clearInterval(poll);
+        btn.disabled = false;
+        if (s.status === "done") {
+          $("srcStatus").innerHTML = `抓取完成：看到 ${s.seen} 个职位，新增 ${s.new} 个。<span class="en">Done: ${s.seen} seen, ${s.new} new.</span>`;
+          await loadQueue();
+          toast("抓取完成 ✓ / Done");
+        } else {
+          $("srcStatus").textContent = "";
+          showErr("抓取失败 / Fetch failed：" + (s.error || "未知错误"));
+        }
+      }
+    } catch (e) {
+      // 轮询瞬时断网不直接判失败：服务端任务仍在跑，容忍 60 秒连续失败；
+      // 超过则停轮询并如实说明（任务可能仍在后台进行，而非已失败）。
+      pollFails = (pollFails || 0) + 1;
+      const stage = $("discStage");
+      if (stage) stage.textContent = "网络波动，正在重试…";
+      if (pollFails >= 30) {
+        clearInterval(poll);
+        btn.disabled = false;
+        $("srcStatus").textContent = "";
+        showErr("与服务器连接中断较久，抓取可能仍在后台进行；请稍后到队列页查看，或重新点击抓取。");
+      }
+    }
+  }, 2000);
 };
 
 /* ---------- 画像：person（简历） / job（目标岗位） ---------- */
