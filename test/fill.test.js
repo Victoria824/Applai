@@ -533,6 +533,23 @@ console.log('\n[18] Ashby 分标签布局（Overview | Application）');
     w.document.getElementById('fn') && w.document.getElementById('fn').value);
   check('有表单时不打 noForm', !r.noForm);
 
+  // 变体：Overview 页上有零星字段（搜索框）也不能阻止点开 Application 标签
+  const w3 = makeDom(`<html><body>
+    <div role="tablist"><a role="tab" id="apptab3">Application</a></div>
+    <div><label for="sq">Search jobs</label><input id="sq" name="search"></div>
+    <div id="formhost3"></div>
+  </body></html>`, 'https://jobs.ashbyhq.com/1password/33333333-4444-5555-6666-777777777777');
+  let clicked3 = false;
+  w3.document.getElementById('apptab3').addEventListener('click', () => {
+    clicked3 = true;
+    w3.document.getElementById('formhost3').innerHTML = formHtml;
+  });
+  const r3 = await w3.__autoapply.fillApplication(prof, {});
+  check('Overview 有零星字段时仍点开 Application 标签', clicked3);
+  check('点开后填上名（零星字段不干扰）', w3.document.getElementById('fn').value === 'Victoria',
+    w3.document.getElementById('fn') && w3.document.getElementById('fn').value);
+  check('该场景不打 noForm', !r3.noForm);
+
   const w2 = makeDom(`<html><body><h1>Just a description, no form, no tab</h1></body></html>`,
     'https://jobs.ashbyhq.com/acme/22222222-3333-4444-5555-666666666666');
   const r2 = await w2.__autoapply.fillApplication(prof, {});

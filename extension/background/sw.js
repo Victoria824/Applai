@@ -358,8 +358,16 @@ async function _runDailyQueueImpl(trigger) {
         resumeInfo.name = displayResumeName(profile, resumeInfo.name);
         profile.resumeFile = { name: resumeInfo.name, dataUrl: resumeInfo.dataUrl };
       }
-      const fill = await sendToTab(tab.id, { type: 'AUTOAPPLY_FILL', profile: profile || {}, options: {} }, 120000);
+      let fill = await sendToTab(tab.id, { type: 'AUTOAPPLY_FILL', profile: profile || {}, options: {} }, 120000);
       if (!fill.ok) throw new Error('fill failed: ' + (fill.error || ''));
+      // 后台标签页渲染慢：首扫没找到表单时多等几次再扫，表单出现即填上。
+      // 只在 noForm（整页无字段）时重试，正常填过的页面不受影响。
+      for (let attempt = 0; attempt < 2 && fill.result && fill.result.noForm; attempt++) {
+        await sleep(3000);
+        const retry = await sendToTab(tab.id, { type: 'AUTOAPPLY_FILL', profile: profile || {}, options: {} }, 120000);
+        if (retry.ok && retry.result) fill = retry;
+        else break;
+      }
       const r = fill.result;
       // 投递留痕：填了什么先存下来（PII 已过滤）
       await recordSnapshot(userId, job, r, profile, resumeInfo);

@@ -454,7 +454,12 @@
 
     const filledKeys = new Set();
     let fields = discoverFields();
-    if (!fields.length) {
+    // Ashby 职位链接落在 Overview 标签页：即使页上有零星字段（如搜索框），
+    // 也要先点开 Application 标签再扫描，否则会把展示页误当成表单。
+    // （单页布局的 board 没有 tab 元素，findApplicationTab 返回空，不受影响。）
+    const ashbyOverview = /ashbyhq\.com/i.test(location.hostname)
+      && !/\/application\/?$/.test(location.pathname);
+    if (!fields.length || ashbyOverview) {
       const tabEl = findApplicationTab();
       if (tabEl) {
         try { tabEl.click(); } catch (e) { /* ignore */ }
