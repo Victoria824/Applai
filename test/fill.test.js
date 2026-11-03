@@ -377,7 +377,9 @@ console.log('\n[13] 简历自动上传（DataTransfer）');
   check('(a) input+change 事件均触发', rBox.st.input === 1 && rBox.st.change === 1, JSON.stringify(rBox.st));
   check('(a) 报告记为已填', r.filled.some((x) => x.intent === 'resume'), JSON.stringify(r.filled));
   check('(b) 作品集框未被触碰', pBox.files === null && pBox.st.change === 0, JSON.stringify({ files: pBox.files, st: pBox.st }));
-  check('(b) 非简历框仍进人工队列', r.missing.some((m) => m.intent === 'resume' && /Victoria_Liu_Resume\.pdf/.test(m.reason)),
+  // 旧期望（简历已附上仍报简历缺失）正是 1Password 真实页证伪的 bug：
+  // 必填框已附上、辅助框/作品集框失败时，不得再以“简历”名义进待办。
+  check('(b) 简历已附上时不再谎报简历缺失', !r.missing.some((m) => m.intent === 'resume'),
     JSON.stringify(r.missing.map((m) => m.reason)));
 }
 }
@@ -554,6 +556,39 @@ console.log('\n[18] Ashby 分标签布局（Overview | Application）');
     'https://jobs.ashbyhq.com/acme/22222222-3333-4444-5555-666666666666');
   const r2 = await w2.__autoapply.fillApplication(prof, {});
   check('整页无表单打 noForm 标记', r2.noForm === true, JSON.stringify({ noForm: r2.noForm, filled: r2.filled.length }));
+}
+
+/* ---------- 19. Ashby 双文件框（Autofill 辅助框 + Resume 必填框） ---------- */
+console.log('\n[19] Ashby 双文件框：辅助框失败不应谎报简历待处理');
+{
+  const prof = { ...PROFILE,
+    resumeFile: { name: 'Victoria_Liu_Resume.pdf', size: 1024, dataUrl: 'data:application/pdf;base64,JVBERi0=' } };
+  // 真实 1Password 表单结构：顶部 Autofill 辅助框（通用 file 输入，无简历签名）
+  // + Resume 必填框（data-field-path + Resume 标签）
+  const w = makeDom(`<html><body><form>
+    <div><span>Autofill from resume</span><button type="button">Upload file</button>
+      <input type="file" id="auto" name="file"></div>
+    <div data-field-path="field_resume"><span>Resume *</span>
+      <button type="button">Upload File</button>
+      <input type="file" id="cv" style="display:none"></div>
+  </form></body></html>`, 'https://jobs.ashbyhq.com/1password/d91e63b2-abb3-4722-a1ec-280e81604b0b/application');
+
+  let cvFiles = null, autoFiles = null;
+  Object.defineProperty(w.document.getElementById('cv'), 'files',
+    { configurable: true, get: () => cvFiles, set: (v) => { cvFiles = v; } });
+  Object.defineProperty(w.document.getElementById('auto'), 'files',
+    { configurable: true, get: () => autoFiles, set: (v) => { autoFiles = v; } });
+
+  const r = await w.__autoapply.fillApplication(prof, {});
+  check('必填 Resume 框附上了简历', !!(cvFiles && cvFiles[0] && cvFiles[0].name === 'Victoria_Liu_Resume.pdf'),
+    JSON.stringify(cvFiles && cvFiles[0] && cvFiles[0].name));
+  check('辅助框未被附上', !autoFiles, JSON.stringify(autoFiles));
+  check('简历记为已填', r.filled.some((x) => x.intent === 'resume'),
+    JSON.stringify(r.filled.map((x) => x.intent)));
+  check('辅助框失败不再谎报简历缺失', !r.missing.some((m) => m.intent === 'resume'),
+    JSON.stringify(r.missing));
+  check('也不进 needsReview', !r.needsReview.some((x) => x.intent === 'resume'),
+    JSON.stringify(r.needsReview));
 }
 }
 

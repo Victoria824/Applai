@@ -84,7 +84,10 @@
 
   function showResultBanner(result) {
     const filledCount = (result.filled || []).length;
+    // 已填过的 intent 不再进待办：横幅不得自相矛盾（已附简历又说简历待处理）。
+    const filledIntents = new Set((result.filled || []).map((f) => f.intent));
     const todo = [...(result.missing || []), ...(result.needsReview || [])]
+      .filter((m) => !filledIntents.has(m.intent))
       .map((m) => lbl(m.intent));
     let html = `<b>✅ Applai 已自动填写 ${filledCount} 项</b>`;
     if (result.captcha && result.captcha.present) html += '<br>⚠️ 页面有验证码，请先完成验证码';

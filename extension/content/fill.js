@@ -508,10 +508,12 @@
     // 文件上传：简历意图 + 画像有简历数据 → 自动附上；其余（作品集附件、无简历数据、失败）走人工队列
     const fileInputs = Array.from(document.querySelectorAll('input[type="file"]')).filter((el) => !el.disabled);
     const manualFiles = [];
+    let resumeAttached = false;
     const onlyOneFile = fileInputs.length === 1;
     for (const f of fileInputs) {
       const force = onlyOneFile && !/cover letter|求职信|portfolio|作品集|transcript|附件/i.test(fieldSignature(f));
       if (attachResume(f, profile, force)) {
+        resumeAttached = true;
         mark(f, true);
         report.filled.push({ intent: 'resume', label: shortLabel(fieldSignature(f)),
           value: (profile.resumeFile && profile.resumeFile.name) || '已附简历' });
@@ -519,8 +521,11 @@
         manualFiles.push(f);
       }
     }
-    if (manualFiles.length) {
-      manualFiles.forEach((f) => mark(f, false));
+    // 一页多文件框时（如 Ashby 的 Autofill 辅助框 + Resume 必填框），只要有一个框
+    // 附上了简历，就不算简历缺失；辅助框失败不应把已满足的必填项也说成待处理。
+    // 失败的框仍标红框提示，但不再以“简历”名义进待办。
+    manualFiles.forEach((f) => mark(f, false));
+    if (!resumeAttached && manualFiles.length) {
       const rn = profile.resumeFile && profile.resumeFile.name ? `（画像中的简历：${profile.resumeFile.name}）` : '';
       report.missing.push({ intent: 'resume', label: '简历上传', reason: `插件无法自动填充此文件框，请手动点击红色框上传${rn}` });
     } else if (!fileInputs.length) {
