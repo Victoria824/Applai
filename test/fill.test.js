@@ -12,6 +12,7 @@ const PROFILE = {
   linkedin: 'https://linkedin.com/in/victoria-liu', github: 'https://github.com/victoria-liu',
   website: 'https://victoria.dev', coverLetter: 'Dear Hiring Manager, ...',
   workAuth: 'I am authorized to work in Canada', needsSponsorship: false,
+  authorizedWorkCountries: ['Canada'],
   resumeFile: { name: 'Victoria_Liu_Resume.pdf', size: 123456 },
 };
 
@@ -65,7 +66,7 @@ console.log('\n[1] Greenhouse 风格表单');
   const det = w.__autoapply.detectATS();
   check('识别出 greenhouse', det.ats === 'greenhouse', JSON.stringify(det));
 
-  const r = await w.__autoapply.fillApplication(PROFILE, {});
+  const r = await w.__autoapply.fillApplication(PROFILE, { jobLocation: 'Toronto, Ontario, Canada' });
   check('firstName 填入', w.document.getElementById('first_name').value === 'Victoria', w.document.getElementById('first_name').value);
   check('lastName 填入', w.document.getElementById('last_name').value === 'Liu');
   check('email 填入', w.document.getElementById('email').value === 'v.liu@example.com');
@@ -223,7 +224,7 @@ console.log('\n[9] 自定义下拉框 combobox');
     o.addEventListener('click', () => { chosen = o.textContent.trim(); });
   });
 
-  const r = await w.__autoapply.fillApplication(PROFILE, {});
+  const r = await w.__autoapply.fillApplication(PROFILE, { jobLocation: 'Canada' });
   check('combobox 选中 Yes', chosen === 'Yes', `chosen=${chosen}`);
   check('报告含 workAuth', r.filled.some((x) => x.intent === 'workAuth'), JSON.stringify(r.filled));
 }
@@ -589,6 +590,45 @@ console.log('\n[19] Ashby 双文件框：辅助框失败不应谎报简历待处
     JSON.stringify(r.missing));
   check('也不进 needsReview', !r.needsReview.some((x) => x.intent === 'resume'),
     JSON.stringify(r.needsReview));
+}
+
+/* ---------- 20. 工作许可按国家匹配 ---------- */
+console.log('\n[20] 工作许可按国家匹配（岗位国家全在授权清单才答 Yes）');
+{
+  const fixture = () => makeDom(`<html><body><form>
+    <div data-field-path="field_workauth"><label>Do you live in, and are you legally authorized to work in the countries listed in the job posting?</label>
+      <button type="button">Yes</button><button type="button">No</button>
+    </div>
+  </form></body></html>`, 'https://jobs.ashbyhq.com/1password/d91e63b2-abb3-4722-a1ec-280e81604b0b/application');
+  const run = async (prof, loc) => {
+    const w = fixture();
+    let clicked = '';
+    w.document.querySelectorAll('button').forEach((b) =>
+      b.addEventListener('click', () => { clicked = b.textContent.trim(); }));
+    const r = await w.__autoapply.fillApplication(prof, { jobLocation: loc });
+    return { clicked, r };
+  };
+  // (a) 美国岗 + 只授权加拿大 → 不答，留人工
+  {
+    const { clicked, r } = await run({ ...PROFILE, authorizedWorkCountries: ['Canada'] }, 'United States');
+    check('美国岗不拿加拿大授权答 Yes', clicked === '', clicked);
+    check('美国岗工作许可进待确认', r.needsReview.some((x) => x.intent === 'workAuth'),
+      JSON.stringify(r.needsReview));
+  }
+  // (b) 加拿大岗 + 清单含加拿大 → 答 Yes
+  {
+    const { clicked, r } = await run({ ...PROFILE, authorizedWorkCountries: ['Canada', 'United States'] }, 'Toronto, Ontario, Canada');
+    check('加拿大岗答了 Yes', clicked === 'Yes', clicked);
+    check('加拿大岗工作许可记为已填', r.filled.some((x) => x.intent === 'workAuth'),
+      JSON.stringify(r.filled.map((x) => x.intent)));
+  }
+  // (c) 只有旧 workAuth 文本、没有国家清单 → 不答（旧文本不再驱动作答）
+  {
+    const { clicked, r } = await run({ ...PROFILE, authorizedWorkCountries: [] }, 'Canada');
+    check('无国家清单时不凭旧文本作答', clicked === '', clicked);
+    check('无国家清单时工作许可进待确认', r.needsReview.some((x) => x.intent === 'workAuth'),
+      JSON.stringify(r.needsReview));
+  }
 }
 }
 

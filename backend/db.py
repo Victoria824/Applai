@@ -470,7 +470,8 @@ def get_db():
 
 
 PERSON_KEYS = {"firstName", "lastName", "email", "phone", "location", "linkedin",
-               "github", "website", "resumeFile", "coverLetter"}
+               "github", "website", "resumeFile", "coverLetter",
+               "twitter", "currentCompany", "currentTitle", "authorizedWorkCountries"}
 
 
 def _migrate_split_profiles(conn):
@@ -1397,7 +1398,7 @@ def record_application(user_id: str, job_id: int, status: str, detail=""):
 def list_applications(user_id: str, limit=200) -> list:
     conn = get_db()
     rows = conn.execute(
-        """SELECT a.*, j.title, j.company, j.url FROM applications a
+        """SELECT a.*, j.title, j.company, j.url, j.location FROM applications a
            JOIN jobs j ON j.id = a.job_id
            WHERE a.user_id=? ORDER BY a.updated_at DESC LIMIT ?""", (user_id, limit))
     out = [dict(r) for r in rows]

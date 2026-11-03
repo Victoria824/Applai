@@ -63,11 +63,11 @@
   const filledSomething = (result) => actedOn(result)
     && ((result.filled || []).length > 0 || hasFormFields());
 
-  async function tryRefill(api, profile, initialDelay = 1200) {
+  async function tryRefill(api, profile, initialDelay = 1200, jobLocation = '') {
     await sleep(initialDelay); // 等 ATS 表单渲染
     let result = null;
     for (let attempt = 0; attempt < 2; attempt++) {
-      try { result = await api.fillApplication(profile, { autoSubmit: false }); }
+      try { result = await api.fillApplication(profile, { autoSubmit: false, jobLocation }); }
       catch (e) { result = null; }
       if (actedOn(result)) break;
       await sleep(2500); // 表单还没渲染好，再试一次
@@ -116,7 +116,7 @@
     if (!resp || !resp.ok || !resp.manual || !resp.profile) return;
 
     let done = false;
-    const result = await tryRefill(api, resp.profile);
+    const result = await tryRefill(api, resp.profile, 1200, (resp.manual && resp.manual.location) || '');
     if (filledSomething(result)) {
       done = true;
       showResultBanner(result);
@@ -139,7 +139,7 @@
       try {
         const r2 = await checkManual();
         if (!r2 || !r2.ok || !r2.manual || !r2.profile) return;
-        const res2 = await tryRefill(api, r2.profile, 300);
+        const res2 = await tryRefill(api, r2.profile, 300, (r2.manual && r2.manual.location) || '');
         if (filledSomething(res2)) {
           done = true;
           const old = document.getElementById('applai-manual-banner');

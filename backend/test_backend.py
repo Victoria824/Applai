@@ -50,6 +50,29 @@ def test_profile_roundtrip():
     assert r.json()["profile"]["email"] == "v@test.com"
 
 
+def test_profile_new_fields_roundtrip():
+    # 2026-11-03 清单字段：person 侧（国家/现公司/现职位/X）与 job 侧（OTE/层级）
+    # 经 upsert 拆分后，合并视图里都要能读回
+    p = dict(PROFILE)
+    p.update({
+        "twitter": "https://x.com/vtest",
+        "currentCompany": "Acme",
+        "currentTitle": "Senior AI Engineer",
+        "authorizedWorkCountries": ["Canada", "United States"],
+        "oteMin": 20000, "oteMax": 40000,
+        "segments": ["Enterprise", "Major Accounts"],
+    })
+    r = client.put("/api/v1/profile", json={"user_id": UID, "profile": p})
+    assert r.status_code == 200
+    got = client.get("/api/v1/profile", params={"user_id": UID}).json()["profile"]
+    assert got["twitter"] == "https://x.com/vtest"
+    assert got["currentCompany"] == "Acme"
+    assert got["currentTitle"] == "Senior AI Engineer"
+    assert got["authorizedWorkCountries"] == ["Canada", "United States"]
+    assert got["oteMin"] == 20000 and got["oteMax"] == 40000
+    assert got["segments"] == ["Enterprise", "Major Accounts"]
+
+
 def test_add_job_scores():
     r = client.post("/api/v1/jobs", json={
         "user_id": UID, "url": "https://boards.greenhouse.io/acme/jobs/1",

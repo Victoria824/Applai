@@ -934,6 +934,9 @@ const PERSON_PF_FIELDS = [
   {k:"email", t:"邮箱", type:"email"}, {k:"phone", t:"电话"},
   {k:"location", t:"现居地"},
   {k:"linkedin", t:"LinkedIn"}, {k:"github", t:"GitHub"}, {k:"website", t:"个人网站"},
+  {k:"twitter", t:"X（Twitter）"},
+  {k:"currentCompany", t:"当前公司"}, {k:"currentTitle", t:"当前职位"},
+  {k:"authorizedWorkCountries", t:"合法工作国家（逗号分隔，如 Canada, United States）", list:1},
   {k:"coverLetter", t:"通用求职信", type:"textarea"},
 ];
 const JOB_PF_FIELDS = [
@@ -951,7 +954,9 @@ const JOB_PF_FIELDS = [
    options:[["CAD","CAD"],["USD","USD"],["CNY","CNY"]]},
   {k:"salaryPeriod", t:"计薪周期", type:"select",
    options:[["hourly","按小时 / Hourly"],["annual","按年 / Annual"]]},
-  {k:"workAuth", t:"工作许可"},
+  {k:"oteMin", t:"OTE 下限（销售岗）", type:"number"},
+  {k:"oteMax", t:"OTE 上限（销售岗，可空）", type:"number"},
+  {k:"segments", t:"服务过的客户层级（逗号分隔：SMB, Commercial, Enterprise, Major Accounts）", list:1},
   {k:"needsSponsorship", t:"雇主担保签证 Sponsorship", type:"select", boolSelect:1,
    options:[["","未设置（遇到这类问题转待人工）"],["no","不需要雇主担保"],["yes","需要雇主担保"]]},
 ];
@@ -1036,8 +1041,10 @@ function renderPersonView() {
     pfSummaryRow("姓名", name) +
     pfSummaryRow("邮箱 / 电话", [p.email, p.phone].filter(Boolean).join(" · ")) +
     pfSummaryRow("现居地", p.location) +
-    pfSummaryRow("LinkedIn / GitHub", [p.linkedin, p.github].filter(Boolean).join(" · ")) +
-    pfSummaryRow("个人网站", p.website);
+    pfSummaryRow("LinkedIn / GitHub / X", [p.linkedin, p.github, p.twitter].filter(Boolean).join(" · ")) +
+    pfSummaryRow("个人网站", p.website) +
+    pfSummaryRow("当前公司 / 职位", [p.currentCompany, p.currentTitle].filter(Boolean).join(" · ")) +
+    pfSummaryRow("合法工作国家", (p.authorizedWorkCountries || []).join(", "));
   const rf = p.resumeFile;
   $("personResumeHint").textContent = rf && rf.name ? `简历：${rf.name}（已上传）` : "简历：未上传（编辑时可上传 PDF）";
 }
@@ -1054,7 +1061,8 @@ function renderJobView() {
     pfSummaryRow("期望薪资", salary) +
     pfSummaryRow("期望地点", p.preferredLocations) +
     pfSummaryRow("远程偏好", {any:"不限", remote:"纯远程", hybrid:"混合", onsite:"坐班"}[p.remotePreference]) +
-    pfSummaryRow("工作许可", p.workAuth) +
+    pfSummaryRow("OTE（销售岗）", (p.oteMin || p.oteMax) ? `${p.oteMin || "?"}${p.oteMax ? "–" + p.oteMax : "+"} ${p.salaryCurrency || ""}` : "") +
+    pfSummaryRow("服务过的客户层级", (p.segments || []).join(", ")) +
     (p.needsSponsorship === true ? pfSummaryRow("签证担保", "需要雇主担保") : p.needsSponsorship === false ? pfSummaryRow("签证担保", "不需要雇主担保") : "") +
     pfSummaryRow("简历改写", curJob.tailor_enabled ? "已开启（按岗位自动优化）" : "未开启");
 }
@@ -1769,8 +1777,31 @@ function renderOb() {
         <div style="display:flex;gap:8px"><input type="number" id="obSalMin" value="${s.salaryMin || ""}" placeholder="下限" style="flex:1"><span style="align-self:center">–</span><input type="number" id="obSalMax" value="${s.salaryMax || ""}" placeholder="上限" style="flex:1"></div></label>`;
     const retryBtn = $("obRetrySug");
     if (retryBtn) retryBtn.onclick = () => { obPhase = "working"; renderOb(); };
+  } else if (obPhase === "questions") {
+    obProgress(80, "第 3 步：必答问题");
+    $("obNext").style.display = "";
+    $("obNext").textContent = "✓ 确认，下一步 →";
+    const q = obQPrefill || {};
+    const sp = q.needsSponsorship === true ? "yes" : q.needsSponsorship === false ? "no" : "";
+    B.innerHTML = `<h3>几个必答问题，答完才能启动</h3>
+      <div class="ob-desc">这几项决定插件以后能不能自动答工作许可、薪资和客户层级题；
+      带 * 的必须填，答完点确认。不想现在答？点左下角跳过，之后去「画像」页补填。</div>
+      <label>合法工作国家 *<span style="font-size:12px;color:var(--muted)">（逗号分隔，如 Canada, United States）</span>
+        <input type="text" id="obqCountries" value="${esc((q.authorizedWorkCountries || []).join(", "))}" placeholder="Canada, United States"></label>
+      <label>雇主担保签证 *<select id="obqSponsor">
+        <option value=""${sp === "" ? " selected" : ""}>请选择</option>
+        <option value="no"${sp === "no" ? " selected" : ""}>不需要雇主担保</option>
+        <option value="yes"${sp === "yes" ? " selected" : ""}>需要雇主担保</option></select></label>
+      <label>当前公司 *<input type="text" id="obqCompany" value="${esc(q.currentCompany || "")}"></label>
+      <label>当前职位 *<input type="text" id="obqTitle" value="${esc(q.currentTitle || "")}"></label>
+      <label>X（Twitter）<span style="font-size:12px;color:var(--muted)">（可选）</span>
+        <input type="text" id="obqTwitter" value="${esc(q.twitter || "")}"></label>
+      <label>OTE 范围 <span style="font-size:12px;color:var(--muted)">（销售岗可选）</span>
+        <div style="display:flex;gap:8px"><input type="number" id="obqOteMin" value="${q.oteMin || ""}" placeholder="下限" style="flex:1"><span style="align-self:center">–</span><input type="number" id="obqOteMax" value="${q.oteMax || ""}" placeholder="上限" style="flex:1"></div></label>
+      <label>服务过的客户层级 <span style="font-size:12px;color:var(--muted)">（销售岗可选，逗号分隔）</span>
+        <input type="text" id="obqSegments" value="${esc((q.segments || []).join(", "))}" placeholder="SMB, Commercial, Enterprise, Major Accounts"></label>`;
   } else if (obPhase === "approve_launch") {
-    obProgress(90, "第 3 步：审批并启动");
+    obProgress(90, "第 4 步：审批并启动");
     $("obNext").style.display = "";
     $("obNext").textContent = "🚀 启动全自动投递";
     B.innerHTML = `<div class="ob-ok">🎯</div>
@@ -1878,6 +1909,7 @@ async function obRunAI() {
   obPhase = "approve_job";
   renderOb();
 }
+let obQPrefill = {};
 $("obBack").onclick = () => {};
 $("obSkip").onclick = () => closeOnboarding(true);
 $("obNext").onclick = async () => {
@@ -1899,6 +1931,51 @@ $("obNext").onclick = async () => {
             salaryCurrency: "CAD", salaryPeriod: "annual" } }) });
         await loadAllProfiles();
       }
+    } catch (e) { toast("保存失败：" + e.message); return; }
+    try {
+      const d = await apiGet("/api/v1/profile");
+      obQPrefill = (d && d.profile) || {};
+    } catch (e) { obQPrefill = {}; }
+    obPhase = "questions";
+    renderOb();
+  } else if (obPhase === "questions") {
+    // 必答项：国家、担保、现公司、现职位；X / OTE / 客户层级可选（销售岗才用得上）
+    const countries = splitList($("obqCountries").value);
+    const sponsor = $("obqSponsor").value;
+    const company = $("obqCompany").value.trim();
+    const title = $("obqTitle").value.trim();
+    const missing = [];
+    if (!countries.length) missing.push("合法工作国家");
+    if (sponsor !== "yes" && sponsor !== "no") missing.push("雇主担保签证");
+    if (!company) missing.push("当前公司");
+    if (!title) missing.push("当前职位");
+    if (missing.length) { toast("请先填好：" + missing.join("、")); return; }
+    try {
+      const saveKind = async (kind, payload) => {
+        const jr = await apiGet(`/api/v1/profiles?kind=${kind}`);
+        let act = (jr.profiles || []).find((p) => p.is_active);
+        if (!act) {
+          const cr = await api("/api/v1/profiles", { method: "POST",
+            headers: {"Content-Type": "application/json"},
+            body: JSON.stringify({ name: "默认画像", kind, profile: {} }) });
+          act = { id: cr.id, profile: {} };
+        }
+        await api(`/api/v1/profiles/${act.id}`, { method: "PUT",
+          headers: {"Content-Type": "application/json"},
+          body: JSON.stringify({ profile: { ...(act.profile || {}), ...payload } }) });
+      };
+      await saveKind("person", {
+        authorizedWorkCountries: countries,
+        currentCompany: company, currentTitle: title,
+        twitter: $("obqTwitter").value.trim(),
+      });
+      await saveKind("job", {
+        needsSponsorship: sponsor === "yes",
+        oteMin: $("obqOteMin").value ? Number($("obqOteMin").value) : null,
+        oteMax: $("obqOteMax").value ? Number($("obqOteMax").value) : null,
+        segments: splitList($("obqSegments").value),
+      });
+      await loadAllProfiles();
     } catch (e) { toast("保存失败：" + e.message); return; }
     obPhase = "approve_launch";
     renderOb();
@@ -2045,7 +2122,7 @@ function intentLabel(tok) {
   return esc(t);
 }
 const PROFILE_INTENTS = new Set(["sponsorship","workAuth","salary","salaryMin","location","yearsExperience","startDate","education","relocate","travel","citizenship","remote"]);
-const INTENT_FIELD = { sponsorship: "needsSponsorship", workAuth: "workAuth", salary: "salaryMin", salaryMin: "salaryMin", location: "preferredLocations", yearsExperience: "yearsExperience" };
+const INTENT_FIELD = { sponsorship: "needsSponsorship", workAuth: "authorizedWorkCountries", salary: "salaryMin", salaryMin: "salaryMin", location: "preferredLocations", yearsExperience: "yearsExperience" };
 function parsePending(detail) {
   const d = String(detail || "");
   const m = d.match(/缺失字段[:：]\s*([^;；]+)[;；]\s*待确认[:：]\s*(.+)$/);

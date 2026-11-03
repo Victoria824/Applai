@@ -67,6 +67,51 @@
     return `up to ${p.salaryMax} ${cur}`;
   }
 
+  /* ---------- 工作许可按国家匹配 ----------
+   * 画像里的 authorizedWorkCountries 是用户声明的合法工作国家清单；
+   * 岗位地点来自后端 job.location（跑批经 sw 传入，手动经待人工记录传入）。
+   * 只有岗位国家全在清单里才答 Yes；其他情况一律留人工。
+   * 旧 workAuth 自由文本不再驱动自动作答——拿加拿大授权去答美国岗，
+   * 就是 2026-11-03 1Password 真实页暴露的虚假陈述风险。
+   * 地点按逗号切段、每段整体归一化（城市名忽略，只认国家名）；
+   * “Remote”等无国家信息的地点解析为空 → 留人工。 */
+  const COUNTRY_ALIASES = [
+    [/^(canada|ca)$/, 'Canada'],
+    [/^(united states|usa|us|u\.s\.|america)$/, 'United States'],
+    [/^(united kingdom|uk|u\.k\.|great britain|britain|england)$/, 'United Kingdom'],
+    [/^(ireland|ie)$/, 'Ireland'],
+    [/^(germany|de|deutschland)$/, 'Germany'],
+    [/^(france|fr)$/, 'France'],
+    [/^(netherlands|nl|holland)$/, 'Netherlands'],
+    [/^(australia|au)$/, 'Australia'],
+    [/^(new zealand|nz)$/, 'New Zealand'],
+    [/^(singapore|sg)$/, 'Singapore'],
+    [/^(india|in)$/, 'India'],
+    [/^(japan|jp)$/, 'Japan'],
+  ];
+  function normalizeCountry(s) {
+    const t = String(s || '').trim().toLowerCase().replace(/\./g, '');
+    for (const [re, name] of COUNTRY_ALIASES) if (re.test(t)) return name;
+    return '';
+  }
+  function normalizeCountryList(v) {
+    const arr = Array.isArray(v) ? v : String(v || '').split(',');
+    const out = [];
+    for (const x of arr) { const n = normalizeCountry(x); if (n && !out.includes(n)) out.push(n); }
+    return out;
+  }
+  function countriesFromLocation(loc) {
+    const found = [];
+    for (const part of String(loc || '').split(/[,;|/]/)) {
+      const n = normalizeCountry(part);
+      if (n && !found.includes(n)) found.push(n);
+    }
+    if (!found.length) { const n = normalizeCountry(loc); if (n) found.push(n); }
+    return found;
+  }
+  // 本次填写对应的岗位国家（fillApplication 入口从 options.jobLocation 设置）
+  let JOB_COUNTRIES = [];
+
   function valueForKey(key, p) {
     switch (key) {
       case 'firstName': return p.firstName || '';
@@ -81,8 +126,11 @@
       case 'coverLetter': return p.coverLetter || '';
       case 'salary': return formatSalary(p);
       case 'yearsExperience': return p.yearsExperience || '';
-      case 'workAuth':
-        return (/canada/i.test(p.workAuth || '') || /authori[sz]ed/i.test(p.workAuth || '')) ? 'yes' : '';
+      case 'workAuth': {
+        const auth = normalizeCountryList(p.authorizedWorkCountries);
+        if (!auth.length || !JOB_COUNTRIES.length) return '';
+        return JOB_COUNTRIES.every((c) => auth.includes(c)) ? 'yes' : '';
+      }
       case 'sponsorship': return p.needsSponsorship ? 'yes' : 'no';
       case 'relocate': return '';
       case 'startDate': return '';
@@ -439,6 +487,7 @@
 
   async function fillApplication(profile, options) {
     options = options || {};
+    JOB_COUNTRIES = countriesFromLocation(options.jobLocation || '');
     const M = window.__autofillMatch;
     const report = {
       ats: (window.__autoapply.detectATS && window.__autoapply.detectATS().ats) || 'unknown',
