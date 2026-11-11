@@ -1023,3 +1023,66 @@ def test_agents_endpoint_shows_events_and_real_activity():
     assert by_id["jennifer"]["status"] == "idle"
     assert by_id["caroline"]["status"] == "idle"
     assert by_id["rachel"]["status"] == "idle"
+
+def _seed_done_task(uid, task_id="latest-task-1", seen=537, new=150):
+    import db as dbmod
+    dbmod.create_discover_task(task_id, uid)
+    dbmod.update_discover_task(task_id, status="done", stage="完成 / Done",
+                               seen=seen, new=new)
+
+
+def test_latest_fetch_top10_pending_and_exclusions():
+    """来源页最新抓取预览：取分数最高的 10 个；未打分的计入 pending；
+    已处理和窗口外的不列入；真打过 0 分的（有理由）不算未打分。"""
+    import db as dbmod
+    import time as _time
+    c = _authed_client("latestfetch1")
+    uid = c.get("/api/v1/auth/me").json()["app_user_id"]
+    _seed_done_task(uid)
+    for i, s in enumerate([92, 85, 78, 71, 66, 60, 55, 50, 45, 41, 38, 30]):
+        j = dbmod.add_job(uid, f"https://example.com/jobs/scored-{i}",
+                          title=f"Job {i}", company="Acme", location="Toronto, ON")
+        dbmod.update_job_score(j["id"], s, ["匹配"], "rules")
+    zero = dbmod.add_job(uid, "https://example.com/jobs/zero",
+                         title="Zero", company="Acme", location="Toronto, ON")
+    dbmod.update_job_score(zero["id"], 0, ["地点不匹配"], "rules")
+    for i in range(2):
+        dbmod.add_job(uid, f"https://example.com/jobs/fresh-{i}",
+                      title=f"Fresh {i}", company="Acme", location="Toronto, ON")
+    applied = dbmod.add_job(uid, "https://example.com/jobs/applied",
+                            title="Applied", company="Acme", location="Toronto, ON")
+    dbmod.update_job_score(applied["id"], 99, ["匹配"], "rules")
+    c.post("/api/v1/applications", json={"user_id": "ignored", "job_id": applied["id"],
+                                         "status": "submitted", "detail": "ok"})
+    old = dbmod.add_job(uid, "https://example.com/jobs/old",
+                        title="Old", company="Acme", location="Toronto, ON")
+    dbmod.update_job_score(old["id"], 99, ["匹配"], "rules")
+    conn = dbmod.get_db()
+    conn.execute("UPDATE jobs SET created_at=? WHERE id=?", (_time.time() - 7200, old["id"]))
+    conn.commit()
+    conn.close()
+    d = c.get("/api/v1/jobs/discover/latest").json()
+    assert d["task"]["seen"] == 537 and d["task"]["new"] == 150
+    assert d["task"]["completed_at"] > 0
+    assert [j["score"] for j in d["jobs"]] == [92, 85, 78, 71, 66, 60, 55, 50, 45, 41]
+    assert d["pending_scoring"] == 2
+    ids = {j["id"] for j in d["jobs"]}
+    assert applied["id"] not in ids and old["id"] not in ids
+    assert zero["id"] not in ids  # 0 分排在 10 名之外，但不计入 pending
+    assert "raw_json" not in d["jobs"][0]
+
+
+def test_latest_fetch_empty_and_ownership():
+    """没有已完成抓取时返回空；别人的抓取任务和职位不可见；未登录 401。"""
+    import db as dbmod
+    a = _authed_client("latestfetchA")
+    b = _authed_client("latestfetchB")
+    b_uid = b.get("/api/v1/auth/me").json()["app_user_id"]
+    _seed_done_task(b_uid, task_id="latest-task-B")
+    j = dbmod.add_job(b_uid, "https://example.com/jobs/other",
+                      title="Other", company="Acme", location="Toronto, ON")
+    dbmod.update_job_score(j["id"], 95, ["匹配"], "rules")
+    d = a.get("/api/v1/jobs/discover/latest").json()
+    assert d["task"] is None and d["jobs"] == [] and d["pending_scoring"] == 0
+    anon = TestClient(app.app)
+    assert anon.get("/api/v1/jobs/discover/latest").status_code == 401

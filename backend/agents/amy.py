@@ -302,6 +302,56 @@ def discover_status(uid: str, task_id: str):
     return {"ok": True, "task_id": task_id, **t}
 
 
+# 抓取窗口：一次抓取约 2-3 分钟；取任务完成时刻往前 1 小时内的入库职位，
+# 容差足够大，日常（每天一次）抓取之间不会串味。
+FETCH_WINDOW_SECONDS = 3600
+
+
+def _is_unscored(job: dict) -> bool:
+    """还没打分的职位。打分器写分时总会写理由，所以真打过 0 分的职位有理由，
+    不会被误判为未打分；刚入库（分数 0、无理由）和画像重置后（分数/理由均为
+    NULL）的才算未打分。"""
+    if job.get("score") is None:
+        return True
+    if (job.get("score") or 0) == 0:
+        return len(job.get("score_reasons") or []) == 0
+    return False
+
+
+def _public_job(job: dict) -> dict:
+    """来源页列表用的职位字段（不含 raw_json，轻量）。"""
+    return {"id": job.get("id"), "title": job.get("title", ""),
+            "company": job.get("company", ""), "location": job.get("location", ""),
+            "url": job.get("url", ""), "score": job.get("score"),
+            "score_reasons": job.get("score_reasons") or [],
+            "created_at": job.get("created_at")}
+
+
+def get_latest_fetch(uid: str):
+    """最新一次已完成抓取的职位预览（来源页用）：按匹配分数取最合适的 10 个，
+    再加还在打分的数量。不设 40 分门槛——这是本次抓取的预览，不是投递队列，
+    分数徽章本身会告诉用户每个职位的匹配度；已处理过的职位不列入。"""
+    task = db.latest_done_discover_task(uid)
+    if not task:
+        return {"ok": True, "task": None, "jobs": [], "pending_scoring": 0}
+    completed_at = task.get("updated_at") or 0
+    jobs = db.latest_fetch_jobs(uid, completed_at - FETCH_WINDOW_SECONDS,
+                                completed_at + 60)
+    done_ids = db.applied_job_ids(uid)
+    fresh = [j for j in jobs if j["id"] not in done_ids]
+    pending = sum(1 for j in fresh if _is_unscored(j))
+    scored = [j for j in fresh if not _is_unscored(j)]
+    scored.sort(key=lambda j: (-(j.get("score") or 0), j.get("created_at", 0)))
+    return {
+        "ok": True,
+        "task": {"task_id": task.get("task_id"), "status": task.get("status"),
+                 "seen": task.get("seen", 0), "new": task.get("new", 0),
+                 "completed_at": completed_at},
+        "jobs": [_public_job(j) for j in scored[:10]],
+        "pending_scoring": pending,
+    }
+
+
 def discover(uid: str, body: DiscoverIn):
     """从 ATS 公开 API 批量抓取职位，去重入库并打分。"""
     db.log_agent_event(uid, "amy", "discover_started", "手动抓取开始")

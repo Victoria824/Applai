@@ -463,6 +463,7 @@ button .en{font-size:10px; opacity:.72; margin-top:1px;}
         <button id="kwRefreshBtn">重新生成关键词<span class="en">Regenerate keywords</span></button>
       </div>
       <div class="hint" id="srcStatus"></div>
+      <div id="srcLatest"></div>
     </div>
   </section>
 
@@ -888,7 +889,7 @@ $("queueRunNowBtn").onclick = async () => {
 async function loadAll() {
   clearErr();
   if (!userId()) return;
-  await Promise.all([loadHealth(), loadAllProfiles(), loadSources(), loadQueue(), loadApps()]);
+  await Promise.all([loadHealth(), loadAllProfiles(), loadSources(), loadLatestFetch(), loadQueue(), loadApps()]);
   pollRunProgress();
 }
 
@@ -970,6 +971,7 @@ $("srcFetchBtn").onclick = async () => {
         if (s.status === "done") {
           $("srcStatus").innerHTML = `抓取完成：看到 ${s.seen} 个职位，新增 ${s.new} 个。<span class="en">Done: ${s.seen} seen, ${s.new} new.</span>`;
           await loadQueue();
+          await loadLatestFetch();
           toast("抓取完成 ✓ / Done");
         } else {
           $("srcStatus").textContent = "";
@@ -991,6 +993,64 @@ $("srcFetchBtn").onclick = async () => {
     }
   }, 2000);
 };
+
+/* ---------- 来源页：最新抓取的职位预览 ---------- */
+let latestPollTimer = null, latestPollCount = 0;
+function stopLatestPoll() {
+  if (latestPollTimer) { clearInterval(latestPollTimer); latestPollTimer = null; }
+}
+function renderLatestFetch(d) {
+  const box = $("srcLatest");
+  if (!box) return;
+  if (!d || !d.task) { box.innerHTML = ""; return; }
+  const t = d.task;
+  const rows = (d.jobs || []).map((j) => {
+    const tier = j.score >= 70 ? "hi" : j.score >= 40 ? "mid" : "lo";
+    return `<div class="card"><div class="top">
+      <div class="score ${tier}"><b>${esc(j.score)}</b><span>分</span></div>
+      <div><h3>${esc(j.title || "(未知职位)")}</h3>
+        <div class="meta">${esc(j.company || "")}${j.location ? " · " + esc(j.location) : ""}</div>
+      </div></div>
+      <div class="actions">
+        ${safeUrl(j.url) ? `<a href="${esc(safeUrl(j.url))}" target="_blank" rel="noopener">去投递<span class="en">Apply ↗</span></a>` : ""}
+      </div></div>`;
+  }).join("");
+  const pending = d.pending_scoring > 0
+    ? `<div class="hint">还有 ${d.pending_scoring} 个正在打分，分数出来后会自动更新。<span class="en">${d.pending_scoring} more jobs still being scored; this list refreshes automatically.</span></div>` : "";
+  const empty = (!d.jobs || !d.jobs.length) && d.pending_scoring <= 0
+    ? `<div class="empty">这次抓取的新职位都已处理或分数不足，完整列表请看队列页。<span class="en">No new jobs to show from this fetch — see the full queue.</span></div>` : "";
+  box.innerHTML = `
+    <div class="card-title" style="margin-top:14px">最新抓取的职位<span class="en">Latest fetch</span></div>
+    <div class="hint">上次抓取完成于 ${esc(fmtTime(t.completed_at))}：看到 ${t.seen} 个职位，新增 ${t.new} 个。<span class="en">Last fetch ${esc(fmtTime(t.completed_at))}: ${t.seen} seen, ${t.new} new.</span></div>
+    ${rows}${pending}${empty}
+    <div class="actions"><button data-goto="queue">查看全部 → 队列<span class="en">View all in queue</span></button></div>`;
+}
+async function loadLatestFetch() {
+  const box = $("srcLatest");
+  if (!box) return;
+  stopLatestPoll(); latestPollCount = 0;
+  let d;
+  try { d = await api("/api/v1/jobs/discover/latest"); }
+  catch (e) { box.innerHTML = ""; return; }  // 接口失败不破坏来源页，只是不显示列表
+  renderLatestFetch(d);
+  // 还有职位在打分时每 10 秒刷新一次，等分数落袋；最多 5 分钟（打分线程约每秒
+  // 处理 1 个，150 个新职位约 2-3 分钟），超时后停轮询，用户切页回来会重新拉取。
+  if (d && d.pending_scoring > 0) {
+    latestPollTimer = setInterval(async () => {
+      latestPollCount++;
+      if (latestPollCount >= 30) { stopLatestPoll(); return; }
+      try {
+        const dd = await api("/api/v1/jobs/discover/latest");
+        renderLatestFetch(dd);
+        if (!dd || dd.pending_scoring <= 0) stopLatestPoll();
+      } catch (e) { /* 网络抖动：下次再试 */ }
+    }, 10000);
+  }
+}
+$("srcLatest").addEventListener("click", (ev) => {
+  const b = ev.target.closest("button[data-goto]");
+  if (b) showPage(b.dataset.goto);
+});
 
 /* ---------- 画像：person（简历） / job（目标岗位） ---------- */
 const PERSON_PF_FIELDS = [
@@ -1453,6 +1513,8 @@ function showPage(name) {
   window.scrollTo({ top: 0 });
   try { localStorage.setItem("applai_page", name); } catch (e) {}
   if (name === "team") loadTeam();
+  if (name === "sources") loadLatestFetch();
+  else stopLatestPoll();
 }
 document.querySelectorAll("#sidenav button[data-page]").forEach((b) =>
   b.addEventListener("click", () => showPage(b.dataset.page)));

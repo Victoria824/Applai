@@ -1341,6 +1341,18 @@ def list_jobs(user_id: str, limit=200) -> list:
     return out
 
 
+def latest_fetch_jobs(user_id: str, since: float, until: float) -> list:
+    """某次抓取窗口内入库的职位（按分数倒序），打分理由统一转成 list。"""
+    conn = get_db()
+    rows = conn.execute(
+        "SELECT * FROM jobs WHERE user_id=? AND created_at>=? AND created_at<=? "
+        "ORDER BY score DESC, created_at DESC",
+        (user_id, since, until)).fetchall()
+    out = [_parse_reasons(dict(r)) for r in rows]
+    conn.close()
+    return out
+
+
 def list_unscored_jobs(limit: int = 50) -> list:
     """所有用户里还没打分的职位（score 为 0 或 NULL），按最新优先。"""
     conn = get_db()
@@ -1378,6 +1390,16 @@ def update_discover_task(task_id: str, **kw):
 def get_discover_task(task_id: str) -> dict | None:
     conn = get_db()
     row = conn.execute("SELECT * FROM discover_tasks WHERE task_id=?", (task_id,)).fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
+def latest_done_discover_task(user_id: str) -> dict | None:
+    """最新一次已完成的抓取任务（按最后更新倒序）。"""
+    conn = get_db()
+    row = conn.execute(
+        "SELECT * FROM discover_tasks WHERE user_id=? AND status='done' "
+        "ORDER BY updated_at DESC LIMIT 1", (user_id,)).fetchone()
     conn.close()
     return dict(row) if row else None
 

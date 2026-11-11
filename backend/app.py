@@ -151,6 +151,12 @@ def discover_status(task_id: str, user: dict = Depends(get_current_user)):
     return amy.discover_status(user["app_user_id"], task_id)
 
 
+@app.get("/api/v1/jobs/discover/latest")
+def latest_fetch(user: dict = Depends(get_current_user)):
+    """最新一次已完成抓取的职位预览（来源页用）：只读，无副作用。"""
+    return amy.get_latest_fetch(user["app_user_id"])
+
+
 @app.get("/api/v1/settings")
 def get_user_settings(user: dict = Depends(get_current_user)):
     return rachel.get_user_settings(user["app_user_id"])
