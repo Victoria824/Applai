@@ -590,12 +590,12 @@ def test_reports():
 def test_chat_actions():
     c = _authed_client("actqa")
     # 暂停/恢复投递（不需要 LLM，用直接调用测试 action 执行器）
-    import app as appmod
-    r = appmod._run_chat_action("u_actqa", {"action": "pause_schedule"}, [])
+    from agents.rachel import run_chat_action
+    r = run_chat_action("u_actqa", {"action": "pause_schedule"}, [])
     assert "已暂停" in r
-    r = appmod._run_chat_action("u_actqa", {"action": "resume_schedule"}, [])
+    r = run_chat_action("u_actqa", {"action": "resume_schedule"}, [])
     assert "已恢复" in r
-    r = appmod._run_chat_action("u_actqa", {"action": "add_to_queue", "jobs": []}, [])
+    r = run_chat_action("u_actqa", {"action": "add_to_queue", "jobs": []}, [])
     assert "没识别" in r or "具体" in r
 
 
@@ -649,17 +649,17 @@ def test_run_progress():
 
 def test_resume_display_name():
     """投递简历文件名必须专业：First_Last_Resume.pdf；无姓名时退回 Resume.pdf。"""
-    import app as appmod
+    from agents.jennifer import _resume_display_name
     c = _authed_client("nameuser")
     me = c.get("/api/v1/auth/me").json()
     uid = me.get("app_user_id") or me.get("user_id") or me.get("id")
     c.put("/api/v1/profile", json={"user_id": "ignored", "profile": {
         "firstName": "Emma", "lastName": "Stone", "email": "e@x.com"}})
-    assert appmod._resume_display_name(uid) == "Emma_Stone_Resume.pdf"
+    assert _resume_display_name(uid) == "Emma_Stone_Resume.pdf"
     c2 = _authed_client("noname")
     me2 = c2.get("/api/v1/auth/me").json()
     uid2 = me2.get("app_user_id") or me2.get("user_id") or me2.get("id")
-    assert appmod._resume_display_name(uid2) == "Resume.pdf"
+    assert _resume_display_name(uid2) == "Resume.pdf"
 
 
 def test_resume_pdf_one_page():
@@ -923,3 +923,83 @@ def test_discover_stale_task_marked_error():
     # 他人任务仍 404
     c2 = _authed_client("stale_other")
     assert c2.get(f"/api/v1/jobs/discover/status/{tid}").status_code == 404
+
+
+def test_agent_events_roundtrip():
+    """Step 1: agent_events 表写入/读取往返（按 agent 过滤、最新在前、ISO 时间）。"""
+    import db as dbmod
+    c = _authed_client("agent_evts")
+    uid = c.get("/api/v1/auth/me").json()["app_user_id"]
+    dbmod.log_agent_event(uid, "amy", "discover_done", "抓取完成：新增 3 个职位", ref_id="task-1")
+    dbmod.log_agent_event(uid, "amy", "discover_started", "开始抓取")
+    dbmod.log_agent_event(uid, "gloria", "interview", "收到面试邀请")
+    amys = dbmod.list_agent_events(uid, agent="amy", limit=5)
+    assert [e["event"] for e in amys] == ["discover_started", "discover_done"]
+    assert amys[1]["summary"] == "抓取完成：新增 3 个职位"
+    assert amys[1]["ref_id"] == "task-1"
+    assert "T" in (amys[0]["created_at"] or "")  # ISO 8601
+    all_evts = dbmod.list_agent_events(uid, limit=5)
+    assert len(all_evts) == 3 and all_evts[0]["agent"] == "gloria"
+    # 删号清事件
+    dbmod.delete_user_data(uid)
+    assert dbmod.list_agent_events(uid) == []
+
+
+def test_agents_endpoint_returns_five_and_requires_auth():
+    """Step 1: GET /api/v1/agents 需登录；返回 5 位 agent（固定顺序/角色），
+    无活动时全部 idle、事件为空；统计为空——除 Rachel 外：注册默认开定时
+    （每天 8:00、10 份），她如实报出当日计划。不 500。"""
+    from fastapi.testclient import TestClient as _TC
+    import app as _appmod
+    anon = _TC(_appmod.app)
+    assert anon.get("/api/v1/agents").status_code == 401
+    c = _authed_client("agents_roster")
+    r = c.get("/api/v1/agents")
+    assert r.status_code == 200, r.text
+    agents = r.json()["agents"]
+    assert [a["id"] for a in agents] == ["jennifer", "amy", "caroline", "gloria", "rachel"]
+    assert [a["name"] for a in agents] == ["Jennifer", "Amy", "Caroline", "Gloria", "Rachel"]
+    assert agents[0]["role_zh"] == "简历与市场分析" and agents[0]["role_en"] == "Resume & Market Analysis"
+    assert agents[1]["role_zh"] == "职位搜罗" and agents[1]["role_en"] == "Job Hunter"
+    assert agents[2]["role_zh"] == "填表投递" and agents[2]["role_en"] == "Application Specialist"
+    assert agents[3]["role_zh"] == "复盘" and agents[3]["role_en"] == "Review Coach"
+    assert agents[4]["role_zh"] == "总管·排班" and agents[4]["role_en"] == "Supervisor & Scheduler"
+    for a in agents:
+        assert set(a) == {"id", "name", "role_zh", "role_en", "status",
+                          "current_task", "today_stats", "last_activity", "recent_events"}
+        assert a["status"] == "idle" and a["current_task"] is None
+        assert a["recent_events"] == [] and a["last_activity"] is None
+        if a["id"] == "rachel":
+            # 注册默认开定时（每天 8:00、10 份），Rachel 如实报出当日计划。
+            assert a["today_stats"] == [{"label_zh": "今日计划 · 08:00",
+                                         "label_en": "Today's plan · 08:00",
+                                         "value": 10}]
+        else:
+            assert a["today_stats"] == []
+
+
+def test_agents_endpoint_shows_events_and_real_activity():
+    """Step 1: 有 agent_events 时 recent_events/last_activity 如实返回；
+    1 小时内有事件 → 该 agent 显示 active（真实证据，非臆造）；
+    running 的抓取任务 → Amy 显示 active 且 current_task 为任务 stage。"""
+    import db as dbmod
+    c = _authed_client("agents_live")
+    uid = c.get("/api/v1/auth/me").json()["app_user_id"]
+    dbmod.log_agent_event(uid, "gloria", "interview", "收到面试邀请", ref_id="msg-9")
+    dbmod.create_discover_task("livetask001", uid)
+    r = c.get("/api/v1/agents")
+    assert r.status_code == 200, r.text
+    by_id = {a["id"]: a for a in r.json()["agents"]}
+    g = by_id["gloria"]
+    assert g["status"] == "active"  # 1 小时内有事件
+    assert g["recent_events"][0]["event"] == "interview"
+    assert g["recent_events"][0]["summary"] == "收到面试邀请"
+    assert g["recent_events"][0]["ref_id"] == "msg-9"
+    assert set(g["recent_events"][0]) == {"event", "summary", "created_at", "ref_id"}
+    assert g["last_activity"] == g["recent_events"][0]["created_at"]
+    amy = by_id["amy"]
+    assert amy["status"] == "active"  # running 抓取任务
+    assert amy["current_task"] == "启动中 / Starting…"
+    assert by_id["jennifer"]["status"] == "idle"
+    assert by_id["caroline"]["status"] == "idle"
+    assert by_id["rachel"]["status"] == "idle"

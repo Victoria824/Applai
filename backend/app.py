@@ -3,22 +3,16 @@
 运行：cd backend && pip install -r requirements.txt && uvicorn app:app --port 8000
 """
 import os
-import re
 import time
 from pathlib import Path
 
 from fastapi import Depends, FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 import db
-import email_sync
-import llm
-import gmail
-import ingest
-import matcher
-import resume_pdf
+from agents import amy, caroline, gloria, jennifer, rachel
 
 SESSION_COOKIE = "aap_session"
 
@@ -64,31 +58,6 @@ def _set_session_cookie(resp: Response, token: str):
 app = FastAPI(title="Applai API", version="0.2.0")
 
 
-def _background_scorer():
-    """后台打分守护线程：独立于抓取，持续给未打分职位打分。
-
-    根因修复：之前抓取时同步补打分，导致抓取卡死；现在抓取只入库，打分由这个线程慢慢补。
-    """
-    import time as _time
-    while True:
-        try:
-            jobs = db.list_unscored_jobs(limit=20)
-            if not jobs:
-                _time.sleep(30)
-                continue
-            for job in jobs:
-                try:
-                    uid = job.get("user_id")
-                    profile = db.get_active_profile(uid) or {}
-                    if profile:
-                        score_and_store(uid, job["id"], profile)
-                except Exception:
-                    pass
-                _time.sleep(1)  # 限流，避免 LLM 调用过密
-        except Exception:
-            _time.sleep(30)
-
-
 @app.on_event("startup")
 def _startup_migrate():
     """启动时跑一次迁移，首个请求不再背迁移开销；同时启动后台打分线程。"""
@@ -96,38 +65,11 @@ def _startup_migrate():
         db.ensure_migrated()
     except Exception:
         pass
-    import threading as _threading
-    _threading.Thread(target=_background_scorer, daemon=True).start()
+    jennifer.start_background_scorer()
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["https://applai-backend.fly.dev"], allow_methods=["*"], allow_headers=["*"],
 )
-
-
-class ProfileIn(BaseModel):
-    user_id: str
-    profile: dict
-
-
-class JobIn(BaseModel):
-    user_id: str
-    url: str
-    title: str = ""
-    company: str = ""
-    location: str = ""
-
-
-class DiscoverIn(BaseModel):
-    user_id: str
-    sources: list = Field(default_factory=list)  # [{type:'greenhouse'|'lever', key:'board-or-site'}]
-    limit: int = 100
-
-
-class ApplicationIn(BaseModel):
-    user_id: str
-    job_id: int
-    status: str  # queued|filled|submitted|needs_manual|failed|skipped
-    detail: str = ""
 
 
 @app.get("/health")
@@ -136,538 +78,283 @@ def health():
     return {"ok": True, "version": "0.2.0", "llm": llm_mod.is_configured()}
 
 
-def score_and_store(user_id: str, job_id: int, profile: dict):
-    """规则预筛 + LLM 精排，结果写回 DB。"""
-    job = db.get_job(job_id)
-    rs, rreasons = matcher.score_job(profile, job)
-    fs, freasons, via = matcher.hybrid_score(
-        profile, {**job, "description": db.job_description(job)}, rs, rreasons)
-    db.update_job_score(job_id, fs, freasons, via)
-    return fs, freasons, via
-
-
 @app.put("/api/v1/profile")
-def put_profile(body: ProfileIn, user: dict = Depends(get_current_user)):
-    db.upsert_profile(user["app_user_id"], body.profile)
-    return {"ok": True}
+def put_profile(body: jennifer.ProfileIn, user: dict = Depends(get_current_user)):
+    return jennifer.put_profile(user["app_user_id"], body)
 
 
 @app.get("/api/v1/profile")
 def get_profile(user: dict = Depends(get_current_user)):
-    uid = user["app_user_id"]
-    ap = db.get_active_profile(uid)
-    return {"user_id": uid, "profile": ap["profile"],
-            "person": db.get_active_person(uid), "job": db.get_active_job(uid),
-            "tailor_enabled": ap.get("tailor_enabled", False)}
-
-
-class ProfileCreateIn(BaseModel):
-    name: str
-    profile: dict = Field(default_factory=dict)
-    kind: str = "job"
+    return jennifer.get_profile(user["app_user_id"])
 
 
 @app.get("/api/v1/profiles")
 def list_profiles(kind: str = "job", user: dict = Depends(get_current_user)):
-    if kind not in ("person", "job"):
-        kind = "job"
-    return {"profiles": db.list_profiles(user["app_user_id"], kind)}
+    return jennifer.list_profiles(user["app_user_id"], kind)
 
 
 @app.post("/api/v1/profiles")
-def create_profile(body: ProfileCreateIn, user: dict = Depends(get_current_user)):
-    try:
-        kind = body.kind if body.kind in ("person", "job") else "job"
-        return db.create_profile(user["app_user_id"], body.name, body.profile, kind)
-    except ValueError as e:
-        raise HTTPException(400, str(e))
+def create_profile(body: jennifer.ProfileCreateIn, user: dict = Depends(get_current_user)):
+    return jennifer.create_profile(user["app_user_id"], body)
 
 
 @app.put("/api/v1/profiles/{pid}")
 def update_profile(pid: int, body: dict, user: dict = Depends(get_current_user)):
-    db.update_profile(pid, user["app_user_id"],
-                      profile=body.get("profile"),
-                      name=body.get("name"),
-                      tailor_enabled=body.get("tailor_enabled"))
-    return {"ok": True}
+    return jennifer.update_profile(user["app_user_id"], pid, body)
 
 
 @app.delete("/api/v1/profiles/{pid}")
 def delete_profile(pid: int, user: dict = Depends(get_current_user)):
-    try:
-        db.delete_profile(pid, user["app_user_id"])
-    except ValueError as e:
-        raise HTTPException(400, str(e))
-    return {"ok": True}
+    return jennifer.delete_profile(user["app_user_id"], pid)
 
 
 @app.post("/api/v1/profiles/{pid}/activate")
 def activate_profile(pid: int, user: dict = Depends(get_current_user)):
-    db.activate_profile(pid, user["app_user_id"])
-    # 激活后关键词缓存失效（画像变了）
-    try:
-        db.update_settings(user["app_user_id"], keywords_updated=0)
-    except Exception:
-        pass
-    return {"ok": True}
+    return jennifer.activate_profile(user["app_user_id"], pid)
 
 
 @app.get("/api/v1/jobs/lookup")
 def lookup_job(url: str, user: dict = Depends(get_current_user)):
     """按 URL 查职位（插件 Job Bank 面板用）。"""
-    uid = user["app_user_id"]
-    job = db.get_job_by_url(uid, url)
-    if not job:
-        raise HTTPException(404, "job not found")
-    return job
+    return amy.lookup_job(user["app_user_id"], url)
 
 
 @app.post("/api/v1/jobs")
-def add_job(body: JobIn, user: dict = Depends(get_current_user)):
-    uid = user["app_user_id"]
-    src = ingest.parse_source(body.url)
-    job = db.add_job(uid, body.url, body.title, body.company,
-                     body.location, source=(f"{src['type']}:{src['key']}" if src else "manual"))
-    if not job:
-        raise HTTPException(409, "职位已存在或正在写入，请稍后重试")
-    profile = db.get_profile(uid)
-    s, reasons, via = score_and_store(uid, job["id"], profile)
-    return {"ok": True, **job, "score": s, "score_reasons": reasons, "score_via": via}
-
-
-class SourceIn(BaseModel):
-    type: str  # greenhouse | lever
-    key: str   # board token / 公司名
+def add_job(body: amy.JobIn, user: dict = Depends(get_current_user)):
+    return amy.add_job(user["app_user_id"], body)
 
 
 @app.get("/api/v1/sources")
 def get_sources(user: dict = Depends(get_current_user)):
-    return {"sources": db.list_sources(user["app_user_id"])}
+    return amy.get_sources(user["app_user_id"])
 
 
 @app.post("/api/v1/sources")
-def add_source(body: SourceIn, user: dict = Depends(get_current_user)):
-    try:
-        return db.add_source(user["app_user_id"], body.type, body.key)
-    except ValueError as e:
-        raise HTTPException(400, str(e))
+def add_source(body: amy.SourceIn, user: dict = Depends(get_current_user)):
+    return amy.add_source(user["app_user_id"], body)
 
 
 @app.delete("/api/v1/sources/{sid}")
 def delete_source(sid: int, user: dict = Depends(get_current_user)):
-    if not db.remove_source(user["app_user_id"], sid):
-        raise HTTPException(404, "source not found")
-    return {"ok": True}
-
-
-def _keywords_for(uid: str, profile: dict) -> tuple[list, str]:
-    """获取搜索关键词：缓存有效直接用，否则 LLM 生成，失败用画像目标职位兜底。"""
-    st = db.get_settings(uid)
-    kws, note, updated = st.get("job_keywords") or [], st.get("keywords_note") or "", st.get("keywords_updated") or 0
-    if kws and time.time() - updated < 7 * 86400:
-        return kws, note
-    import llm as llm_mod
-    gen = llm_mod.llm_job_keywords(profile)
-    if gen and gen.get("keywords"):
-        db.update_settings(uid, job_keywords=gen["keywords"],
-                           keywords_note=gen.get("note", ""), keywords_updated=time.time())
-        return gen["keywords"], gen.get("note", "")
-    fallback = [t for t in (profile.get("targetTitles") or []) if t]
-    return fallback, ""
-
-
-def _run_discover(uid: str, sources: list, limit: int = 100) -> dict:
-    """从来源抓取职位入库并打分，返回 {seen, new}。"""
-    profile = db.get_profile(uid)
-    if not profile:
-        raise HTTPException(400, "profile not found, sync profile first")
-    total_new, total_seen = 0, 0
-    # 14 家公司官网并行抓取（4 线程），串行最慢 14×30s=7 分钟，并行 ~1 分钟
-    from concurrent.futures import ThreadPoolExecutor as _TPE
-    all_postings = []
-    def _fetch_one(src):
-        try:
-            return ingest.fetch_source(src, limit) or []
-        except Exception:
-            return []
-    if sources:
-        with _TPE(max_workers=4) as _ex:
-            for postings in _ex.map(_fetch_one, sources):
-                all_postings.extend(postings or [])
-    for p in all_postings:
-        if not isinstance(p, dict) or not p.get("url"):
-            continue
-        total_seen += 1
-        job = db.add_job(uid, p["url"], p["title"], p["company"],
-                         p["location"], source=p["source"], raw=p["raw"],
-                         description=p.get("description", ""))
-        if not job:
-            continue
-        if job["is_new"]:
-            total_new += 1
-        # 不打分：打分由后台 scorer 统一处理，抓取只负责入库
-    return {"seen": total_seen, "new": total_new}
-
-
-def _run_smart_discover(uid: str, limit: int = 60, progress=None) -> dict:
-    """智能模式：LLM 按画像生成关键词 → 免费聚合源全网搜索 → 入库打分。手动来源照常抓取。"""
-    def pg(stage, done, total=100):
-        if progress:
-            try:
-                progress(stage, done, total)
-            except Exception:
-                pass
-    profile = db.get_profile(uid)
-    if not profile:
-        raise HTTPException(400, "profile not found, sync profile first")
-    manual = [{"type": s["type"], "key": s["key"]} for s in db.list_sources(uid)]
-    seen_keys = {(s["type"], s["key"]) for s in manual}
-    seeds = [{"type": t, "key": k} for t, k in ingest.CA_SEED_BOARDS
-             if (t, k) not in seen_keys]
-    pg("公司官网 / Company boards", 5)
-    out = _run_discover(uid, manual + seeds, limit) if (manual or seeds) else {"seen": 0, "new": 0}
-    kws, note = _keywords_for(uid, profile)
-    if not kws:
-        return {**out, "keywords": [], "mode": "seeds_only"}
-    agg_new, agg_seen = 0, 0
-    stages = [("jobbank", "加拿大 Job Bank / Job Bank", lambda: ingest.fetch_jobbank(kws, 40)),
-              ("arbeitnow", "聚合源 Arbeitnow", lambda: ingest.fetch_arbeitnow(kws, limit)),
-              ("remotive", "聚合源 Remotive", lambda: ingest.fetch_remotive(kws, limit))]
-    for i, (_name, label, fetcher) in enumerate(stages):
-        pg(f"{label}（{i+1}/3）", 10 + i * 15)
-        try:
-            postings = fetcher()
-        except Exception:
-            continue
-        new_jobs = []
-        for p in (postings or []):
-            if not isinstance(p, dict) or not p.get("url"):
-                continue
-            agg_seen += 1
-            job = db.add_job(uid, p["url"], p["title"], p["company"],
-                             p["location"], source=p["source"], raw=p["raw"],
-                             description=p.get("description", ""))
-            if not job:
-                continue
-            if job["is_new"]:
-                agg_new += 1
-                new_jobs.append(job["id"])
-            # 老职位跳过打分：后台 scorer 统一处理
-        # 不打分：新职位由后台 scorer 统一打分，抓取只负责入库
-    pg("完成 / Done", 100)
-    return {"seen": out["seen"] + agg_seen, "new": out["new"] + agg_new,
-            "keywords": kws, "note": note, "mode": "smart"}
-
-
-import uuid as _uuid
-import threading as _threading
-
-
-def _discover_task_set(task_id: str, **kw):
-    # 任务状态存 DB（之前存内存，进程重启/多实例时轮询 404）
-    try:
-        db.update_discover_task(task_id, **kw)
-    except Exception:
-        pass
-
-
-def _run_smart_discover_bg(uid: str, task_id: str):
-    try:
-        _discover_task_set(task_id, status="running", stage="公司官网 / Company boards", done=0, total=100)
-        res = _run_smart_discover(uid, progress=lambda s, d, t: _discover_task_set(task_id, stage=s, done=d, total=t))
-        _discover_task_set(task_id, status="done", stage="完成 / Done",
-                           done=100, total=100, new=res.get("new", 0), seen=res.get("seen", 0))
-    except Exception as e:
-        import traceback as _tb
-        err = f"{type(e).__name__}: {e}\n" + "".join(_tb.format_tb(e.__traceback__)[-4:])
-        _discover_task_set(task_id, status="error", error=err[:800])
+    return amy.delete_source(user["app_user_id"], sid)
 
 
 @app.post("/api/v1/jobs/discover/auto")
 def discover_auto(user: dict = Depends(get_current_user)):
     """智能抓取：立即返回任务 ID，后台执行，前端轮询进度。"""
-    uid = user["app_user_id"]
-    task_id = _uuid.uuid4().hex[:12]
-    db.create_discover_task(task_id, uid)
-    _threading.Thread(target=_run_smart_discover_bg, args=(uid, task_id), daemon=True).start()
-    return {"ok": True, "task_id": task_id, "status": "running"}
+    return amy.discover_auto(user["app_user_id"])
 
 
 @app.get("/api/v1/jobs/discover/status/{task_id}")
 def discover_status(task_id: str, user: dict = Depends(get_current_user)):
-    t = db.get_discover_task(task_id)
-    if not t or t.get("user_id") != user["app_user_id"]:
-        raise HTTPException(404, "task not found")
-    # 残留任务：后台线程随进程重启死亡后，任务会永久停在 running，
-    # 前端将无限轮询。正常一次抓取约 2-3 分钟，20 分钟无更新即判中断，
-    # 给前端一个终态而不是永远转圈。
-    if t.get("status") == "running" and t.get("updated_at") and time.time() - t["updated_at"] > 20 * 60:
-        db.update_discover_task(task_id, status="error", stage="任务中断 / Interrupted",
-                                error="任务中断：服务器重启或执行超时，请重新点击抓取。")
-        t = db.get_discover_task(task_id)
-    t.pop("user_id", None)
-    t.pop("updated_at", None)
-    return {"ok": True, "task_id": task_id, **t}
+    return amy.discover_status(user["app_user_id"], task_id)
 
 
 @app.get("/api/v1/settings")
 def get_user_settings(user: dict = Depends(get_current_user)):
-    st = db.get_settings(user["app_user_id"])
-    st.pop("job_keywords", None)  # 关键词走专属接口
-    return st
-
-
-class SettingsIn(BaseModel):
-    schedule_enabled: bool | None = None
-    schedule_time: str | None = None
-    daily_count: int | None = None
+    return rachel.get_user_settings(user["app_user_id"])
 
 
 @app.put("/api/v1/settings")
-def put_user_settings(body: SettingsIn, user: dict = Depends(get_current_user)):
-    kw = {}
-    if body.schedule_enabled is not None:
-        kw["schedule_enabled"] = body.schedule_enabled
-    if body.schedule_time is not None:
-        if not re.match(r"^\d{2}:\d{2}$", body.schedule_time):
-            raise HTTPException(400, "schedule_time 格式应为 HH:MM")
-        kw["schedule_time"] = body.schedule_time
-    if body.daily_count is not None:
-        kw["daily_count"] = max(1, min(30, int(body.daily_count)))
-    st = db.update_settings(user["app_user_id"], **kw)
-    st.pop("job_keywords", None)
-    return st
+def put_user_settings(body: rachel.SettingsIn, user: dict = Depends(get_current_user)):
+    return rachel.put_user_settings(user["app_user_id"], body)
 
 
 @app.get("/api/v1/settings/keywords")
 def get_keywords(user: dict = Depends(get_current_user)):
-    uid = user["app_user_id"]
-    kws, note = _keywords_for(uid, db.get_profile(uid) or {})
-    return {"keywords": kws, "note": note}
+    return jennifer.get_keywords(user["app_user_id"])
 
 
 @app.post("/api/v1/settings/keywords/refresh")
 def refresh_keywords(user: dict = Depends(get_current_user)):
     """强制重新生成关键词（画像大改后调用）。"""
-    uid = user["app_user_id"]
-    import llm as llm_mod
-    profile = db.get_profile(uid) or {}
-    gen = llm_mod.llm_job_keywords(profile)
-    if gen and gen.get("keywords"):
-        db.update_settings(uid, job_keywords=gen["keywords"],
-                           keywords_note=gen.get("note", ""), keywords_updated=time.time())
-        return {"keywords": gen["keywords"], "note": gen.get("note", "")}
-    raise HTTPException(502, "关键词生成失败，请稍后重试")
+    return jennifer.refresh_keywords(user["app_user_id"])
 
 
 @app.post("/api/v1/jobs/discover")
-def discover(body: DiscoverIn, user: dict = Depends(get_current_user)):
+def discover(body: amy.DiscoverIn, user: dict = Depends(get_current_user)):
     """从 ATS 公开 API 批量抓取职位，去重入库并打分。"""
-    uid = user["app_user_id"]
-    return {"ok": True, **_run_discover(uid, body.sources, body.limit)}
-
-
-def _queue_jobs(uid: str, top_n: int = 10) -> list:
-    """待投递队列：chatbot 手动加入的（status='queued'）最优先，其余按混合
-    分数排序并排除已处理过的职位。"""
-    jobs = db.list_jobs(uid, limit=500)
-    by_id = {j["id"]: j for j in jobs}
-    done = db.applied_job_ids(uid)
-    manual = [by_id[i] for i in db.queued_job_ids(uid) if i in by_id]
-    fresh = [j for j in jobs
-             if j["id"] not in done and (j.get("score") or 0) >= 40]
-    fresh.sort(key=lambda j: (-(j.get("score") or 0), j.get("created_at", 0)))
-    return (manual + fresh)[:top_n]
+    return amy.discover(user["app_user_id"], body)
 
 
 @app.get("/api/v1/queue")
 def get_queue(user: dict = Depends(get_current_user), top_n: int = 10):
     """今日投递队列：只读，无副作用。"""
-    uid = user["app_user_id"]
-    if not db.get_profile(uid):
-        raise HTTPException(400, "profile not found, sync profile first")
-    queue = _queue_jobs(uid, top_n)
-    return {"user_id": uid, "count": len(queue), "jobs": queue}
-
-
-def _rescore_pending(uid: str):
-    """后台：画像变更后重打所有未处理职位。"""
-    try:
-        profile = db.get_profile(uid)
-        if not profile:
-            return
-        jobs = db.list_jobs(uid, limit=500)
-        done = db.applied_job_ids(uid)
-        for j in jobs:
-            if j["id"] in done or j.get("score") is not None:
-                continue
-            try:
-                score_and_store(uid, j["id"], profile)
-            except Exception:
-                continue
-    except Exception:
-        pass
-
-
-@app.put("/api/v1/profile")
-def put_profile(body: ProfileIn, user: dict = Depends(get_current_user)):
-    uid = user["app_user_id"]
-    db.upsert_profile(uid, body.profile)
-    # 画像变了：关键词缓存失效 + 未处理职位重打分（后台）
-    db.update_settings(uid, keywords_updated=0)
-    db.reset_scores(uid)
-    import threading
-    threading.Thread(target=_rescore_pending, args=(uid,), daemon=True).start()
-    return {"ok": True}
-
-
-class SnapshotIn(BaseModel):
-    user_id: str
-    job_id: int
-    job_url: str = ""
-    site: str = ""
-    filled_fields: list = Field(default_factory=list)  # [{intent, label, value}]
-    salary_info: str = ""
-    cover_letter: str = ""
-    resume_name: str = ""
-    resume_hash: str = ""
-    resume_data_url: str = ""
+    return caroline.get_queue(user["app_user_id"], top_n)
 
 
 @app.post("/api/v1/applications/snapshot")
-def post_snapshot(body: SnapshotIn, user: dict = Depends(get_current_user)):
+def post_snapshot(body: caroline.SnapshotIn, user: dict = Depends(get_current_user)):
     """投递留痕：保存某次投递的快照（表单填写、薪资、求职信、简历）。"""
-    uid = user["app_user_id"]
-    # 简历内容寻址存储（去重）
-    if body.resume_hash and body.resume_data_url:
-        db.save_resume_blob(body.resume_hash, body.resume_name, body.resume_data_url)
-    # JD 从职位库冻结一份
-    job = db.get_job(body.job_id) or {}
-    jd_text = ""
-    try:
-        jd_text = db.job_description({**job, "raw_json": job.get("raw_json")}) or ""
-    except Exception:
-        pass
-    if not jd_text:
-        jd_text = (job.get("description") or "")
-    site = body.site
-    if not site and body.job_url:
-        try:
-            from urllib.parse import urlparse
-            site = urlparse(body.job_url).hostname or ""
-        except Exception:
-            pass
-    db.save_snapshot(uid, body.job_id, {
-        "job_url": body.job_url or job.get("url", ""),
-        "site": site or job.get("source", ""),
-        "jd_text": jd_text,
-        "filled_fields": body.filled_fields,
-        "salary_info": body.salary_info,
-        "cover_letter": body.cover_letter,
-        "resume_hash": body.resume_hash,
-        "resume_name": body.resume_name,
-    })
-    return {"ok": True}
-
-
-class RetryIn(BaseModel):
-    job_id: int
+    return caroline.post_snapshot(user["app_user_id"], body)
 
 
 @app.post("/api/v1/applications/retry")
-def retry_application(body: RetryIn, user: dict = Depends(get_current_user)):
+def retry_application(body: caroline.RetryIn, user: dict = Depends(get_current_user)):
     """把一条「失败」的投递记录删掉，职位随即回到队列等下次投递（只动 failed 状态）。"""
-    uid = user["app_user_id"]
-    conn = db.get_db()
-    try:
-        cur = conn.execute(
-            "DELETE FROM applications WHERE user_id=? AND job_id=? AND status='failed'",
-            (uid, body.job_id))
-        removed = cur.rowcount or 0
-        conn.commit()
-    finally:
-        conn.close()
-    return {"ok": True, "removed": removed}
-
-
-class RunProgressIn(BaseModel):
-    state: str = "running"
-    total: int = 0
-    processed: int = 0
-    submitted: int = 0
-    manual: int = 0
-    failed: int = 0
-    current_job_id: int = 0
-    current_title: str = ""
+    return caroline.retry_application(user["app_user_id"], body)
 
 
 @app.post("/api/v1/run-progress")
-def post_run_progress(body: RunProgressIn, user: dict = Depends(get_current_user)):
+def post_run_progress(body: caroline.RunProgressIn, user: dict = Depends(get_current_user)):
     """插件投递进度上报（每步一次，失败不影响投递本身）。"""
-    db.upsert_run_progress(user["app_user_id"], body.model_dump())
-    return {"ok": True}
+    return caroline.post_run_progress(user["app_user_id"], body)
 
 
 @app.get("/api/v1/run-progress")
 def read_run_progress(user: dict = Depends(get_current_user)):
-    return {"progress": db.get_run_progress(user["app_user_id"])}
+    return caroline.read_run_progress(user["app_user_id"])
 
 
 @app.get("/api/v1/applications/{job_id}/snapshot")
 def get_snapshot(job_id: int, user: dict = Depends(get_current_user)):
-    uid = user["app_user_id"]
-    snap = db.get_snapshot(uid, job_id)
-    if not snap:
-        raise HTTPException(404, "snapshot not found")
-    # 简历正文不直接返回，前端按需下载
-    snap["has_resume"] = bool(snap.get("resume_hash"))
-    return {"snapshot": snap}
+    return caroline.get_snapshot(user["app_user_id"], job_id)
 
 
 @app.get("/api/v1/resume-blob/{file_hash}")
 def get_resume_blob(file_hash: str, user: dict = Depends(get_current_user)):
-    # 简单校验 hash 格式，避免路径遍历
-    if not re.fullmatch(r"[0-9a-f]{16,128}", file_hash or ""):
-        raise HTTPException(400, "bad hash")
-    if not db.user_owns_resume_hash(user["app_user_id"], file_hash):
-        raise HTTPException(404, "resume not found")
-    blob = db.get_resume_blob_data(file_hash)
-    if not blob:
-        raise HTTPException(404, "resume not found")
-    return blob
+    return caroline.get_resume_blob(user["app_user_id"], file_hash)
 
 
 @app.post("/api/v1/applications")
-def post_application(body: ApplicationIn, user: dict = Depends(get_current_user)):
-    if body.status not in ("queued", "filled", "submitted", "needs_manual", "failed", "skipped"):
-        raise HTTPException(400, "invalid status")
-    uid = user["app_user_id"]
-    db.record_application(uid, body.job_id, body.status, body.detail)
-    if body.status == "needs_manual":
-        _maybe_auto_tailor(uid, body.job_id, body.detail)
-        try:
-            job = db.get_job(body.job_id) or {}
-            send_web_push(uid, "Applai：有职位需要人工处理",
-                          f"{job.get('title', '')} @ {job.get('company', '')} — {body.detail[:80]}")
-        except Exception:
-            pass
-    return {"ok": True}
+def post_application(body: caroline.ApplicationIn, user: dict = Depends(get_current_user)):
+    return caroline.post_application(user["app_user_id"], body)
 
 
 @app.get("/api/v1/applications")
 def get_applications(user: dict = Depends(get_current_user), limit: int = 200):
-    uid = user["app_user_id"]
-    apps = db.list_applications(uid, limit)
-    for a in apps:
-        if a.get("status") == "needs_manual":
-            _maybe_auto_tailor(uid, a.get("job_id"), a.get("detail") or "")
-    return {"user_id": uid, "applications": apps}
+    return caroline.get_applications(user["app_user_id"], limit)
 
 
 @app.get("/api/v1/stats")
 def get_stats(user: dict = Depends(get_current_user)):
+    return caroline.get_stats(user["app_user_id"])
+
+
+# ---------- 多智能体团队状态 / Multi-agent team status ----------
+_AGENT_ROSTER = [
+    {"id": "jennifer", "name": "Jennifer", "role_zh": "简历与市场分析", "role_en": "Resume & Market Analysis"},
+    {"id": "amy", "name": "Amy", "role_zh": "职位搜罗", "role_en": "Job Hunter"},
+    {"id": "caroline", "name": "Caroline", "role_zh": "填表投递", "role_en": "Application Specialist"},
+    {"id": "gloria", "name": "Gloria", "role_zh": "复盘", "role_en": "Review Coach"},
+    {"id": "rachel", "name": "Rachel", "role_zh": "总管·排班", "role_en": "Supervisor & Scheduler"},
+]
+
+
+def _agent_recent_events(uid: str, agent_id: str, limit: int = 5) -> list:
+    """db.agent_events → endpoint shape. Never raises."""
+    try:
+        return [{"event": e.get("event", ""), "summary": e.get("summary", ""),
+                 "created_at": e.get("created_at"), "ref_id": e.get("ref_id")}
+                for e in db.list_agent_events(uid, agent=agent_id, limit=limit)]
+    except Exception:
+        return []
+
+
+def _agent_active_evidence(uid: str, agent_id: str) -> tuple[bool, str | None]:
+    """Real evidence only — 'active' 必须有真实依据，不可臆造：
+    Amy: 有 running 且 20 分钟内更新过的 discover 任务；
+    Caroline: run_progress state=running 且 20 分钟内更新过；
+    任何 agent: 1 小时内有 agent_events 记录。
+    Returns (active, current_task)."""
+    import datetime as _dt
+    if agent_id == "amy":
+        try:
+            conn = db.get_db()
+            row = conn.execute(
+                "SELECT stage, updated_at FROM discover_tasks WHERE user_id=? AND status='running' "
+                "ORDER BY updated_at DESC LIMIT 1", (uid,)).fetchone()
+            conn.close()
+            if row:
+                d = dict(row)
+                if d.get("updated_at") and time.time() - float(d["updated_at"]) <= 20 * 60:
+                    stage = (d.get("stage") or "").strip()
+                    return True, stage or "正在抓取职位…"
+        except Exception:
+            pass
+    if agent_id == "caroline":
+        try:
+            prog = db.get_run_progress(uid) or {}
+            if prog.get("state") == "running":
+                upd = prog.get("updated_at") or 0
+                if not upd or time.time() - float(upd) <= 20 * 60:
+                    title = (prog.get("current_title") or "").strip()
+                    return True, f"正在投递：{title}" if title else "正在跑批投递…"
+        except Exception:
+            pass
+    # 1 小时内的 agent_events（created_at 是 UTC TIMESTAMP）
+    try:
+        events = db.list_agent_events(uid, agent=agent_id, limit=1)
+        if events:
+            created = events[0].get("created_at")
+            if created:
+                dt = _dt.datetime.fromisoformat(str(created))
+                if dt.tzinfo is None:
+                    dt = dt.replace(tzinfo=_dt.timezone.utc)
+                delta = _dt.datetime.now(_dt.timezone.utc) - dt
+                if _dt.timedelta(0) <= delta <= _dt.timedelta(hours=1):
+                    return True, None
+    except Exception:
+        pass
+    return False, None
+
+
+def _agent_entry(uid: str, roster: dict) -> dict:
+    """One agent's team-page entry. Lane module missing (not landed yet) is
+    normal — that agent reports idle with events from db.agent_events.
+    Never raises: the endpoint must never 500 because a lane module is missing."""
+    agent_id = roster["id"]
+    entry = {"id": agent_id, "name": roster["name"], "role_zh": roster["role_zh"],
+             "role_en": roster["role_en"], "status": "idle", "current_task": None,
+             "today_stats": [], "last_activity": None, "recent_events": []}
+    mod = None
+    try:
+        import importlib as _il
+        mod = _il.import_module(f"agents.{agent_id}")
+    except Exception:
+        mod = None
+    status_fn = getattr(mod, "status", None) if mod is not None else None
+    if callable(status_fn):
+        try:
+            st = status_fn(uid) or {}
+            if st.get("status") in ("active", "idle"):
+                entry["status"] = st["status"]
+            if isinstance(st.get("current_task"), str):
+                entry["current_task"] = st["current_task"] or None
+            if isinstance(st.get("today_stats"), list):
+                entry["today_stats"] = st["today_stats"]
+            if isinstance(st.get("last_activity"), str):
+                entry["last_activity"] = st["last_activity"] or None
+        except Exception:
+            pass
+    events_fn = getattr(mod, "recent_events", None) if mod is not None else None
+    if callable(events_fn):
+        try:
+            evs = events_fn(uid, 5) or []
+            entry["recent_events"] = [
+                {"event": e.get("event", ""), "summary": e.get("summary", ""),
+                 "created_at": e.get("created_at"), "ref_id": e.get("ref_id")}
+                for e in evs if isinstance(e, dict)]
+        except Exception:
+            entry["recent_events"] = []
+    if not entry["recent_events"]:
+        entry["recent_events"] = _agent_recent_events(uid, agent_id, 5)
+    if entry["last_activity"] is None and entry["recent_events"]:
+        entry["last_activity"] = entry["recent_events"][0].get("created_at")
+    # Lane 模块还没落地（或没有 status）：只按真实证据判断 active。
+    if not callable(status_fn):
+        active, task = _agent_active_evidence(uid, agent_id)
+        entry["status"] = "active" if active else "idle"
+        entry["current_task"] = task
+    return entry
+
+
+@app.get("/api/v1/agents")
+def list_agents(user: dict = Depends(get_current_user)):
+    """团队状态：5 位 agent 的状态 / 今日统计 / 最近事件（团队页用）。
+    Lane 模块未落地时该 agent 显示 idle，不 500。"""
     uid = user["app_user_id"]
-    return {"user_id": uid, "stats": db.stats(uid)}
+    return {"agents": [_agent_entry(uid, a) for a in _AGENT_ROSTER]}
 
 
 # ---------- 账号体系：注册 / 登录 / 会话 / API Token ----------
@@ -724,16 +411,7 @@ def create_my_invite(body: InviteIn, user: dict = Depends(get_current_user)):
 @app.post("/api/v1/profile/suggest-job")
 def suggest_job_profile(user: dict = Depends(get_current_user)):
     """根据人物简历画像，AI 生成目标岗位画像初稿。"""
-    uid = user["app_user_id"]
-    person = db.get_active_person(uid).get("profile") or {}
-    resume_text = _resume_text_from_profile(person)
-    if not resume_text:
-        raise HTTPException(400, "请先上传简历")
-    sug = llm.llm_suggest_job_profile(resume_text)
-    if not sug:
-        raise HTTPException(502, "AI 生成暂时失败（已自动重试多次），请点重试或稍后手动填写")
-    return {"suggestion": sug}
-
+    return jennifer.suggest_job_profile(user["app_user_id"])
 
 
 def admin_chat_debug(body: dict):
@@ -869,291 +547,65 @@ def admin_chat_debug(body: dict):
 
 @app.get("/api/v1/gmail/status")
 def gmail_status(user: dict = Depends(get_current_user)):
-    uid = user["app_user_id"]
-    t = db.get_gmail_token(uid)
-    return {"connected": bool(t), "email": (t or {}).get("email", ""),
-            "last_sync": (t or {}).get("last_sync", 0),
-            "configured": gmail.is_configured()}
+    return gloria.gmail_status(user["app_user_id"])
 
 
 @app.get("/api/v1/gmail/auth-url")
 def gmail_auth_url(user: dict = Depends(get_current_user)):
-    if not gmail.is_configured():
-        raise HTTPException(400, "Gmail 未配置（需要 GOOGLE_CLIENT_ID/SECRET）")
-    import secrets as _secrets
-    state = _secrets.token_urlsafe(24)
-    db.save_gmail_state(state, user["app_user_id"])
-    return {"url": gmail.auth_url(state)}
+    return gloria.gmail_auth_url(user["app_user_id"])
 
 
 @app.get("/api/v1/gmail/callback")
 def gmail_callback(code: str = "", state: str = "", error: str = ""):
-    if error:
-        return RedirectResponse("/dashboard?gmail=error", status_code=302)
-    uid = db.consume_gmail_state(state)
-    if not uid or not code:
-        return RedirectResponse("/dashboard?gmail=error", status_code=302)
-    try:
-        toks = gmail.exchange_code(code)
-        access = toks.get("access_token", "")
-        refresh = toks.get("refresh_token", "")
-        if not refresh:
-            # 用户之前授权过没给 refresh_token：提示重连
-            return RedirectResponse("/dashboard?gmail=norefresh", status_code=302)
-        email = gmail.get_profile_email(access)
-        db.save_gmail_token(uid, email, refresh)
-    except Exception:
-        return RedirectResponse("/dashboard?gmail=error", status_code=302)
-    return RedirectResponse("/dashboard?gmail=ok", status_code=302)
+    return gloria.gmail_callback(code, state, error)
 
 
 @app.post("/api/v1/gmail/disconnect")
 def gmail_disconnect(user: dict = Depends(get_current_user)):
-    db.delete_gmail_token(user["app_user_id"])
-    return {"ok": True}
+    return gloria.gmail_disconnect(user["app_user_id"])
 
 
 @app.post("/api/v1/admin/email-sync")
 def admin_email_sync(request: Request):
     """每 4 小时跑一次的邮件同步（cron）。用 CRON_TOKEN 保护。"""
-    token = os.environ.get("APPLAI_CRON_TOKEN", "")
-    if not token or request.headers.get("x-cron-token") != token:
-        raise HTTPException(403, "forbidden")
-    result = email_sync.sync_all(push_fn=send_web_push)
-    return {"ok": True, **result}
+    return gloria.admin_email_sync(request.headers.get("x-cron-token", ""))
 
 
 @app.get("/api/v1/reports/digest")
 def report_digest(period: str = "weekly", user: dict = Depends(get_current_user)):
     """投递复盘数据。period=daily|weekly。"""
-    uid = user["app_user_id"]
-    days = 1 if period == "daily" else 7
-    cutoff = time.time() - days * 86400
-    apps = [a for a in db.list_applications(uid, limit=1000) if a.get("updated_at", 0) >= cutoff]
-    by_status = {}
-    for a in apps:
-        by_status[a["status"]] = by_status.get(a["status"], 0) + 1
-    submitted = by_status.get("submitted", 0)
-    interviewing = by_status.get("interviewing", 0)
-    rejected = by_status.get("rejected", 0)
-    responded = interviewing + rejected
-    # 来源分析：从 jobs 表按 source 聚合面试数
-    by_source = {}
-    for a in apps:
-        if a["status"] in ("interviewing", "submitted"):
-            src_name = "unknown"
-            by_source[src_name] = by_source.get(src_name, 0) + 1
-    events = [e for e in db.list_email_events(uid, limit=20) if e.get("created_at", 0) >= cutoff]
-    return {"period": period, "days": days,
-            "total": len(apps), "by_status": by_status,
-            "submitted": submitted, "interviewing": interviewing,
-            "rejected": rejected,
-            "response_rate": round(responded / submitted * 100, 1) if submitted else 0,
-            "events": events}
+    return gloria.report_digest(user["app_user_id"], period)
 
 
 @app.post("/api/v1/reports/advice")
 def report_advice(user: dict = Depends(get_current_user)):
     """AI 复盘建议。"""
-    uid = user["app_user_id"]
-    apps = db.list_applications(uid, limit=200)
-    prof = db.get_profile(uid) or {}
-    if not llm.is_configured():
-        raise HTTPException(400, "AI 未配置")
-    # 汇总数据给 AI
-    by_status = {}
-    for a in apps:
-        by_status[a["status"]] = by_status.get(a["status"], 0) + 1
-    prompt = f"""你是求职顾问。根据以下投递数据，给出 3 条具体可执行的优化建议（中文，每条 30 字内）。
-
-画像目标职位：{(prof.get("targetTitles") or [])}
-投递总数：{len(apps)}
-状态分布：{by_status}
-
-只返回 JSON：{{"advice": ["建议1", "建议2", "建议3"]}}"""
-    try:
-        import httpx as _hx
-        cfg = llm.get_config()
-        r = _hx.post(f"{cfg['base_url']}/chat/completions",
-            headers={"Authorization": f"Bearer {cfg['api_key']}", "Content-Type": "application/json"},
-            json={"model": cfg["model"], "messages": [{"role": "user", "content": prompt}],
-                  "temperature": 0.3, "max_tokens": 300}, timeout=30)
-        r.raise_for_status()
-        data = llm._extract_json(r.json()["choices"][0]["message"]["content"])
-        return {"advice": (data or {}).get("advice", [])[:3]}
-    except Exception as e:
-        raise HTTPException(500, str(e)[:200])
-
-
-def _resume_display_name(uid: str) -> str:
-    """投递时用的简历文件名：招聘方会看到，必须专业 —— First_Last_Resume.pdf。"""
-    import re as _re
-    person = (db.get_active_person(uid) or {}).get("profile") or {}
-
-    def clean(v):
-        v = _re.sub(r"[^\w\s-]", "", str(v or ""), flags=_re.UNICODE).strip()
-        if len(v) > 1 and v.upper() == v and any(c.isalpha() for c in v):
-            v = v.title()  # 全大写的名字（EMMA）转成正常大小写（Emma）
-        return _re.sub(r"\s+", "_", v)
-    first, last = clean(person.get("firstName")), clean(person.get("lastName"))
-    name = "_".join(x for x in (first, last) if x)
-    return f"{name}_Resume.pdf" if name else "Resume.pdf"
-
-
-def _resume_text_from_profile(profile: dict) -> str:
-    """从画像的简历 PDF 提取文本。"""
-    rf = profile.get("resumeFile") or {}
-    data_url = rf.get("dataUrl") or ""
-    if not data_url or "," not in data_url:
-        return ""
-    try:
-        import base64 as _b64
-        from pypdf import PdfReader
-        import io as _io
-        raw = _b64.b64decode(data_url.split(",", 1)[1])
-        reader = PdfReader(_io.BytesIO(raw))
-        return "\n".join((p.extract_text() or "") for p in reader.pages)[:8000]
-    except Exception:
-        return ""
+    return gloria.report_advice(user["app_user_id"])
 
 
 @app.post("/api/v1/resume/tailor")
 def tailor_resume(body: dict, user: dict = Depends(get_current_user)):
     """按岗位改写简历。body: {job_id, profile_id?}。返回版本信息。"""
-    uid = user["app_user_id"]
-    job_id = body.get("job_id")
-    if not job_id:
-        raise HTTPException(400, "job_id 必填")
-    pid = body.get("profile_id")
-    if pid:
-        profs = [p for p in db.list_profiles(uid) if p["id"] == pid]
-        if not profs:
-            raise HTTPException(404, "画像不存在")
-        ap = profs[0]
-        profile = ap["profile"]
-    else:
-        ap = db.get_active_profile(uid)
-        profile = ap.get("profile", {})
-        pid = ap.get("id", 0)
-    return _generate_tailored(uid, job_id, pid, profile)
-
-
-def _generate_tailored(uid, job_id, pid, profile):
-    """生成（或取已有）按岗定制简历版本。手动端点与后台自动生成共用。"""
-    # 已有改写版本直接返回（幂等）
-    existing = db.get_resume_version(uid, pid, job_id)
-    if existing:
-        return {"version_id": existing["id"], "pdf_hash": existing["pdf_hash"], "cached": True}
-    # 取 JD 和简历文本
-    job = db.get_job(job_id) or {}
-    jd = db.job_description(job) or ""
-    resume_text = _resume_text_from_profile(profile)
-    if not resume_text:
-        raise HTTPException(400, "画像里没有可解析的简历 PDF")
-    if not jd:
-        raise HTTPException(400, "岗位没有描述，无法改写")
-    tailored = llm.llm_tailor_resume(resume_text, jd)
-    if not tailored:
-        raise HTTPException(502, "AI 改写失败，请稍后重试")
-    # 生成 PDF 并存储
-    import base64 as _b64
-    import hashlib as _hl
-    pdf_bytes = resume_pdf.generate_pdf(tailored, profile)
-    pdf_b64 = "data:application/pdf;base64," + _b64.b64encode(pdf_bytes).decode()
-    pdf_hash = _hl.sha256(pdf_b64.encode()).hexdigest()
-    db.save_resume_blob(pdf_hash, _resume_display_name(uid), pdf_b64)
-    vid = db.save_resume_version(uid, pid, job_id, "tailored", tailored, pdf_hash)
-    return {"version_id": vid, "pdf_hash": pdf_hash, "cached": False}
-
-
-_tailor_inflight = set()
-
-
-def _maybe_auto_tailor(uid, job_id, detail):
-    """待人工且待确认包含简历时，后台自动生成 1 页定制简历（Victoria 要求：
-    投递环节自动完成，用户不需要再单独点生成）。打开职位页自动重填时，
-    for-job 会优先取这份定制版附上。失败静默——重填会退回母版简历。"""
-    if not job_id or "resume" not in (detail or "").lower():
-        return
-    key = (uid, job_id)
-    if key in _tailor_inflight:
-        return
-    _tailor_inflight.add(key)
-
-    def _run():
-        try:
-            ap = db.get_active_profile(uid)
-            pid = ap.get("id", 0)
-            if not db.get_resume_version(uid, pid, job_id):
-                _generate_tailored(uid, job_id, pid, ap.get("profile", {}))
-        except Exception:
-            pass
-        finally:
-            _tailor_inflight.discard(key)
-
-    _threading.Thread(target=_run, daemon=True).start()
+    return caroline.tailor_resume(user["app_user_id"], body)
 
 
 @app.get("/api/v1/resume/for-job")
 def resume_for_job(job_id: int, user: dict = Depends(get_current_user)):
     """投递时取该用的简历：画像开了改写 → 返回改写版 PDF；否则返回母版。
-    返回 {pdf_hash, filename, version_id(0=母版), tailored: bool}。
-    插件再用 pdf_hash 下载。"""
-    uid = user["app_user_id"]
-    ap = db.get_active_profile(uid)
-    pid = ap.get("id", 0)
-    profile = ap.get("profile", {})
-    # 已有定制版（无论自动开关）优先用——用户手动生成过就是明确意图
-    v = db.get_resume_version(uid, pid, job_id)
-    if not v and ap.get("tailor_enabled"):
-            # 现场生成（约 20-40 秒）
-            try:
-                job = db.get_job(job_id) or {}
-                jd = db.job_description(job) or ""
-                resume_text = _resume_text_from_profile(profile)
-                tailored = llm.llm_tailor_resume(resume_text, jd) if (resume_text and jd) else None
-                if tailored:
-                    import base64 as _b64
-                    import hashlib as _hl
-                    pdf_bytes = resume_pdf.generate_pdf(tailored, profile)
-                    pdf_b64 = "data:application/pdf;base64," + _b64.b64encode(pdf_bytes).decode()
-                    pdf_hash = _hl.sha256(pdf_b64.encode()).hexdigest()
-                    db.save_resume_blob(pdf_hash, _resume_display_name(uid), pdf_b64)
-                    vid = db.save_resume_version(uid, pid, job_id, "tailored", tailored, pdf_hash)
-                    v = {"id": vid, "pdf_hash": pdf_hash}
-            except Exception:
-                v = None
-    if v:
-        return {"pdf_hash": v["pdf_hash"], "filename": _resume_display_name(uid),
-                "version_id": v["id"], "tailored": True}
-    # 母版
-    rf = profile.get("resumeFile") or {}
-    return {"pdf_hash": "", "filename": rf.get("name", ""),
-            "version_id": 0, "tailored": False,
-            "data_url": rf.get("dataUrl", "")}
+返回 {pdf_hash, filename, version_id(0=母版), tailored: bool}。
+插件再用 pdf_hash 下载。"""
+    return caroline.resume_for_job(user["app_user_id"], job_id)
 
 
 @app.get("/api/v1/resume/versions")
 def list_resume_versions(profile_id: int = 0, user: dict = Depends(get_current_user)):
     """列出某画像的简历版本。"""
-    uid = user["app_user_id"]
-    conn = db.get_db()
-    if profile_id:
-        rows = conn.execute(
-            "SELECT id, job_id, kind, created_at FROM resume_versions "
-            "WHERE user_id=? AND profile_id=? ORDER BY id DESC LIMIT 50",
-            (uid, profile_id)).fetchall()
-    else:
-        rows = conn.execute(
-            "SELECT id, job_id, kind, created_at FROM resume_versions "
-            "WHERE user_id=? ORDER BY id DESC LIMIT 50", (uid,)).fetchall()
-    conn.close()
-    return {"versions": [dict(r) for r in rows]}
+    return caroline.list_resume_versions(user["app_user_id"], profile_id)
 
 
 @app.get("/api/v1/email-events")
 def email_events(user: dict = Depends(get_current_user)):
-    return {"events": db.list_email_events(user["app_user_id"])}
+    return gloria.email_events(user["app_user_id"])
 
 
 @app.get("/api/v1/account/export")
@@ -1220,226 +672,35 @@ def revoke_token(tid: int, user: dict = Depends(get_current_user)):
 @app.post("/api/v1/resume/parse")
 async def resume_parse(file: UploadFile = File(...), user: dict = Depends(get_current_user)):
     """上传简历 PDF → 提取文本 → LLM 结构化抽取 → 返回字段供前端预填（用户确认后保存）。"""
-    name = (file.filename or "").lower()
-    if not name.endswith(".pdf"):
-        raise HTTPException(400, "目前只支持 PDF 简历")
-    data = await file.read()
-    if len(data) > 4 * 1024 * 1024:
-        raise HTTPException(400, "文件超过 4MB")
-    if len(data) < 100:
-        raise HTTPException(400, "文件内容为空")
-    try:
-        from pypdf import PdfReader
-        import io
-        reader = PdfReader(io.BytesIO(data))
-        text = "\n".join((p.extract_text() or "") for p in reader.pages[:5])[:8000]
-    except Exception:
-        raise HTTPException(400, "PDF 解析失败，请确认文件未损坏或加密")
-    if len(text.strip()) < 50:
-        raise HTTPException(400, "未能从 PDF 提取到文字（可能是扫描图片版），请手动填写")
-    import llm as llm_mod
-    fields = llm_mod.llm_parse_resume(text)
-    if not fields:
-        raise HTTPException(502, "简历识别失败，请手动填写关键信息")
-    # 只保留白名单字段
-    allowed = ("firstName", "lastName", "email", "phone", "location", "linkedin",
-               "github", "website", "targetTitles", "industries", "yearsExperience",
-               "preferredLocations", "workAuth", "summary")
-    out = {k: fields.get(k) for k in allowed if fields.get(k) not in (None, "", [])}
-    return {"fields": out, "chars": len(text)}
+    return await jennifer.resume_parse(user["app_user_id"], file)
 
 
 # ---------- 聊天助手 ----------
-class ChatIn(BaseModel):
-    message: str
-    history: list = Field(default_factory=list)  # [{role, content}]
-    conversation_id: int = 0
-
-
-CHAT_SYSTEM = """你是 Applai 的求职助手，一个友好、专业的 AI 顾问。
-你掌握用户求职画像（含简历摘要）、职位匹配队列、投递进度和职位描述（JD）全文。
-关于职位来源，只说真话：Applai 通过以下渠道发现职位 —— 加拿大 Job Bank（联邦政府官方招聘站）、14 家多伦多/加拿大公司的官方招聘页（Wealthsimple、1Password、StackAdapt 等，通过 Greenhouse/Lever/Ashby 公开 API）、免费聚合源 Arbeitnow 和 Remotive，以及用户手动添加的公司。绝对不要提 Indeed、LinkedIn、Glassdoor 或"人工审核"，我们没有这些。
-职责：
-1. 回答投递进展问题（如"今天投了几个""哪些要人工处理"），用下面的实时数据回答，不要编造。
-2. 结合 JD 回答更广泛的问题：分析职位要求、对比多个职位、给面试/简历建议、评估匹配度。用户问简历分析时，用画像里的简历摘要回答，不要说"没有简历数据"。
-3. 队列为空时，先看实时数据找原因（是从未抓取？还是抓到了但分数不够？），给出可操作的建议（如去"来源"页点"立即抓取"、检查画像关键词），不要说"市面上没有岗位"这种无法验证的话。
-4. 回答简洁，中文为主，关键信息用条列。不要输出 JSON。
-5. 数据里没有的信息要承认不知道，不要 hallucinate。
-6. 你也是复盘助手：用户说"复盘一下""这周怎么样"时，用【本周复盘】和【邮件动态】给出结构化复盘：投递数、回复率、进展亮点、问题、下周建议。"""
-
-MAX_CTX = 12000
 
 
 @app.get("/api/v1/chat/conversations")
 def chat_list_conversations(user: dict = Depends(get_current_user)):
-    return {"conversations": db.list_conversations(user["app_user_id"])}
+    return gloria.chat_list_conversations(user["app_user_id"])
 
 
 @app.post("/api/v1/chat/conversations")
 def chat_create_conversation(user: dict = Depends(get_current_user)):
-    return db.create_conversation(user["app_user_id"])
+    return gloria.chat_create_conversation(user["app_user_id"])
 
 
 @app.get("/api/v1/chat/conversations/{cid}/messages")
 def chat_get_messages(cid: int, user: dict = Depends(get_current_user)):
-    uid = user["app_user_id"]
-    if not db.get_conversation(uid, cid):
-        raise HTTPException(404, "conversation not found")
-    return {"messages": db.get_chat_messages(uid, cid)}
+    return gloria.chat_get_messages(user["app_user_id"], cid)
 
 
 @app.delete("/api/v1/chat/conversations/{cid}")
 def chat_delete_conversation(cid: int, user: dict = Depends(get_current_user)):
-    db.delete_conversation(user["app_user_id"], cid)
-    return {"ok": True}
+    return gloria.chat_delete_conversation(user["app_user_id"], cid)
 
 
 @app.post("/api/v1/chat")
-def chat(body: ChatIn, user: dict = Depends(get_current_user)):
-    import llm as llm_mod
-    uid = user["app_user_id"]
-    msg = (body.message or "").strip()[:2000]
-    if not msg:
-        raise HTTPException(400, "message 为空")
-    profile = db.get_profile(uid) or {}
-    stats = db.stats(uid)
-    apps = db.list_applications(uid, 30)
-
-    ctx = []
-    ctx.append("【用户画像】" + llm_mod._profile_text(profile)[:800])
-    if profile.get("summary"):
-        ctx.append("【简历摘要】" + str(profile["summary"])[:600])
-    ctx.append("【统计】" + str(stats))
-    # 复盘数据：本周投递、回复率、邮件动态（供"复盘一下"类问题）
-    try:
-        _cutoff = time.time() - 7 * 86400
-        _apps7 = [a for a in db.list_applications(uid, limit=1000) if a.get("updated_at", 0) >= _cutoff]
-        _bs = {}
-        for _a in _apps7:
-            _bs[_a["status"]] = _bs.get(_a["status"], 0) + 1
-        _sub = _bs.get("submitted", 0)
-        _resp = _bs.get("interviewing", 0) + _bs.get("rejected", 0)
-        _rr = round(_resp / _sub * 100, 1) if _sub else 0
-        _evs = [e for e in db.list_email_events(uid, limit=10) if e.get("created_at", 0) >= _cutoff]
-        _evl = [f"- {e.get('kind','?')}：{e.get('subject','')[:50]}" for e in _evs]
-        ctx.append(f"【本周复盘】投递{_sub} · 面试中{_bs.get('interviewing',0)} · 拒信{_bs.get('rejected',0)} · 回复率{_rr}%")
-        ctx.append("【邮件动态】\n" + ("\n".join(_evl) if _evl else "暂无"))
-    except Exception:
-        pass
-    lines = []
-    for a in apps:
-        lines.append(f"- {a.get('title','?')} @ {a.get('company','?')}：{a.get('status','?')}（{a.get('detail','')[:60]}）")
-    ctx.append("【最近申请】\n" + ("\n".join(lines) if lines else "暂无"))
-    try:
-        queued = _queue_jobs(uid, 15)
-        ql = [f"- {j.get('title','?')} @ {j.get('company','?')}：{j.get('score',0)}分（{j.get('location','')}）"
-              for j in queued]
-        ctx.append("【待投递队列（按分数排序）】\n" + ("\n".join(ql) if ql else "队列为空"))
-    except Exception:
-        queued = []
-        ctx.append("【待投递队列】暂无")
-
-    # JD 上下文：待人工 + 高分待投递，截断拼接到预算内
-    jd_parts, used = [], sum(len(c) for c in ctx)
-    manual = [a for a in apps if a.get("status") == "needs_manual"][:5]
-    queued_ids = {j["id"] for j in queued[:5]}
-    want = {a.get("job_id") for a in manual} | queued_ids
-    for jid in want:
-        job = db.get_job(jid)
-        if not job or used >= MAX_CTX:
-            continue
-        desc = (db.job_description(job) or "")[:1500]
-        if desc:
-            jd_parts.append(f"【JD】{job.get('title')} @ {job.get('company')}：\n{desc}")
-            used += len(jd_parts[-1])
-    if jd_parts:
-        ctx.append("\n\n".join(jd_parts))
-
-    cid = body.conversation_id or 0
-    history = []
-    if cid and db.get_conversation(uid, cid):
-        for m in db.get_chat_messages(uid, cid, 200)[-8:]:
-            history.append({"role": m["role"], "content": str(m["content"])[:1500]})
-        try:
-            db.add_chat_message(uid, cid, "user", msg)
-        except Exception:
-            import traceback; traceback.print_exc()
-        # 首条消息自动取标题
-        if len(db.get_chat_messages(uid, cid, 2)) <= 1:
-            db.rename_conversation(uid, cid, msg[:24])
-    else:
-        for h in (body.history or [])[-8:]:
-            if isinstance(h, dict) and h.get("role") in ("user", "assistant") and h.get("content"):
-                history.append({"role": h["role"], "content": str(h["content"])[:1500]})
-    history.append({"role": "user", "content": msg})
-
-    # Chatbot actions：先检测操作意图，执行后再让 LLM 回复
-    action_result = ""
-    try:
-        act = llm_mod.llm_detect_action(msg)
-    except Exception:
-        act = None
-    if act and act.get("action") not in (None, "none"):
-        try:
-            _q = queued
-        except NameError:
-            _q = []
-        action_result = _run_chat_action(uid, act, _q)
-        if action_result:
-            ctx.append("【刚才执行的操作】\n" + action_result)
-
-    reply = llm_mod.llm_chat(CHAT_SYSTEM + "\n\n实时数据：\n" + "\n".join(ctx)[:MAX_CTX], history)
-    if not reply:
-        raise HTTPException(502, "助手暂不可用，请稍后重试")
-    if cid and db.get_conversation(uid, cid):
-        try:
-            db.add_chat_message(uid, cid, "assistant", reply)
-        except Exception:
-            import traceback; traceback.print_exc()
-    return {"reply": reply, "conversation_id": cid}
-
-
-def _run_chat_action(uid: str, act: dict, queued: list) -> str:
-    """执行 chatbot 操作，返回中文结果描述。"""
-    action = act.get("action")
-    if action == "pause_schedule":
-        db.update_settings(uid, schedule_enabled=0)
-        return "已暂停自动投递 ✅"
-    if action == "resume_schedule":
-        db.update_settings(uid, schedule_enabled=1)
-        return "已恢复自动投递 ✅"
-    if action in ("add_to_queue", "mark_applied"):
-        wants = act.get("jobs") or []
-        if not wants:
-            return "没识别出是哪个职位，请说具体一点（比如：把 XX 公司那个加进去）"
-        # 在最近职位里模糊匹配
-        jobs = db.list_jobs(uid, limit=200) if hasattr(db, "list_jobs") else []
-        done, missed = [], []
-        for w in wants:
-            wl = str(w).lower()
-            hit = None
-            for j in jobs:
-                jl = f"{j.get('title','')} @ {j.get('company','')}".lower()
-                if wl in jl or jl in wl:
-                    hit = j
-                    break
-            if not hit:
-                missed.append(w)
-                continue
-            if action == "add_to_queue":
-                # 加入手动队列：插到 applications 为 queued
-                db.record_application(uid, hit["id"], "queued", "chatbot 手动加入")
-            else:
-                db.record_application(uid, hit["id"], "submitted", "chatbot 标记已手动投递")
-            done.append(f"{hit.get('title')} @ {hit.get('company')}")
-        parts = []
-        if done:
-            verb = "已加入投递队列 ✅" if action == "add_to_queue" else "已标记为已投递 ✅"
-            parts.append(verb + "：" + "、".join(done))
-        if missed:
-            parts.append("没找到：" + "、".join(missed))
-        return "\n".join(parts)
-    return ""
+def chat(body: gloria.ChatIn, user: dict = Depends(get_current_user)):
+    return gloria.chat(user["app_user_id"], body)
 
 
 # ---------- Web Push（手机浏览器通知，替代 ntfy App） ----------
@@ -1474,29 +735,6 @@ def push_subscribe(body: PushSubIn, user: dict = Depends(get_current_user)):
 def push_unsubscribe(body: dict, user: dict = Depends(get_current_user)):
     db.remove_push_subscription(user["app_user_id"], (body or {}).get("endpoint", ""))
     return {"ok": True}
-
-
-def send_web_push(user_id: str, title: str, body: str):
-    """验证码等事件发生时推送到用户手机浏览器。失败静默（best effort）。"""
-    priv = os.environ.get("APPLAI_VAPID_PRIVATE_KEY", "").strip()
-    if not priv:
-        return
-    try:
-        from pywebpush import webpush, WebPushException
-        import json as _json
-        for sub in db.list_push_subscriptions(user_id):
-            try:
-                webpush(
-                    subscription_info={"endpoint": sub["endpoint"],
-                                       "keys": {"p256dh": sub["p256dh"], "auth": sub["auth"]}},
-                    data=_json.dumps({"title": title, "body": body}),
-                    vapid_private_key=priv,
-                    vapid_claims={"sub": "mailto:applai@localhost"},
-                )
-            except Exception:
-                continue
-    except Exception:
-        pass
 
 
 @app.post("/api/v1/auth/claim")

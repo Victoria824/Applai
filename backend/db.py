@@ -373,6 +373,18 @@ def _run_migrations_pg(pg):
     """Postgres 迁移：建表 + 轻量 ALTER + 画像拆分 + 序列修复。"""
     pg.executescript(SCHEMA)
     pg.executescript(AUTH_SCHEMA)
+    pg.execute("""CREATE TABLE IF NOT EXISTS agent_events (
+      id BIGSERIAL PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      agent TEXT NOT NULL,
+      event TEXT NOT NULL,
+      ref_id TEXT,
+      summary TEXT,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )""")
+    pg.execute("CREATE INDEX IF NOT EXISTS idx_agent_events_user "
+               "ON agent_events(user_id, agent, created_at DESC)")
+    pg.commit()
     cols = {r["column_name"] for r in pg.execute(
         "SELECT column_name FROM information_schema.columns WHERE table_name='jobs'").fetchall()}
     if "score_via" not in cols:
@@ -407,6 +419,18 @@ def _run_migrations_sqlite(conn):
     """SQLite 迁移（本地/测试用）。"""
     conn.executescript(SCHEMA)
     conn.executescript(AUTH_SCHEMA)
+    conn.execute("""CREATE TABLE IF NOT EXISTS agent_events (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id TEXT NOT NULL,
+      agent TEXT NOT NULL,
+      event TEXT NOT NULL,
+      ref_id TEXT,
+      summary TEXT,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )""")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_agent_events_user "
+                 "ON agent_events(user_id, agent, created_at DESC)")
+    conn.commit()
     cols = {r[1] for r in conn.execute("PRAGMA table_info(jobs)").fetchall()}
     if "score_via" not in cols:
         conn.execute("ALTER TABLE jobs ADD COLUMN score_via TEXT DEFAULT 'rules'")
@@ -908,6 +932,7 @@ def delete_user_data(uid: str):
         pass
     for tbl in ("users", "user_settings", "profiles", "resume_versions",
                 "gmail_tokens", "gmail_oauth_states", "email_events",
+                "agent_events",
                 "push_subscriptions", "job_sources", "discover_tasks",
                 "run_progress"):
         try:
@@ -1030,6 +1055,54 @@ def list_email_events(user_id: str, limit: int = 50) -> list:
         (user_id, limit)).fetchall()
     conn.close()
     return [dict(r) for r in rows]
+
+
+def log_agent_event(user_id: str, agent: str, event: str, summary: str, ref_id=None) -> None:
+    """写一条 agent 活动事件（团队页 / Rachel 可见）。失败不抛错给调用方。"""
+    conn = get_db()
+    conn.execute(
+        """INSERT INTO agent_events(user_id, agent, event, ref_id, summary)
+           VALUES(?,?,?,?,?)""",
+        (user_id, agent, event, ref_id, summary or ""))
+    conn.commit()
+    conn.close()
+
+
+def _agent_event_created_iso(value):
+    """agent_events.created_at 是 TIMESTAMP：PG 返回 datetime，SQLite 返回
+    'YYYY-MM-DD HH:MM:SS' 字符串；统一成 ISO 8601 字符串。"""
+    if value is None:
+        return None
+    if hasattr(value, "isoformat"):
+        return value.isoformat()
+    s = str(value)
+    try:
+        import datetime as _dt
+        return _dt.datetime.strptime(s, "%Y-%m-%d %H:%M:%S").isoformat()
+    except Exception:
+        return s
+
+
+def list_agent_events(user_id: str, agent: str = None, limit: int = 50) -> list:
+    """最新在前。agent 为 None 时返回该用户所有 agent 的事件。"""
+    conn = get_db()
+    if agent:
+        rows = conn.execute(
+            "SELECT * FROM agent_events WHERE user_id=? AND agent=? "
+            "ORDER BY created_at DESC, id DESC LIMIT ?",
+            (user_id, agent, limit)).fetchall()
+    else:
+        rows = conn.execute(
+            "SELECT * FROM agent_events WHERE user_id=? "
+            "ORDER BY created_at DESC, id DESC LIMIT ?",
+            (user_id, limit)).fetchall()
+    conn.close()
+    out = []
+    for r in rows:
+        d = dict(r)
+        d["created_at"] = _agent_event_created_iso(d.get("created_at"))
+        out.append(d)
+    return out
 
 
 def _ensure_default_profile(user_id: str) -> dict:

@@ -302,6 +302,44 @@ button .en{font-size:10px; opacity:.72; margin-top:1px;}
 .snap-guide .btn-link{display:inline-block;margin-top:6px;background:#111;color:#fff;border-radius:8px;padding:6px 14px;text-decoration:none;font-size:13px}
 .hl-flash{animation:hlflash 1.2s ease 2;border-radius:8px}
 @keyframes hlflash{0%,100%{background:transparent;box-shadow:none}50%{background:#fff0bf;box-shadow:0 0 0 3px #ffe08a}}
+
+/* ---- 团队 Team ---- */
+.agent-tag{display:block; margin-top:4px; font-size:12px; color:var(--muted); font-weight:600;}
+.team-teaser{margin:0 0 16px;}
+.team-teaser-btn{width:100%; text-align:left; background:#fff; border:1px solid var(--line);
+  border-radius:var(--radius); padding:14px 18px; font-size:14px; font-weight:600; box-shadow:none;}
+.team-teaser-btn:hover{border-color:var(--blue);}
+.pipe{display:flex; align-items:stretch; gap:6px; margin-bottom:16px; overflow-x:auto; padding:2px;}
+.pipe-step{flex:1; min-width:96px; background:#fff; border:1px solid var(--line);
+  border-radius:12px; padding:10px 8px; text-align:center;}
+.pipe-step .pn{font-size:13px; font-weight:700;}
+.pipe-step .pd{font-size:11px; color:var(--muted); margin-top:2px;}
+.pipe-arrow{align-self:center; color:var(--muted); font-size:16px; flex-shrink:0;}
+.rachel-strip{background:#111827; color:#fff; border-radius:var(--radius);
+  padding:14px 18px; margin-bottom:16px; font-size:14px;}
+.rachel-strip .en{color:#9ca3af;}
+.rachel-strip .rs-row{display:flex; align-items:center; gap:8px; flex-wrap:wrap;}
+.rachel-strip .rs-task{margin-top:6px; font-size:13px; color:#d1d5db;}
+.agent-grid{display:grid; grid-template-columns:repeat(2,1fr); gap:12px;}
+@media (max-width:760px){ .agent-grid{grid-template-columns:1fr;} }
+.agent-card{background:#fff; border:1px solid var(--line); border-radius:var(--radius); padding:18px 20px;}
+.agent-head{display:flex; align-items:flex-start; justify-content:space-between; gap:10px;}
+.agent-name{font-size:17px; font-weight:800;}
+.agent-role{font-size:13px; color:var(--muted); margin-top:2px;}
+.agent-badge{flex-shrink:0; font-size:11px; padding:4px 12px; border-radius:999px; font-weight:700; white-space:nowrap;}
+.agent-badge.active{background:var(--green-bg); color:var(--green); border:1px solid #b8ecd4;}
+.agent-badge.idle{background:var(--gray-bg); color:var(--muted); border:1px solid var(--line);}
+.agent-task{font-size:13px; background:var(--blue-soft); color:var(--blue);
+  border-radius:10px; padding:8px 12px; margin-top:12px;}
+.agent-stats{margin-top:12px;}
+.agent-stats .as-row{display:flex; justify-content:space-between; align-items:baseline; gap:10px;
+  padding:6px 0; border-bottom:1px solid var(--gray-bg); font-size:13px;}
+.agent-stats .as-row:last-child{border-bottom:none;}
+.agent-stats .as-row b{font-size:15px;}
+.agent-events{margin:12px 0 0; padding:0; list-style:none;}
+.agent-events li{font-size:13px; color:var(--body); padding:6px 0; border-bottom:1px solid var(--gray-bg);}
+.agent-events li:last-child{border-bottom:none;}
+.agent-events .ev-t{font-size:11px; color:var(--muted); display:block;}
 </style>
 </head>
 <body>
@@ -324,6 +362,7 @@ button .en{font-size:10px; opacity:.72; margin-top:1px;}
   <button data-page="review">📊<span>复盘<span class="en">Review</span></span></button>
   <button data-page="schedule">⏰<span>定时<span class="en">Schedule</span></span></button>
   <button data-page="connect">🔌<span>插件<span class="en">Extension</span></span></button>
+  <button data-page="team">👥<span>团队<span class="en">Team</span></span></button>
   <div id="pfWidget" title="点击管理画像">
     <div class="pfw-row"><span class="pfw-ic">🤵</span><span id="pfwPerson">…</span></div>
     <div class="pfw-row"><span class="pfw-ic">🎯</span><span id="pfwJob">…</span></div>
@@ -345,6 +384,7 @@ button .en{font-size:10px; opacity:.72; margin-top:1px;}
         </div>
       </div>
     </div>
+    <div class="team-teaser"><button id="teamLink" class="team-teaser-btn">认识你的求职团队 👥 团队<span class="en">Team</span></button></div>
     <div class="card">
       <div class="card-title">新手教程<span class="en">Getting started</span> <span class="card-desc">传完简历 AI 全自动开工，你只管审批<span class="en">Upload your resume — AI handles the rest, you just approve</span></span></div>
       <div id="tutorialSteps" class="steps"><div class="loading">加载中…</div></div>
@@ -403,7 +443,7 @@ button .en{font-size:10px; opacity:.72; margin-top:1px;}
   </section>
 
   <section class="page" id="page-sources">
-    <div class="page-h"><h2>职位来源<span class="en">Job sources</span></h2><p>智能模式每天自动抓取；也可手动添加关注的公司招聘页。<span class="en">Smart mode fetches daily; you can also add company career pages manually.</span></p></div>
+    <div class="page-h"><h2>职位来源<span class="en">Job sources</span></h2><p>智能模式每天自动抓取；也可手动添加关注的公司招聘页。<span class="en">Smart mode fetches daily; you can also add company career pages manually.</span><span class="agent-tag">由 Amy 负责<span class="en">Managed by Amy</span></span></p></div>
     <div class="card-title">职位来源<span class="en">Job sources</span></div>
     <div class="card">
       <div class="hint" style="margin:0 0 10px">💡 <b>智能模式已开启</b><span class="en">Smart mode is ON</span>：每天自动按你的画像生成搜索关键词，抓取 <b>Job Bank（加拿大官方）</b> + <b>14 家多伦多/加拿大公司</b>（Wealthsimple、1Password、StackAdapt…）+ 全网聚合源。下面是额外手动添加的公司（可选）。<span class="en">Keywords are auto-generated from your profile daily, covering Job Bank (Government of Canada), 14 Toronto/Canadian companies, and aggregators. Add more companies below if you like (optional).</span></div>
@@ -427,14 +467,14 @@ button .en{font-size:10px; opacity:.72; margin-top:1px;}
   </section>
 
   <section class="page" id="page-queue">
-    <div class="page-h"><h2>今日队列<span class="en">Today's queue</span></h2><p>按匹配分数排序的待投递职位，每天定时任务自动投递。<span class="en">Ranked jobs to apply, auto-submitted by the daily task.</span></p></div>
+    <div class="page-h"><h2>今日队列<span class="en">Today's queue</span></h2><p>按匹配分数排序的待投递职位，每天定时任务自动投递。<span class="en">Ranked jobs to apply, auto-submitted by the daily task.</span><span class="agent-tag">由 Caroline 负责投递<span class="en">Applications by Caroline</span></span></p></div>
     <div class="sec-head"><span class="count" id="queueCount"></span><button class="primary" id="queueRunNowBtn">🚀 立即开始投递<span class="en">Apply now</span></button><button id="refreshBtn">刷新<span class="en">Refresh</span></button></div>
     <div id="runProgress" style="display:none"></div>
     <div id="queue" style="margin-top:12px"><div class="loading">加载中…</div></div>
   </section>
 
   <section class="page" id="page-manual">
-    <div class="page-h"><h2>待人工处理<span class="en">Needs manual action</span></h2><p>遇到验证码或需要注册的职位，在这里手动完成投递。<span class="en">Jobs blocked by CAPTCHA or login — finish them here manually.</span></p></div>
+    <div class="page-h"><h2>待人工处理<span class="en">Needs manual action</span></h2><p>遇到验证码或需要注册的职位，在这里手动完成投递。<span class="en">Jobs blocked by CAPTCHA or login — finish them here manually.</span><span class="agent-tag">Caroline 遇到验证码或答不了的题时会交到这里<span class="en">Handed here by Caroline when blocked</span></span></p></div>
     <div class="card-title">待人工处理<span class="en">Needs manual action</span> <span class="count" id="manualCount"></span></div>
     <div id="manual"><div class="loading">加载中…</div></div>
   </section>
@@ -446,7 +486,7 @@ button .en{font-size:10px; opacity:.72; margin-top:1px;}
   </section>
 
   <section class="page" id="page-review">
-    <div class="page-h"><h2>复盘 · 求职助手<span class="en">Review &amp; job assistant</span></h2><p>问我投递进展、本周复盘、职位分析和面试建议——你的画像、申请记录和职位库都在我这儿。<span class="en">Ask about progress, weekly review, job analysis and interview tips — I have your profile, applications and job library.</span></p></div>
+    <div class="page-h"><h2>复盘 · 求职助手<span class="en">Review &amp; job assistant</span></h2><p>问我投递进展、本周复盘、职位分析和面试建议——你的画像、申请记录和职位库都在我这儿。<span class="en">Ask about progress, weekly review, job analysis and interview tips — I have your profile, applications and job library.</span><span class="agent-tag">复盘助手 Gloria<span class="en">Your review coach Gloria</span></span></p></div>
     <div class="card chat-card">
       <div class="chat-head">💬 求职助手<span class="en">Job assistant</span> <span class="hint" style="margin:0">问我投递进展、职位分析、面试建议<span class="en">Ask about progress, job analysis, interview tips</span></span>
         <button id="chatNewBtn" class="ghost-btn">＋ 新对话<span class="en">New chat</span></button></div>
@@ -535,6 +575,30 @@ button .en{font-size:10px; opacity:.72; margin-top:1px;}
       <div id="inviteNew" style="display:none;margin:8px 0"></div>
       <div id="inviteList"><div class="loading">加载中…</div></div>
     </div>
+  </section>
+
+  <section class="page" id="page-team">
+    <div class="page-h"><h2>求职团队<span class="en">Your job-search team</span></h2><p>四个 AI 智能体加一位总管，分工协作帮你找工作、投简历、做复盘。<span class="en">Four AI agents plus a supervisor, working together on your job search.</span></p></div>
+
+    <div class="card-title">投递流水线<span class="en">Pipeline</span></div>
+    <div class="pipe">
+      <div class="pipe-step"><div class="pn">Jennifer</div><div class="pd">画像与关键词<span class="en">Profile &amp; keywords</span></div></div>
+      <div class="pipe-arrow">→</div>
+      <div class="pipe-step"><div class="pn">Amy</div><div class="pd">职位搜罗<span class="en">Job hunting</span></div></div>
+      <div class="pipe-arrow">→</div>
+      <div class="pipe-step"><div class="pn">Jennifer</div><div class="pd">打分<span class="en">Scoring</span></div></div>
+      <div class="pipe-arrow">→</div>
+      <div class="pipe-step"><div class="pn">Caroline</div><div class="pd">填表投递<span class="en">Applying</span></div></div>
+      <div class="pipe-arrow">→</div>
+      <div class="pipe-step"><div class="pn">Gloria</div><div class="pd">复盘<span class="en">Review</span></div></div>
+    </div>
+
+    <div id="rachelStrip" class="rachel-strip">
+      <div class="rs-row"><span>👩‍💼</span><b>总管 Rachel</b><span class="en">Supervisor</span><span>· 每天 8:00 自动投递 10 份</span><span class="en">Auto-applies 10 jobs daily at 8:00 AM</span><span style="margin-left:auto" class="agent-badge idle">空闲中 · Idle</span></div>
+    </div>
+
+    <div class="card-title">智能体<span class="en">Agents</span></div>
+    <div id="teamCards" class="agent-grid"><div class="loading">加载中…</div></div>
   </section>
 </main>
 </div>
@@ -1388,6 +1452,7 @@ function showPage(name) {
     p.classList.toggle("on", p.id === "page-" + name));
   window.scrollTo({ top: 0 });
   try { localStorage.setItem("applai_page", name); } catch (e) {}
+  if (name === "team") loadTeam();
 }
 document.querySelectorAll("#sidenav button[data-page]").forEach((b) =>
   b.addEventListener("click", () => showPage(b.dataset.page)));
@@ -2367,6 +2432,70 @@ async function loadGmail() {
   if (g) history.replaceState(null, "", location.pathname);
 })();
 
+
+/* ---------- 团队 ---------- */
+const TEAM_META = [
+  { id: "jennifer", name: "Jennifer", role_zh: "简历与市场分析", role_en: "Resume & Market Analysis" },
+  { id: "amy", name: "Amy", role_zh: "职位搜罗", role_en: "Job Hunter" },
+  { id: "caroline", name: "Caroline", role_zh: "填表投递", role_en: "Application Specialist" },
+  { id: "gloria", name: "Gloria", role_zh: "复盘", role_en: "Review Coach" },
+];
+const fmtISO = (iso) => {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (isNaN(d)) return esc(String(iso));
+  return d.toLocaleString("zh-CN", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" });
+};
+function agentStatusBadge(a) {
+  return (a && a.status === "active")
+    ? `<span class="agent-badge active">工作中 · Active</span>`
+    : `<span class="agent-badge idle">空闲中 · Idle</span>`;
+}
+function agentCard(m, a) {
+  const task = (a && a.current_task)
+    ? `<div class="agent-task">正在做：${esc(a.current_task)}<span class="en">Current task</span></div>` : "";
+  const stats = (a && a.today_stats && a.today_stats.length)
+    ? `<div class="agent-stats">${a.today_stats.map((s) =>
+        `<div class="as-row"><span>${esc(s.label_zh)}<span class="en">${esc(s.label_en || "")}</span></span><b>${esc(s.value)}</b></div>`).join("")}</div>`
+    : `<div class="hint">今日暂无数据<span class="en">No data today</span></div>`;
+  const events = (a && a.recent_events && a.recent_events.length)
+    ? `<ul class="agent-events">${a.recent_events.map((ev) =>
+        `<li>${esc(ev.summary || ev.event || "")}<span class="ev-t">${fmtISO(ev.created_at)}</span></li>`).join("")}</ul>`
+    : `<div class="hint">暂无动态<span class="en">No recent activity</span></div>`;
+  return `<div class="agent-card">
+    <div class="agent-head">
+      <div><div class="agent-name">${esc(m.name)}</div>
+      <div class="agent-role">${esc(m.role_zh)}<span class="en">${esc(m.role_en)}</span></div></div>
+      ${agentStatusBadge(a)}
+    </div>
+    ${task}
+    ${stats}
+    ${events}
+  </div>`;
+}
+function renderRachel(r) {
+  const el = $("rachelStrip");
+  if (!el) return;
+  const task = (r && r.current_task)
+    ? `<div class="rs-task">正在做：${esc(r.current_task)}<span class="en">Current task</span></div>` : "";
+  // 排班文案来自 Rachel 的 live today_stats，不写死 8:00 / 10 份；定时未开则明说。
+  const plan = (r && r.today_stats && r.today_stats.length)
+    ? `<span>· ${esc(r.today_stats[0].label_zh)} ${esc(r.today_stats[0].value)} 份</span><span class="en">${esc(r.today_stats[0].label_en || "")} · ${esc(r.today_stats[0].value)} jobs</span>`
+    : `<span>· 定时投递未开启</span><span class="en">Scheduled applying off</span>`;
+  el.innerHTML = `<div class="rs-row"><span>👩‍💼</span><b>总管 Rachel</b><span class="en">Supervisor</span>${plan}<span style="margin-left:auto">${agentStatusBadge(r)}</span></div>${task}`;
+}
+async function loadTeam() {
+  const box = $("teamCards");
+  if (!box) return;
+  // /api/v1/agents 可能还没上线：失败就按静态角色信息渲染空闲卡片，绝不影响其它页面。
+  let data = null;
+  try { data = await api("/api/v1/agents"); } catch (e) { data = null; }
+  const byId = {};
+  ((data && data.agents) || []).forEach((a) => { if (a && a.id) byId[a.id] = a; });
+  box.innerHTML = TEAM_META.map((m) => agentCard(m, byId[m.id])).join("");
+  renderRachel(byId.rachel);
+}
+$("teamLink").onclick = () => showPage("team");
 
 /* ---------- 复盘 ---------- */
 </script>
