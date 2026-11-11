@@ -48,6 +48,8 @@ Event logging (coarse milestones ONLY, via db.log_agent_event, best-effort):
 """
 
 import datetime as _datetime
+import logging as _logging
+import threading as _threading
 import time
 
 from fastapi import HTTPException, UploadFile
@@ -68,29 +70,151 @@ def _log(uid: str, event: str, summary: str, ref_id=None) -> None:
         pass
 
 
+# ---------- 后台打分线程 / background scorer (Jennifer) ----------
+# 根因 2026-11-11（本地复现确认），两处叠加：
+# (1) 旧线程把 db.get_active_profile(uid) 返回的包装 dict（{"id", "profile":
+# {...}, ...}）直接传给 score_and_store，而 matcher 要的是画像本身
+# （db.get_profile(uid) 的合并 dict）。包装里没有 targetTitles，标题分恒为 0，
+# 规则分最高 25，永远进不了 ≥40 的队列；同步路径（amy.add_job）一直用的是
+# get_profile，所以同步打分正常（85 分），只有后台线程是错的。
+# (2) 列默认值陷阱：jobs 表 score DEFAULT 0、score_via DEFAULT 'rules'、
+# score_reasons DEFAULT '[]'——新入库的行天生就长得像“已打成 0 分”。按
+# score_via 判“是否打过分”的谓词会把所有新职位都排除在外，线程根本捞不到
+# 待打分职位（本地复现：_score_batch listed==0，心跳 loops==0）；而旧的
+# score=0 谓词又会把已打 0 分的职位反复捞回、空转。唯一可靠的信号是
+# score_reasons 的内容（只有打分成功才会写入非空理由列表）。
+# 修复：线程改用 db.get_profile(uid)；list_unscored_jobs 按 score_reasons
+# 内容判定未打分；单步抽成 _score_batch 方便测试；加心跳 + 监督线程，
+# 静默失败不再可能。
+_logger = _logging.getLogger("applai.scorer")
+
+_SCORE_SLEEP = 1.0          # 每打一个职位后的限流等待（秒），测试可 monkeypatch 为 0
+_SUPERVISOR_INTERVAL = 30   # 监督线程检查打分线程存活的间隔（秒），测试可调小
+_LOOP_IDLE_SLEEP = 30       # 无待打分职位时循环等待（秒）
+
+_HEARTBEAT_LOCK = _threading.Lock()
+_HEARTBEAT = {
+    "thread_started_at": None,  # ISO UTC：打分线程最近一次启动时间
+    "last_loop_at": None,       # ISO UTC：最近一次打分循环完成时间
+    "last_error": None,         # 最近一次打分错误（字符串），干净循环后清掉
+    "last_error_at": None,      # ISO UTC
+    "jobs_scored": 0,           # 本进程累计打分成功数
+    "loops": 0,                 # 本进程累计打分循环数
+    "restarts": 0,              # 监督线程重启打分线程的次数
+}
+_SCORER_THREAD = None
+_SUPERVISOR_THREAD = None
+_SUPERVISOR_LOCK = _threading.Lock()
+_SCORER_EVER_STARTED = False
+
+
+def _now_iso() -> str:
+    return _datetime.datetime.now(_datetime.timezone.utc).isoformat()
+
+
+def _hb_update(**kw) -> None:
+    with _HEARTBEAT_LOCK:
+        _HEARTBEAT.update(kw)
+
+
+def _hb_snapshot() -> dict:
+    with _HEARTBEAT_LOCK:
+        return dict(_HEARTBEAT)
+
+
+def _scorer_alive() -> bool:
+    t = _SCORER_THREAD
+    return t is not None and t.is_alive()
+
+
+def _score_batch(limit: int = 20) -> dict:
+    """单次打分：取最新一批未打分职位逐个打分。返回
+    {"listed": n, "scored": n, "skipped": n, "errors": [str]}。
+    listed==0 表示无事可做（调用方等 30 秒再试）。单步可独立测试；
+    线程循环只是反复调用它。失败的职位记日志、记心跳，不阻塞其他职位。
+    心跳由本函数维护——无论调用方是线程循环还是直接调用，每次打分都留下
+    真实证据（loops / jobs_scored / last_loop_at / last_error）。"""
+    try:
+        jobs = db.list_unscored_jobs(limit=limit)
+    except Exception as e:
+        msg = f"list_unscored_jobs: {e}"
+        _logger.warning("scorer: %s", msg)
+        _hb_update(last_error=msg[:200], last_error_at=_now_iso(),
+                   last_loop_at=_now_iso(), loops=_HEARTBEAT["loops"] + 1)
+        return {"listed": 0, "scored": 0, "skipped": 0, "errors": [msg]}
+    scored = skipped = 0
+    errors = []
+    for job in jobs:
+        try:
+            uid = job.get("user_id")
+            # 关键：画像本身（合并 dict），不是 get_active_profile 的包装 dict。
+            profile = db.get_profile(uid) or {}
+            if not profile:
+                skipped += 1
+                continue
+            score_and_store(uid, job["id"], profile)
+            scored += 1
+        except Exception as e:
+            msg = f"job {job.get('id')}: {e}"
+            errors.append(msg)
+            _logger.warning("scorer: %s", msg)
+        time.sleep(_SCORE_SLEEP)
+    with _HEARTBEAT_LOCK:
+        _HEARTBEAT["loops"] += 1
+        _HEARTBEAT["jobs_scored"] += scored
+        _HEARTBEAT["last_loop_at"] = _now_iso()
+        if errors:
+            _HEARTBEAT["last_error"] = errors[-1][:200]
+            _HEARTBEAT["last_error_at"] = _now_iso()
+        else:
+            _HEARTBEAT["last_error"] = None
+            _HEARTBEAT["last_error_at"] = None
+    return {"listed": len(jobs), "scored": scored, "skipped": skipped, "errors": errors}
+
+
 def _background_scorer():
     """后台打分守护线程：独立于抓取，持续给未打分职位打分。
-
-    根因修复：之前抓取时同步补打分，导致抓取卡死；现在抓取只入库，打分由这个线程慢慢补。
-    """
-    import time as _time
+    自己永远不静默死去：任何异常都记日志 + 写心跳，循环继续。
+    心跳由 _score_batch 维护；这里只做最后一道防线。"""
+    _hb_update(thread_started_at=_now_iso())
     while True:
         try:
-            jobs = db.list_unscored_jobs(limit=20)
-            if not jobs:
-                _time.sleep(30)
-                continue
-            for job in jobs:
-                try:
-                    uid = job.get("user_id")
-                    profile = db.get_active_profile(uid) or {}
-                    if profile:
-                        score_and_store(uid, job["id"], profile)
-                except Exception:
-                    pass
-                _time.sleep(1)  # 限流，避免 LLM 调用过密
-        except Exception:
-            _time.sleep(30)
+            res = _score_batch(limit=20)
+            if res["listed"] == 0:
+                time.sleep(_LOOP_IDLE_SLEEP)
+        except Exception as e:
+            msg = f"loop: {e}"
+            _logger.warning("scorer: %s", msg)
+            _hb_update(last_error=msg[:200], last_error_at=_now_iso())
+            time.sleep(_LOOP_IDLE_SLEEP)
+
+
+def _start_scorer_thread(restart: bool = False) -> None:
+    """启动（或重启）打分线程。只由监督线程调用。"""
+    global _SCORER_THREAD, _SCORER_EVER_STARTED
+    with _SUPERVISOR_LOCK:
+        t = _threading.Thread(target=_background_scorer, daemon=True)
+        t.start()
+        _SCORER_THREAD = t
+        _SCORER_EVER_STARTED = True
+        if restart:
+            with _HEARTBEAT_LOCK:
+                _HEARTBEAT["restarts"] += 1
+
+
+def _supervisor_loop():
+    """监督线程：定期确认打分线程还活着，死了就重启并记日志。
+    打分线程本身有外层 try/except 几乎不会死；监督是第二道防线。"""
+    while True:
+        try:
+            if not _scorer_alive():
+                restart = _SCORER_EVER_STARTED
+                _start_scorer_thread(restart=restart)
+                if restart:
+                    _logger.warning("scorer: thread was dead, restarted")
+        except Exception as e:
+            _logger.warning("scorer supervisor error: %s", e)
+        time.sleep(_SUPERVISOR_INTERVAL)
 
 
 class ProfileIn(BaseModel):
@@ -324,20 +448,47 @@ async def resume_parse(uid: str, file: UploadFile):
 
 
 def start_background_scorer():
-    """Spawn the background scorer thread EXACTLY as app.py's startup handler
-    does today (app.py:100-101): same target, same daemon setting.
-    Call explicitly from the coordinator wiring — nothing starts on import."""
-    import threading as _threading
-    _threading.Thread(target=_background_scorer, daemon=True).start()
+    """启动后台打分（监督线程；监督线程立即启动打分线程）。
+    幂等：重复调用不会启动第二个监督线程。应用启动时由 app.py 调用；
+    import 时不启动任何线程。"""
+    global _SUPERVISOR_THREAD
+    with _SUPERVISOR_LOCK:
+        if _SUPERVISOR_THREAD is not None and _SUPERVISOR_THREAD.is_alive():
+            return
+        t = _threading.Thread(target=_supervisor_loop, daemon=True)
+        t.start()
+        _SUPERVISOR_THREAD = t
+
+
+def _rel_time(iso) -> str:
+    """ISO 时间 → '刚刚 / N秒前 / N分钟前 / N小时前 / N天前'；解析失败返回原文。"""
+    if not iso:
+        return "从未运行"
+    try:
+        dt = _datetime.datetime.fromisoformat(str(iso))
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=_datetime.timezone.utc)
+        secs = (_datetime.datetime.now(_datetime.timezone.utc) - dt).total_seconds()
+    except Exception:
+        return str(iso)
+    if secs < 10:
+        return "刚刚"
+    if secs < 60:
+        return f"{int(secs)}秒前"
+    if secs < 3600:
+        return f"{int(secs // 60)}分钟前"
+    if secs < 86400:
+        return f"{int(secs // 3600)}小时前"
+    return f"{int(secs // 86400)}天前"
 
 
 def status(uid: str) -> dict:
     """Team-page status. 'active' ONLY from real evidence: a jennifer
-    agent_events row within the last hour. The scorer thread runs
-    continuously, so its mere existence is NOT evidence of activity.
-    today_stats is [] — the jobs table carries no scored-at timestamp and
-    db.update_job_score stamps no time, so 'jobs scored today' cannot be
-    counted from real data. Never raises."""
+    agent_events row within the last hour, OR the scorer thread having
+    looped within the last 10 minutes (heartbeat — the thread loops at
+    least every 30s when idle, so a stale loop means it is stuck/dead).
+    today_stats 包含打分心跳（线程存活、上次循环、累计打分数、待打分数、
+    最近错误）——全部来自真实数据。Never raises."""
     last_activity = None
     try:
         events = db.list_agent_events(uid, agent="jennifer", limit=1)
@@ -355,9 +506,60 @@ def status(uid: str) -> dict:
             active = _datetime.timedelta(0) <= delta <= _datetime.timedelta(hours=1)
         except Exception:
             active = False
+    hb = _hb_snapshot()
+    alive = _scorer_alive()
+    loop_fresh = False
+    last_loop = hb.get("last_loop_at")
+    if last_loop:
+        try:
+            dt = _datetime.datetime.fromisoformat(str(last_loop))
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=_datetime.timezone.utc)
+            delta = _datetime.datetime.now(_datetime.timezone.utc) - dt
+            loop_fresh = _datetime.timedelta(0) <= delta <= _datetime.timedelta(minutes=10)
+        except Exception:
+            loop_fresh = False
+    if alive and loop_fresh:
+        active = True
     out = {"status": "active" if active else "idle", "today_stats": []}
     if last_activity:
         out["last_activity"] = last_activity
+    elif last_loop:
+        out["last_activity"] = last_loop
+    # 打分心跳（全局，不分用户；全部来自真实数据，失败也不影响本函数）。
+    # 只在有真实证据时才报：线程从未启动、一次循环都没跑过时，today_stats
+    # 保持为空——与“无活动时统计为空”的 Team 页约定一致；线上进程启动时
+    # 线程即随之启动，所以生产环境这几行恒在。
+    has_hb = (hb.get("thread_started_at") is not None
+              or hb.get("last_loop_at") is not None
+              or hb.get("jobs_scored", 0) > 0
+              or hb.get("last_error") is not None)
+    pending = None
+    if has_hb:
+        stats = [
+            {"label_zh": "打分线程", "label_en": "Scorer thread",
+             "value": "运行中" if alive else "未运行"},
+            {"label_zh": "已打分（本进程累计）", "label_en": "Jobs scored (this process)",
+             "value": str(hb.get("jobs_scored", 0))},
+        ]
+        pending = None
+        try:
+            pending = db.count_unscored_jobs()
+            stats.append({"label_zh": "待打分", "label_en": "Pending scoring",
+                          "value": str(pending)})
+        except Exception:
+            pending = None
+        stats.append({"label_zh": "上次打分循环", "label_en": "Last scorer loop",
+                      "value": _rel_time(last_loop)})
+        if hb.get("last_error"):
+            stats.append({"label_zh": "最近打分错误", "label_en": "Last scorer error",
+                          "value": str(hb["last_error"])[:60]})
+        out["today_stats"] = stats
+    # current_task 只在真正“正在干活”时才报：线程存活、循环新鲜、且有待打分
+    # 队列。线程未运行不是“当前任务”，是健康状态——today_stats 里的“打分线程”
+    # 一行已经报了“未运行”，监督线程负责重启；空闲时 current_task 必须为 None。
+    if alive and loop_fresh and pending:
+        out["current_task"] = f"正在打分（待打分 {pending} 个）"
     return out
 
 

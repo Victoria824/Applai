@@ -1354,14 +1354,35 @@ def latest_fetch_jobs(user_id: str, since: float, until: float) -> list:
 
 
 def list_unscored_jobs(limit: int = 50) -> list:
-    """所有用户里还没打分的职位（score 为 0 或 NULL），按最新优先。"""
+    """所有用户里还没打分的职位，按最新优先。
+    “没打分”的判定（2026-11-11，本地复现确认）：jobs 表的列默认值让“刚入库、
+    从未打分”的行看起来像已打分——score DEFAULT 0、score_via DEFAULT 'rules'、
+    score_reasons DEFAULT '[]'。所以 score=0 和 score_via 都不能用来判断；
+    唯一可靠的信号是 score_reasons 的内容：只有 update_job_score()（打分
+    成功时）才会写入非空的理由列表，新入库的行恒为 '[]'。打成 0 分的职位
+    会写真实理由，不再回炉——否则线程会在最新的 0 分职位上永远空转。"""
     conn = get_db()
     rows = conn.execute(
-        "SELECT * FROM jobs WHERE score IS NULL OR score = 0 ORDER BY created_at DESC LIMIT ?",
+        "SELECT * FROM jobs WHERE score IS NULL OR (score = 0 AND "
+        "(score_reasons IS NULL OR score_reasons = '[]' OR score_reasons = '')) "
+        "ORDER BY created_at DESC LIMIT ?",
         (limit,)).fetchall()
     out = [_parse_reasons(dict(r)) for r in rows]
     conn.close()
     return out
+
+
+def count_unscored_jobs() -> int:
+    """list_unscored_jobs 的计数版（团队页打分心跳用）。"""
+    conn = get_db()
+    try:
+        row = conn.execute(
+            "SELECT COUNT(*) n FROM jobs WHERE score IS NULL OR (score = 0 AND "
+            "(score_reasons IS NULL OR score_reasons = '[]' OR score_reasons = ''))"
+        ).fetchone()
+        return int(dict(row)["n"])
+    finally:
+        conn.close()
 
 
 def create_discover_task(task_id: str, user_id: str):
