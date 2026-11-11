@@ -290,6 +290,7 @@ button .en{font-size:10px; opacity:.72; margin-top:1px;}
 .prog-bar{height:8px;background:#dbe7ff;border-radius:99px;margin:8px 0;overflow:hidden}
 .prog-fill{height:100%;background:#2f7cf6;border-radius:99px;transition:width .6s ease}
 .prog-meta{color:#445;font-size:13px}
+.prog-dismiss{float:right;border:0;background:transparent;font-size:18px;line-height:1;color:#889;cursor:pointer;padding:0 2px}
 .badge-applying{display:inline-block;background:#2f7cf6;color:#fff;font-size:11px;border-radius:99px;padding:1px 8px;vertical-align:middle;animation:apulse 1.2s infinite}
 .badge-applying .en{color:#dceaff}
 @keyframes apulse{0%,100%{opacity:1}50%{opacity:.45}}
@@ -778,6 +779,16 @@ let RUNPROG = null;
 let _progTimer = null;
 let _lastProgProcessed = -1;
 let _lastProgJob = -1;
+// Apply-now 后等插件上报新一轮进度：这段时间内旧行不算数，别把它画回来
+let _progExpectUntil = 0;
+let _progExpectHint = false;
+
+function _progDismissedAt() {
+  try { return localStorage.getItem("applai_prog_dismissed"); } catch (e) { return null; }
+}
+function _clearProgDismiss() {
+  try { localStorage.removeItem("applai_prog_dismissed"); } catch (e) {}
+}
 
 function renderRunProgress(p) {
   RUNPROG = p;
@@ -789,6 +800,12 @@ function renderRunProgress(p) {
   let state = p.state;
   if (state === "running" && age > 1200) state = "stale";
   if (state === "done" && age > 1800) { box.style.display = "none"; if (btn) btn.disabled = false; return; }
+  if (state !== "running" && state !== "done") {
+    // 中断横幅和完成横幅一样，30 分钟后自动消失；× 关闭后只对这一轮生效
+    if (age > 1800) { box.style.display = "none"; if (btn) btn.disabled = false; return; }
+    const dismissed = _progDismissedAt();
+    if (dismissed && String(p.started_at) === dismissed) { box.style.display = "none"; if (btn) btn.disabled = false; return; }
+  }
   box.style.display = "block";
   if (btn) btn.disabled = (state === "running");
   const pct = p.total ? Math.round(100 * p.processed / p.total) : 10;
@@ -801,10 +818,11 @@ function renderRunProgress(p) {
   } else if (state === "done") {
     box.innerHTML = `<div class="prog-card done">
       <div class="prog-head">✓ 本轮投递完成<span class="en">Run finished</span></div>
-      <div class="prog-meta">共 ${p.total} 个职位 · 已提交 ${p.submitted} · 待人工 ${p.manual} · 失败 ${p.failed}</div>
+      <div class="prog-meta">共 ${p.total} 个职位 · 已提交 ${p.submitted} · 待人工 ${p.manual} · 失败 ${p.failed}${p.current_title ? `<br>${esc(p.current_title)}` : ""}</div>
     </div>`;
   } else {
     box.innerHTML = `<div class="prog-card done">
+      <button class="prog-dismiss" data-dismiss-prog="${esc(String(p.started_at || ""))}" title="关闭">×</button>
       <div class="prog-head">上一轮投递似乎中断了<span class="en">Last run interrupted</span></div>
       <div class="prog-meta">进度停在 ${p.processed}/${p.total}（插件或浏览器可能被关闭），重新点「立即开始投递」即可。</div>
     </div>`;
@@ -815,9 +833,25 @@ async function pollRunProgress() {
   try {
     const d = await api("/api/v1/run-progress");
     const p = d.progress;
-    renderRunProgress(p);
     const fresh = p && (Date.now() / 1000 - (p.updated_at || 0)) <= 1200;
-    if (p && p.state === "running" && fresh) {
+    const freshRunning = p && p.state === "running" && fresh;
+    if (_progExpectUntil && Date.now() < _progExpectUntil) {
+      if (freshRunning) { _progExpectUntil = 0; _progExpectHint = false; }
+      else {
+        // 还在等插件上报新一轮：保持乐观态，别把旧横幅画回来
+        if (!_progTimer) _progTimer = setInterval(pollRunProgress, 4000);
+        return;
+      }
+    } else if (_progExpectUntil) {
+      _progExpectUntil = 0;
+      if (!freshRunning && !_progExpectHint) {
+        _progExpectHint = true;
+        toast("未检测到插件投递进度：请确认插件已连接，或刷新页面重试");
+      }
+    }
+    renderRunProgress(p);
+    if (freshRunning) {
+      _clearProgDismiss();
       if (p.processed !== _lastProgProcessed || p.current_job_id !== _lastProgJob) {
         _lastProgProcessed = p.processed;
         _lastProgJob = p.current_job_id;
@@ -837,6 +871,13 @@ async function pollRunProgress() {
 }
 
 document.addEventListener("click", (ev) => {
+  const dbtn = ev.target.closest("button[data-dismiss-prog]");
+  if (dbtn) {
+    try { localStorage.setItem("applai_prog_dismissed", dbtn.dataset.dismissProg); } catch (e) {}
+    const box = $("runProgress");
+    if (box) box.style.display = "none";
+    return;
+  }
   const b = ev.target.closest("button[data-act]");
   if (b) markApp(b.dataset.job, b.dataset.act);
 });
@@ -862,7 +903,16 @@ $("queueRunNowBtn").onclick = async () => {
     window.addEventListener("message", handler);
     window.postMessage({ type: "APPLAI_RUN_NOW" }, "*");
   });
-  if (result && result.ok) { done(result.already ? "投递已在进行中 ✓ 插件正在后台逐个投递" : "已通知插件开始投递 ✓ 插件会在后台逐个填表提交"); pollRunProgress(); return; }
+  if (result && result.ok) {
+    done(result.already ? "投递已在进行中 ✓ 插件正在后台逐个投递" : "已通知插件开始投递 ✓ 插件会在后台逐个填表提交");
+    // 乐观态：立刻顶掉旧横幅，等插件上报新一轮进度（最多等 60 秒）
+    _progExpectUntil = Date.now() + 60000;
+    _progExpectHint = false;
+    _clearProgDismiss();
+    renderRunProgress({ state: "running", total: 0, processed: 0, submitted: 0, manual: 0, failed: 0, current_job_id: 0, current_title: "正在启动…", updated_at: Date.now() / 1000, started_at: Date.now() / 1000 });
+    pollRunProgress();
+    return;
+  }
   if (result) { done("启动失败，请在插件弹窗里点“立即执行投递”"); return; }
   // 3 秒无回应不等于没装插件：分级诊断（在不在这个页面 / 版本新旧）
   const pong = await new Promise((resolve) => {
@@ -1515,6 +1565,7 @@ function showPage(name) {
   if (name === "team") loadTeam();
   if (name === "sources") loadLatestFetch();
   else stopLatestPoll();
+  if (name === "queue") pollRunProgress();
 }
 document.querySelectorAll("#sidenav button[data-page]").forEach((b) =>
   b.addEventListener("click", () => showPage(b.dataset.page)));

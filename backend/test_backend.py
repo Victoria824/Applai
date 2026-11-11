@@ -667,6 +667,26 @@ def test_run_progress():
     assert cb.get("/api/v1/run-progress").json()["progress"] is None
 
 
+def test_run_progress_stale_derived_server_side():
+    """超过 20 分钟未更新的 running 进度，后端读出来就是 stale。"""
+    import time as _time
+    import db as dbmod
+    c = _authed_client("prog_stale")
+    uid = c.get("/api/v1/auth/me").json()["app_user_id"]
+    dbmod.upsert_run_progress(uid, {"state": "running", "total": 5, "processed": 0})
+    conn = dbmod.get_db()
+    conn.execute("UPDATE run_progress SET updated_at=? WHERE user_id=?",
+                 (_time.time() - 1300, uid))
+    conn.commit()
+    conn.close()
+    p = c.get("/api/v1/run-progress").json()["progress"]
+    assert p["state"] == "stale"
+    # 新鲜的 running 行不受影响
+    dbmod.upsert_run_progress(uid, {"state": "running", "total": 5, "processed": 1})
+    p2 = c.get("/api/v1/run-progress").json()["progress"]
+    assert p2["state"] == "running"
+
+
 def test_resume_display_name():
     """投递简历文件名必须专业：First_Last_Resume.pdf；无姓名时退回 Resume.pdf。"""
     from agents.jennifer import _resume_display_name

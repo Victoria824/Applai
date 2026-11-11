@@ -243,7 +243,7 @@ async function findManualJob(pageUrl) {
 
 async function reportProgress(patch) {
   // 进度上报给后端，控制台轮询展示；上报失败绝不能影响投递本身
-  try { await apiPost('/api/v1/run-progress', patch); } catch (e) { /* ignore */ }
+  try { await apiPost('/api/v1/run-progress', patch); } catch (e) { console.warn('[Applai] run-progress 上报失败', e); }
 }
 
 async function recordSnapshot(userId, job, fillResult, profile, resumeInfo) {
@@ -317,6 +317,8 @@ async function _runDailyQueueImpl(trigger) {
             const st = await apiGet(`/api/v1/jobs/discover/status/${t.task_id}`);
             if (st.status === 'done' || st.status === 'error') break;
           } catch (e) { break; }
+          // 抓取可能持续数分钟：每 30 秒报一次心跳，免得控制台把进度判为中断
+          if (i % 6 === 5) await reportProgress({ state: 'running', total: 0, processed: 0, submitted: 0, manual: 0, failed: 0, current_job_id: 0, current_title: '正在抓取新职位…' });
         }
       }
     } catch (e) { /* best effort */ }
@@ -324,10 +326,12 @@ async function _runDailyQueueImpl(trigger) {
     queue = data.jobs || [];
   } catch (e) {
     await pushViaNtfy('Applai：今日投递失败', `无法连接后端（${s.backendUrl}），请检查后端是否运行`);
+    await reportProgress({ state: 'done', total: 0, processed: 0, submitted: 0, manual: 0, failed: 0, current_job_id: 0, current_title: '无法连接后端' });
     return;
   }
   if (!queue.length) {
     await desktopNotify('Applai：今日无可投职位', '匹配队列为空，先去后端添加职位源');
+    await reportProgress({ state: 'done', total: 0, processed: 0, submitted: 0, manual: 0, failed: 0, current_job_id: 0, current_title: '队列为空' });
     return;
   }
 

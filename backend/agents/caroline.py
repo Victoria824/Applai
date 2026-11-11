@@ -195,7 +195,13 @@ def post_run_progress(uid: str, body: RunProgressIn):
 
 
 def read_run_progress(uid: str):
-    return {"progress": db.get_run_progress(uid)}
+    p = db.get_run_progress(uid)
+    if p and p.get("state") == "running" and p.get("updated_at") \
+            and time.time() - p["updated_at"] > 1200:
+        # 超过 20 分钟没更新的 running 行：后端直接判为 stale，前端不再自己猜
+        p = dict(p)
+        p["state"] = "stale"
+    return {"progress": p}
 
 
 # ---------- 快照 / 简历读取 ----------
