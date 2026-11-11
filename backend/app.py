@@ -80,7 +80,8 @@ def health():
 
 @app.put("/api/v1/profile")
 def put_profile(body: jennifer.ProfileIn, user: dict = Depends(get_current_user)):
-    return jennifer.put_profile(user["app_user_id"], body)
+    # 2026-11-11 Victoria's call: profile saves reset scores + keywords cache.
+    return jennifer.put_profile_with_reset(user["app_user_id"], body)
 
 
 @app.get("/api/v1/profile")

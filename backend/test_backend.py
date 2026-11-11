@@ -436,18 +436,38 @@ def test_queue_is_readonly():
 
 
 def test_profile_update_resets_keywords_and_scores():
+    # 2026-11-11 Victoria's call: PUT /api/v1/profile resets scores AND the
+    # keywords cache (live handler is jennifer.put_profile_with_reset).
+    # Uses the real authed user id (the old version read settings for
+    # user_id "" and passed vacuously).
     c = _authed_client("rsetqa")
-    c.put("/api/v1/profile", json={"user_id": "x", "profile": {"targetTitles": ["AI Engineer"]}})
-    c.post("/api/v1/settings/keywords/refresh")
-    k1 = c.get("/api/v1/settings/keywords").json()["keywords"]
-    assert k1  # 有缓存
-    # 更新画像 → 缓存失效
-    c.put("/api/v1/profile", json={"user_id": "x", "profile": {"targetTitles": ["Cleaner"]}})
     import db as dbm, time
-    st = dbm.get_settings(c.post("/api/v1/auth/login", json={
-        "username": "rsetqa", "password": "testpass123"}).json().get("user_id", ""))
-    # keywords_updated 被清零（通过内部检查）
-    assert st["keywords_updated"] == 0
+    import agents.jennifer as jenn
+    c.put("/api/v1/profile", json={"user_id": "x", "profile": {"targetTitles": ["AI Engineer"]}})
+    uid = c.get("/api/v1/profile").json()["user_id"]
+    # 种子：关键词缓存 + 一个已打分的未处理职位
+    dbm.update_settings(uid, job_keywords=["AI Engineer"], keywords_note="seed",
+                        keywords_updated=time.time())
+    jid = c.post("/api/v1/jobs", json={
+        "user_id": "x", "url": "https://example.com/j1", "title": "AI Engineer",
+        "company": "Acme", "location": "Toronto"}).json()["id"]
+    dbm.update_job_score(jid, 80, ["test"], "rules")
+    assert dbm.get_job(jid)["score"] == 80
+    assert dbm.get_settings(uid)["keywords_updated"] > 0
+    # 挡住异步重打分线程，让 reset 的结果可确定地被观测到
+    orig = jenn._rescore_pending
+    jenn._rescore_pending = lambda u: None
+    try:
+        r = c.put("/api/v1/profile", json={"user_id": "x", "profile": {"targetTitles": ["Cleaner"]}})
+        assert r.status_code == 200
+    finally:
+        jenn._rescore_pending = orig
+    # 画像本身已保存
+    assert c.get("/api/v1/profile").json()["profile"]["targetTitles"] == ["Cleaner"]
+    # 关键词缓存失效（时间戳清零，下次读取重新生成）
+    assert dbm.get_settings(uid)["keywords_updated"] == 0
+    # 未处理职位的分数被清零
+    assert dbm.get_job(jid)["score"] is None
 
 
 def test_chat_conversations():

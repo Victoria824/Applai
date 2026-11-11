@@ -16,16 +16,13 @@ Moved from app.py (line numbers verified by grep/ast on 2026-11-05):
     resume_parse              app.py:1348  | ProfileIn               app.py:108
     (scorer thread start       app.py:100-101, inside the startup handler)
 
-DUPLICATE put_profile — see the note above the second definition. Both
-definitions are preserved here in the same order as app.py, so the module-level
-name `put_profile` resolves to the second one, exactly as in app.py today.
-WARNING (verified 2026-11-05 with a live TestClient probe): at the HTTP level
-today the FIRST definition serves PUT /api/v1/profile (Starlette matches the
-first-registered route), so its keyword-invalidation / score-reset / rescore
-logic in the second definition is currently DEAD for HTTP traffic. Wiring the
-route to `jennifer.put_profile` by name will CHANGE live behaviour (resets
-will start happening). The coordinator must consciously choose which
-behaviour the single surviving route should have.
+put_profile — two variants (see the notes above each definition).
+`put_profile` (#1, plain upsert) used to serve PUT /api/v1/profile;
+`put_profile_with_reset` (#2, upsert + keywords invalidation + score
+reset + background rescore) was unwired. DECISION 2026-11-11 (Victoria):
+profile saves MUST reset scores and the keywords cache — the live route
+now wires to `put_profile_with_reset`. #1 is kept as an unwired helper
+(plain upsert, no reset) and must not be re-wired without her call.
 
 Transformations applied to route handlers ONLY (pure helpers are verbatim):
   - No FastAPI decorators, no Depends, no Request. Handlers take `uid`
@@ -43,7 +40,7 @@ Agent interface (GET /api/v1/agents lazy-imports this module):
     app.py's startup handler does; nothing starts on import.
 
 Event logging (coarse milestones ONLY, via db.log_agent_event, best-effort):
-  profile_updated (put_profile), keywords_refreshed (refresh_keywords),
+  profile_updated (put_profile_with_reset), keywords_refreshed (refresh_keywords),
   rescore_finished (_rescore_pending), suggest_job_generated,
   resume_parsed. NEVER per-job scoring events — the scorer runs ~1/sec.
   get_keywords is a read path and does NOT log (refresh_keywords is the
@@ -111,6 +108,10 @@ def score_and_store(user_id: str, job_id: int, profile: dict):
     return fs, freasons, via
 
 
+# NOTE — put_profile (#1, plain upsert, no reset). Kept as an unwired
+# helper; the live PUT /api/v1/profile route wires to
+# put_profile_with_reset per Victoria's 2026-11-11 decision. Do not
+# re-wire the route to this without her call.
 def put_profile(uid: str, body: ProfileIn):
     db.upsert_profile(uid, body.profile)
     _log(uid, "profile_updated", "画像已保存")
@@ -226,17 +227,14 @@ def _rescore_pending(uid: str):
         pass
 
 
-# NOTE — DUPLICATE put_profile (app.py:514, second of two).
-# app.py defines put_profile twice: the first (app.py:151) only
-# upserts the profile; this second one also invalidates the
-# keywords cache, resets all scores and spawns _rescore_pending.
-# Live HTTP PUT /api/v1/profile is served by the FIRST definition
-# (first-registered route wins), so this body is currently dead for
-# HTTP traffic. Coordinator decision (2026-11-05, integration): keep
-# live behaviour — the route wires to put_profile (#1); this variant
-# is renamed put_profile_with_reset and left UNWIRED pending
-# Victoria's call on whether profile updates should reset
-# keywords/scores. Do not wire it without that decision.
+# NOTE — put_profile_with_reset (was app.py:514, second of two put_profile
+# definitions). Upserts the profile, invalidates the keywords cache
+# (keywords_updated=0, so _keywords_for regenerates on next read), resets
+# scores of unprocessed jobs (db.reset_scores) and spawns _rescore_pending
+# to re-score them in the background.
+# DECISION 2026-11-11 (Victoria): profile saves MUST reset scores and
+# keywords — this is the LIVE handler for PUT /api/v1/profile.
+# The plain-upsert variant put_profile (#1) is kept unwired as a helper.
 def put_profile_with_reset(uid: str, body: ProfileIn):
     db.upsert_profile(uid, body.profile)
     # 画像变了：关键词缓存失效 + 未处理职位重打分（后台）

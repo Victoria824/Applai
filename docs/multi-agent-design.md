@@ -304,6 +304,14 @@ unless a decision below says otherwise.
    operation-ID warning is gone (single PUT route now). The existing test
    `test_profile_update_resets_keywords_and_scores` passes vacuously (it reads
    settings for `user_id ""`) and does not cover either behaviour.
+   UPDATE 2026-11-11 (Victoria's call): profile saves MUST reset scores and
+   keywords — `put_profile_with_reset` is now the LIVE handler for
+   `PUT /api/v1/profile` (route rewired; #1 kept as an unwired helper).
+   The reset covers both: `db.reset_scores` (unprocessed jobs' scores
+   cleared to NULL) + keywords-cache invalidation (`keywords_updated=0`,
+   so `_keywords_for` regenerates on next read) + background
+   `_rescore_pending`. `test_profile_update_resets_keywords_and_scores`
+   now covers both with a real user (previously vacuous).
 2. **Sanctioned cross-agent service calls (lazy imports).** The only allowed
    direct calls between lanes are pure-function delegations where `app.py`
    already had that coupling: Amy → Jennifer `_keywords_for` (read-through)
@@ -322,6 +330,9 @@ unless a decision below says otherwise.
    stale/error discover task via Amy's runner, but no existing call path
    (route or chat action) invokes it. Wiring it needs a product decision
    (new chat action? auto-retry on stale?) — pending Victoria.
+   UPDATE 2026-11-11 (Victoria's call): an interrupted/stale fetch must
+   NEVER auto-retry — `retry_stale_discover` stays UNWIRED. No auto-retry
+   path will be added; a stale fetch recovers only when she re-clicks fetch.
 6. **Dead `admin_chat_debug` ×3 left untouched, now references deleted names.**
    The three unrouted dead functions reference `_queue_jobs` and
    `_run_chat_action`, which no longer exist at `app.py` module level. They
