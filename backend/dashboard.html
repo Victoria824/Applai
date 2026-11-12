@@ -1588,7 +1588,9 @@ function showPage(name) {
   if (name === "team") loadTeam();
   if (name === "sources") loadLatestFetch();
   else stopLatestPoll();
-  if (name === "queue") pollRunProgress();
+  // 队列页每次打开都重拉：新用户走完向导时画像刚建好，启动时的那次加载还是
+  // 画像为空的 400 旧错；不重拉就会一直停在那条错上，看不到刚入队的职位。
+  if (name === "queue") { loadQueue(); pollRunProgress(); }
 }
 document.querySelectorAll("#sidenav button[data-page]").forEach((b) =>
   b.addEventListener("click", () => showPage(b.dataset.page)));
