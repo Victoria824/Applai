@@ -1454,8 +1454,10 @@ loadAllProfiles();
 
 (async () => {
   try {
-    await loadHealth();
+    // /health 与 /auth/me 并行：向导弹出只依赖 ME，不该再多等一次健康检查往返
+    const healthP = loadHealth();
     await loadMe();
+    await healthP;
     // 新手指引不等整页数据加载完：ME 一到就查画像（一次往返），新用户立刻弹向导；
     // 之前 1200ms 定时器 + 等 loadAll 是"注册后等好几秒才弹出"的主因，已删。
     checkOnboarding();
@@ -2061,7 +2063,8 @@ function renderOb() {
       <label>OTE 范围 <span style="font-size:12px;color:var(--muted)">（销售岗可选）</span>
         <div style="display:flex;gap:8px"><input type="number" id="obqOteMin" value="${q.oteMin || ""}" placeholder="下限" style="flex:1"><span style="align-self:center">–</span><input type="number" id="obqOteMax" value="${q.oteMax || ""}" placeholder="上限" style="flex:1"></div></label>
       <label>服务过的客户层级 <span style="font-size:12px;color:var(--muted)">（销售岗可选，逗号分隔）</span>
-        <input type="text" id="obqSegments" value="${esc((q.segments || []).join(", "))}" placeholder="SMB, Commercial, Enterprise, Major Accounts"></label>`;
+        <input type="text" id="obqSegments" value="${esc((q.segments || []).join(", "))}" placeholder="SMB, Commercial, Enterprise, Major Accounts"></label>
+      <div class="ob-err" id="obQErr" style="margin-top:10px"></div>`;
   } else if (obPhase === "approve_launch") {
     obProgress(90, "第 4 步：审批并启动");
     $("obNext").style.display = "";
@@ -2181,20 +2184,22 @@ let obQPrefill = {};
 $("obBack").onclick = () => {};
 $("obSkip").onclick = () => closeOnboarding(true);
 $("obNext").onclick = async () => {
+  // 向导字段读取统一走 obVal：元素缺失时返回空串而非抛 reading 'value' 的裸错
+  const obVal = (id) => { const el = $(id); return el ? el.value : ""; };
   if (obPhase === "approve_job") {
     // 保存用户审批后的岗位画像
     try {
       const jr = await apiGet("/api/v1/profiles?kind=job");
       const act = (jr.profiles || []).find((p) => p.is_active);
       if (act) {
-        const salMin = $("obSalMin").value ? Number($("obSalMin").value) : null;
-        const salMax = $("obSalMax").value ? Number($("obSalMax").value) : null;
+        const salMin = obVal("obSalMin") ? Number(obVal("obSalMin")) : null;
+        const salMax = obVal("obSalMax") ? Number(obVal("obSalMax")) : null;
         await api(`/api/v1/profiles/${act.id}`, { method: "PUT",
           headers: {"Content-Type": "application/json"},
           body: JSON.stringify({ profile: { ...act.profile,
-            targetTitles: splitList($("obTitles").value),
-            industries: splitList($("obIndustries").value),
-            preferredLocations: splitList($("obLocs").value),
+            targetTitles: splitList(obVal("obTitles")),
+            industries: splitList(obVal("obIndustries")),
+            preferredLocations: splitList(obVal("obLocs")),
             salaryMin: salMin, salaryMax: salMax,
             salaryCurrency: "CAD", salaryPeriod: "annual" } }) });
         await loadAllProfiles();
@@ -2208,10 +2213,10 @@ $("obNext").onclick = async () => {
     renderOb();
   } else if (obPhase === "questions") {
     // 必答项：国家、担保、现公司、现职位；X / OTE / 客户层级可选（销售岗才用得上）
-    const countries = splitList($("obqCountries").value);
-    const sponsor = $("obqSponsor").value;
-    const company = $("obqCompany").value.trim();
-    const title = $("obqTitle").value.trim();
+    const countries = splitList(obVal("obqCountries"));
+    const sponsor = obVal("obqSponsor");
+    const company = obVal("obqCompany").trim();
+    const title = obVal("obqTitle").trim();
     const missing = [];
     if (!countries.length) missing.push("合法工作国家");
     if (sponsor !== "yes" && sponsor !== "no") missing.push("雇主担保签证");
@@ -2235,16 +2240,16 @@ $("obNext").onclick = async () => {
       await saveKind("person", {
         authorizedWorkCountries: countries,
         currentCompany: company, currentTitle: title,
-        twitter: $("obqTwitter").value.trim(),
+        twitter: obVal("obqTwitter").trim(),
       });
       await saveKind("job", {
         needsSponsorship: sponsor === "yes",
-        oteMin: $("obqOteMin").value ? Number($("obqOteMin").value) : null,
-        oteMax: $("obqOteMax").value ? Number($("obqOteMax").value) : null,
-        segments: splitList($("obqSegments").value),
+        oteMin: obVal("obqOteMin") ? Number(obVal("obqOteMin")) : null,
+        oteMax: obVal("obqOteMax") ? Number(obVal("obqOteMax")) : null,
+        segments: splitList(obVal("obqSegments")),
       });
       await loadAllProfiles();
-    } catch (e) { toast("保存失败：" + e.message); return; }
+    } catch (e) { toast("保存失败：" + e.message); const qe = $("obQErr"); if (qe) qe.textContent = "保存失败：" + e.message; return; }
     obPhase = "approve_launch";
     renderOb();
   } else if (obPhase === "approve_launch") {
