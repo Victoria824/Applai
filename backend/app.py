@@ -151,6 +151,12 @@ def discover_status(task_id: str, user: dict = Depends(get_current_user)):
     return amy.discover_status(user["app_user_id"], task_id)
 
 
+@app.post("/api/v1/jobs/discover/stop")
+def discover_stop(user: dict = Depends(get_current_user)):
+    """停止当前正在跑的抓取（来源页停止按钮）：只翻任务状态，后台线程在下个阶段边界退出。"""
+    return amy.discover_stop(user["app_user_id"])
+
+
 @app.get("/api/v1/jobs/discover/latest")
 def latest_fetch(user: dict = Depends(get_current_user)):
     """最新一次已完成抓取的职位预览（来源页用）：只读，无副作用。"""

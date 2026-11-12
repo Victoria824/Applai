@@ -1415,6 +1415,16 @@ def get_discover_task(task_id: str) -> dict | None:
     return dict(row) if row else None
 
 
+def get_running_discover_task(user_id: str) -> dict | None:
+    """The user's currently-running discover task, if any (Stop-fetch button)."""
+    conn = get_db()
+    row = conn.execute(
+        "SELECT * FROM discover_tasks WHERE user_id=? AND status='running' "
+        "ORDER BY updated_at DESC LIMIT 1", (user_id,)).fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
 def latest_done_discover_task(user_id: str) -> dict | None:
     """最新一次已完成的抓取任务（按最后更新倒序）。"""
     conn = get_db()

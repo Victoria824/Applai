@@ -993,7 +993,14 @@ $("srcFetchBtn").onclick = async () => {
   const btn = $("srcFetchBtn");
   btn.disabled = true;
   $("srcStatus").innerHTML = `<div class="prog"><div class="prog-bar" id="discBar" style="width:2%"></div></div>
-    <div class="hint" id="discStage" style="margin-top:6px">启动中…（通常需要 2-3 分钟，公司官网阶段进度条会停留较久，并非卡住）</div>`;
+    <div class="hint" id="discStage" style="margin-top:6px">启动中…（通常需要 2-3 分钟，公司官网阶段进度条会停留较久，并非卡住）</div>
+    <button id="discStopBtn" class="ghost-btn" style="margin-top:8px">停止抓取<span class="en">Stop fetch</span></button>`;
+  // 停止按钮：只翻服务端任务状态，后台线程在下个阶段边界退出；轮询看到 cancelled 即收尾。
+  $("discStopBtn").onclick = async () => {
+    const sb = $("discStopBtn");
+    if (sb) { sb.disabled = true; sb.textContent = "正在停止…"; }
+    try { await api("/api/v1/jobs/discover/stop", { method: "POST" }); } catch (e) {}
+  };
   // 网络层失败（Failed to fetch 等）与业务错误区分开：业务错误（请求失败 + 状态码、
   // 未登录）立即报错；网络抖动则重试——抓取任务在服务端继续跑，丢一次响应不应判死刑。
   const isNetErr = (e) => e && !String(e.message || "").startsWith("请求失败") && e.message !== "未登录";
@@ -1023,7 +1030,7 @@ $("srcFetchBtn").onclick = async () => {
       const bar = $("discBar"), stage = $("discStage");
       if (bar) bar.style.width = pct + "%";
       if (stage) stage.textContent = s.stage || "";
-      if (s.status === "done" || s.status === "error") {
+      if (s.status === "done" || s.status === "error" || s.status === "cancelled") {
         clearInterval(poll);
         btn.disabled = false;
         if (s.status === "done") {
@@ -1031,6 +1038,11 @@ $("srcFetchBtn").onclick = async () => {
           await loadQueue();
           await loadLatestFetch();
           toast("抓取完成 ✓ / Done");
+        } else if (s.status === "cancelled") {
+          $("srcStatus").innerHTML = `抓取已停止：看到 ${s.seen} 个职位，新增 ${s.new} 个，已入库的职位会继续打分入队。<span class="en">Fetch stopped: ${s.seen} seen, ${s.new} new. Jobs already saved will keep being scored.</span>`;
+          await loadQueue();
+          await loadLatestFetch();
+          toast("抓取已停止 / Stopped");
         } else {
           $("srcStatus").textContent = "";
           showErr("抓取失败 / Fetch failed：" + (s.error || "未知错误"));

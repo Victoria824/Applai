@@ -146,7 +146,25 @@ def _keywords_for(uid: str, profile: dict) -> tuple[list, str]:
 # ---------------------------------------------------------------------------
 
 
-def _run_discover(uid: str, sources: list, limit: int = 100) -> dict:
+class DiscoverCancelled(Exception):
+    """User pressed Stop on a running discover; carries the partial counts."""
+    def __init__(self, seen: int = 0, new: int = 0):
+        super().__init__("discover cancelled by user")
+        self.seen, self.new = seen, new
+
+
+def _discover_cancelled(task_id: str | None) -> bool:
+    """True when the user stopped this discover task (status='cancelled' in DB)."""
+    if not task_id:
+        return False
+    try:
+        t = db.get_discover_task(task_id)
+    except Exception:
+        return False
+    return bool(t) and t.get("status") == "cancelled"
+
+
+def _run_discover(uid: str, sources: list, limit: int = 100, task_id: str | None = None) -> dict:
     """从来源抓取职位入库并打分，返回 {seen, new}。"""
     profile = db.get_profile(uid)
     if not profile:
@@ -165,6 +183,10 @@ def _run_discover(uid: str, sources: list, limit: int = 100) -> dict:
             for postings in _ex.map(_fetch_one, sources):
                 all_postings.extend(postings or [])
     for p in all_postings:
+        # 停止只在阶段边界生效：并行抓取本身不可中断，入库循环里每条都查一次，
+        # 停下后已入库的职位保留，后台 scorer 继续打分。
+        if _discover_cancelled(task_id):
+            raise DiscoverCancelled(total_seen, total_new)
         if not isinstance(p, dict) or not p.get("url"):
             continue
         total_seen += 1
@@ -179,7 +201,7 @@ def _run_discover(uid: str, sources: list, limit: int = 100) -> dict:
     return {"seen": total_seen, "new": total_new}
 
 
-def _run_smart_discover(uid: str, limit: int = 60, progress=None) -> dict:
+def _run_smart_discover(uid: str, task_id: str | None = None, limit: int = 60, progress=None) -> dict:
     """智能模式：LLM 按画像生成关键词 → 免费聚合源全网搜索 → 入库打分。手动来源照常抓取。"""
     def pg(stage, done, total=100):
         if progress:
@@ -187,6 +209,9 @@ def _run_smart_discover(uid: str, limit: int = 60, progress=None) -> dict:
                 progress(stage, done, total)
             except Exception:
                 pass
+    # 线程启动前就被停止：还没碰网络，直接退出（_run_smart_discover_bg 也会先查一次）。
+    if _discover_cancelled(task_id):
+        raise DiscoverCancelled(0, 0)
     profile = db.get_profile(uid)
     if not profile:
         raise HTTPException(400, "profile not found, sync profile first")
@@ -195,7 +220,9 @@ def _run_smart_discover(uid: str, limit: int = 60, progress=None) -> dict:
     seeds = [{"type": t, "key": k} for t, k in ingest.CA_SEED_BOARDS
              if (t, k) not in seen_keys]
     pg("公司官网 / Company boards", 5)
-    out = _run_discover(uid, manual + seeds, limit) if (manual or seeds) else {"seen": 0, "new": 0}
+    out = _run_discover(uid, manual + seeds, limit, task_id) if (manual or seeds) else {"seen": 0, "new": 0}
+    if _discover_cancelled(task_id):
+        raise DiscoverCancelled(out["seen"], out["new"])
     kws, note = _keywords_for(uid, profile)
     if not kws:
         return {**out, "keywords": [], "mode": "seeds_only"}
@@ -204,6 +231,8 @@ def _run_smart_discover(uid: str, limit: int = 60, progress=None) -> dict:
               ("arbeitnow", "聚合源 Arbeitnow", lambda: ingest.fetch_arbeitnow(kws, limit)),
               ("remotive", "聚合源 Remotive", lambda: ingest.fetch_remotive(kws, limit))]
     for i, (_name, label, fetcher) in enumerate(stages):
+        if _discover_cancelled(task_id):
+            raise DiscoverCancelled(out["seen"] + agg_seen, out["new"] + agg_new)
         pg(f"{label}（{i+1}/3）", 10 + i * 15)
         try:
             postings = fetcher()
@@ -211,6 +240,8 @@ def _run_smart_discover(uid: str, limit: int = 60, progress=None) -> dict:
             continue
         new_jobs = []
         for p in (postings or []):
+            if _discover_cancelled(task_id):
+                raise DiscoverCancelled(out["seen"] + agg_seen, out["new"] + agg_new)
             if not isinstance(p, dict) or not p.get("url"):
                 continue
             agg_seen += 1
@@ -245,9 +276,14 @@ def _discover_task_set(task_id: str, **kw):
 
 def _run_smart_discover_bg(uid: str, task_id: str):
     db.log_agent_event(uid, "amy", "discover_started", "智能抓取开始", task_id)
+    # 用户在线程启动前就点了停止：别把已取消的状态又写回 running。
+    if _discover_cancelled(task_id):
+        _discover_task_set(task_id, stage="已停止 / Stopped")
+        db.log_agent_event(uid, "amy", "discover_cancelled", "抓取已停止", task_id)
+        return
     try:
         _discover_task_set(task_id, status="running", stage="公司官网 / Company boards", done=0, total=100)
-        res = _run_smart_discover(uid, progress=lambda s, d, t: _discover_task_set(task_id, stage=s, done=d, total=t))
+        res = _run_smart_discover(uid, task_id, progress=lambda s, d, t: _discover_task_set(task_id, stage=s, done=d, total=t))
         _discover_task_set(task_id, status="done", stage="完成 / Done",
                            done=100, total=100, new=res.get("new", 0), seen=res.get("seen", 0))
         try:
@@ -258,6 +294,12 @@ def _run_smart_discover_bg(uid: str, task_id: str):
             uid, "amy", "discover_finished",
             f"抓取完成：新增 {res.get('new', 0)} 个职位，共看到 {res.get('seen', 0)} 个（来源 {n_sources} 个）",
             task_id)
+    except DiscoverCancelled as dc:
+        # 已入库的职位保留，后台 scorer 继续打分；只停掉还没跑的阶段。
+        _discover_task_set(task_id, status="cancelled", stage="已停止 / Stopped",
+                           new=dc.new, seen=dc.seen)
+        db.log_agent_event(uid, "amy", "discover_cancelled",
+                           f"抓取已停止：已入库 {dc.new} 个新职位，共看到 {dc.seen} 个", task_id)
     except Exception as e:
         import traceback as _tb
         err = f"{type(e).__name__}: {e}\n" + "".join(_tb.format_tb(e.__traceback__)[-4:])
@@ -276,6 +318,19 @@ def start_discover_bg(uid: str, task_id: str):
 # Route-handler equivalents, plain functions taking uid explicitly
 # (app.py:388 discover_auto, app.py:398 discover_status, app.py:465 discover)
 # ---------------------------------------------------------------------------
+
+
+def discover_stop(uid: str):
+    """Stop the user's currently-running discover task (Sources page Stop button).
+
+    Only flips the task row to 'cancelled'; the background thread notices at
+    the next stage boundary and exits, keeping the jobs already saved.
+    """
+    t = db.get_running_discover_task(uid)
+    if not t:
+        raise HTTPException(404, "no running fetch")
+    db.update_discover_task(t["task_id"], status="cancelled")
+    return {"ok": True, "task_id": t["task_id"], "status": "cancelled"}
 
 
 def discover_auto(uid: str):

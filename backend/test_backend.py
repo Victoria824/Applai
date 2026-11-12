@@ -362,6 +362,74 @@ def test_discover_auto_async():
     assert s["seen"] >= 0 and "new" in s
 
 
+def test_discover_stop():
+    """Stop-fetch: 无运行中任务 -> 404；运行中任务 -> 200 + cancelled；别人停不到。"""
+    import db as dbmod
+    a = _authed_client("stopqa")
+    uid = a.get("/api/v1/auth/me").json()["app_user_id"]
+    assert a.post("/api/v1/jobs/discover/stop").status_code == 404
+    dbmod.create_discover_task("stoptask001", uid)
+    # 别人名下无 running 任务，停不到
+    b = _authed_client("stopstranger")
+    assert b.post("/api/v1/jobs/discover/stop").status_code == 404
+    r = a.post("/api/v1/jobs/discover/stop")
+    assert r.status_code == 200
+    d = r.json()
+    assert d["ok"] and d["task_id"] == "stoptask001" and d["status"] == "cancelled"
+    assert dbmod.get_discover_task("stoptask001")["status"] == "cancelled"
+    # 已取消，再停一次 -> 404
+    assert a.post("/api/v1/jobs/discover/stop").status_code == 404
+
+
+def test_discover_cancelled_bg_exits_early():
+    """已取消的任务：后台线程启动前即退出，不碰网络，终态 cancelled。"""
+    import time as _time
+    import db as dbmod
+    from agents import amy as amy_mod
+    c = _authed_client("cancelqa")
+    uid = c.get("/api/v1/auth/me").json()["app_user_id"]
+    c.put("/api/v1/profile", json={"user_id": "x", "profile": {"email": "c@c.com"}})
+    tid = "canceltask001"
+    dbmod.create_discover_task(tid, uid)
+    dbmod.update_discover_task(tid, status="cancelled")
+    t0 = _time.time()
+    amy_mod._run_smart_discover_bg(uid, tid)
+    assert _time.time() - t0 < 5  # 没碰网络，立即返回
+    t = dbmod.get_discover_task(tid)
+    assert t["status"] == "cancelled" and t["stage"] == "已停止 / Stopped"
+
+
+def test_discover_stop_midflight():
+    """真实抓取中途停止：跑起来后点停止，任务最终落 cancelled（不是 done/error）。
+
+    抓取总时长不固定（种子官网快时几秒就能跑完），所以不等固定 5 秒：
+    轮询到 stage 离开"启动中"（后台线程已在跑）就立刻点停止，保证是中途取消。
+    """
+    import time as _time
+    c = _authed_client("stopmid")
+    c.put("/api/v1/profile", json={"user_id": "x", "profile": {"email": "m@m.com"}})
+    r = c.post("/api/v1/jobs/discover/auto")
+    assert r.status_code == 200
+    tid = r.json()["task_id"]
+    for _ in range(20):
+        s = c.get(f"/api/v1/jobs/discover/status/{tid}").json()
+        if s["status"] in ("done", "error"):
+            break
+        if s.get("stage") and "启动中" not in s["stage"]:
+            break
+        _time.sleep(0.5)
+    rs = c.post("/api/v1/jobs/discover/stop")
+    assert rs.status_code == 200 and rs.json()["task_id"] == tid
+    s = None
+    for _ in range(60):
+        s = c.get(f"/api/v1/jobs/discover/status/{tid}").json()
+        if s["status"] in ("cancelled", "done", "error"):
+            break
+        _time.sleep(2)
+    assert s["status"] == "cancelled", s
+    assert isinstance(s["seen"], int) and isinstance(s["new"], int)
+
+
 def test_settings():
     c = _authed_client("setqa")
     s = c.get("/api/v1/settings").json()
