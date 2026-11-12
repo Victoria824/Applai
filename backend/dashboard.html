@@ -882,7 +882,8 @@ document.addEventListener("click", (ev) => {
   if (b) markApp(b.dataset.job, b.dataset.act);
 });
 $("refreshBtn").onclick = () => loadAll();
-$("queueRunNowBtn").onclick = async () => {
+// 立即投递一轮（队列页按钮 + 新手指引启动共用）：通知插件开始投递，乐观态 + 轮询展示进度。
+async function runNow() {
   const btn = $("queueRunNowBtn");
   btn.disabled = true;
   btn.textContent = "正在启动…";
@@ -934,7 +935,8 @@ $("queueRunNowBtn").onclick = async () => {
     return;
   }
   done("插件在，但没响应投递指令：请先刷新本页面（F5）再试；仍不行请更新插件到最新版后重试");
-};
+}
+$("queueRunNowBtn").onclick = runNow;
 
 async function loadAll() {
   clearErr();
@@ -1436,6 +1438,9 @@ loadAllProfiles();
   try {
     await loadHealth();
     await loadMe();
+    // 新手指引不等整页数据加载完：ME 一到就查画像（一次往返），新用户立刻弹向导；
+    // 之前 1200ms 定时器 + 等 loadAll 是"注册后等好几秒才弹出"的主因，已删。
+    checkOnboarding();
     await loadAll();
   } catch (e) { if (!/未登录/.test(e.message)) showErr("初始化失败：" + e.message); }
 })();
@@ -1886,6 +1891,9 @@ $("tutorialSteps").addEventListener("click", () => {});
 /* ---------- 新手引导：上传 → AI 工作 → 审批 ---------- */
 let obPhase = "upload";  // upload | working | approve_job | approve_launch | done
 let obJobSug = null;
+let obDiscoverTaskId = "";  // 向导里触发的那次抓取，第 4 步用它轮询真实进度
+let obLaunchTimer = null;  // 第 4 步的实时轮询
+let obLaunchReady = false;  // 第 4 步：队列里已有可投的真职位
 let obJobErr = "";
 async function checkOnboarding() {
   // 向导完成标记必须按账号存：旧代码用裸 applai_onboarded（按浏览器），
@@ -1906,6 +1914,7 @@ function openOnboarding() {
   renderOb();
 }
 function closeOnboarding(done) {
+  obStopLaunchPoll();
   $("obModal").style.display = "none";
   if (done) localStorage.setItem("applai_onboarded_" + (ME && ME.app_user_id ? ME.app_user_id : ""), "1");
 }
@@ -1913,9 +1922,64 @@ function obProgress(pct, tag) {
   $("obBar").style.width = pct + "%";
   if (tag) $("obTag").textContent = tag;
 }
+function obStopLaunchPoll() {
+  if (obLaunchTimer) { clearInterval(obLaunchTimer); obLaunchTimer = null; }
+}
+async function obPollLaunch() {
+  // 第 4 步实时数据：队列里的真职位（可投数）+ 最新抓取的 top 职位 + 抓取/打分进度。
+  // 离开第 4 步或关闭向导时停轮询（renderOb / closeOnboarding 里清掉）。
+  if (obPhase !== "approve_launch" || !$("obModal") || $("obModal").style.display === "none") { obStopLaunchPoll(); return; }
+  let qCount = 0, latest = null, st = null;
+  try { const q = await api("/api/v1/queue?top_n=100"); qCount = (q && q.count) || 0; } catch (e) {}
+  try { latest = await api("/api/v1/jobs/discover/latest"); } catch (e) {}
+  if (obDiscoverTaskId) {
+    try { st = await api(`/api/v1/jobs/discover/status/${obDiscoverTaskId}`); } catch (e) {}
+  }
+  if (obPhase !== "approve_launch") return;
+  const wrap = $("obJobCountWrap"), statusEl = $("obLaunchStatus"), listEl = $("obJobList"), nextBtn = $("obNext");
+  if (!wrap || !statusEl || !listEl) return;
+  const pending = (latest && latest.pending_scoring) || 0;
+  const seen = (st && st.seen) || (latest && latest.task && latest.task.seen) || 0;
+  const stage = (st && st.stage) || "";
+  const fetching = st ? st.status === "running" : false;
+  if (qCount > 0) {
+    wrap.innerHTML = `找到 <b>${qCount >= 100 ? "100+" : qCount}</b> 个匹配职位`;
+    statusEl.textContent = pending > 0
+      ? `已入队 ${qCount} 个，还在打分（剩 ${pending} 个）…`
+      : `已就绪，${qCount} 个职位可以马上投递。`;
+    obLaunchReady = true;
+    if (nextBtn) nextBtn.disabled = false;
+  } else if (fetching) {
+    wrap.textContent = "正在为你搜索匹配职位…";
+    statusEl.textContent = `正在搜索${stage ? "：" + stage : "…"}已看到 ${seen} 个，正在逐个打分入队…`;
+    obLaunchReady = false;
+    if (nextBtn) nextBtn.disabled = true;
+  } else if (pending > 0) {
+    wrap.textContent = "正在打分…";
+    statusEl.textContent = `已找到 ${seen} 个，正在逐个打分，马上入队…`;
+    obLaunchReady = false;
+    if (nextBtn) nextBtn.disabled = true;
+  } else {
+    // 抓取已结束（或查不到任务）且队列为空：这次没匹配到，不锁死启动——走兜底（只开定时）。
+    wrap.textContent = "这次没找到匹配职位";
+    statusEl.textContent = obDiscoverTaskId
+      ? "先启动定时投递，明天 8 点自动搜索投递；也可以稍后去「来源」页再抓一次。"
+      : "搜索没能启动，先启动定时投递，明天 8 点自动搜索投递。";
+    obLaunchReady = false;
+    if (nextBtn) nextBtn.disabled = false;
+  }
+  // 只列进队列口径的职位（≥40 分），和"匹配职位"的数对得上。
+  const jobs = ((latest && latest.jobs) || []).filter((j) => (j.score || 0) >= 40).slice(0, 5);
+  listEl.innerHTML = jobs.map((j) =>
+    `<div style="display:flex;gap:8px;padding:7px 0;border-bottom:1px solid var(--gray-bg);font-size:14px">
+      <span style="flex:1">${esc(j.title || "")} · ${esc(j.company || "")}</span>
+      <b>${esc(j.score)} 分</b></div>`).join("");
+}
 function renderOb() {
   const B = $("obBody");
   $("obBack").style.display = "none";
+  obStopLaunchPoll();
+  $("obNext").disabled = false;
   if (obPhase === "upload") {
     obProgress(10, "第 1 步：上传简历");
     $("obNext").style.display = "none";
@@ -1982,15 +2046,18 @@ function renderOb() {
     obProgress(90, "第 4 步：审批并启动");
     $("obNext").style.display = "";
     $("obNext").textContent = "🚀 启动全自动投递";
+    // 启动按钮默认先锁住：等队列里出现真职位再放开（轮询里按实时状态更新）；
+    // 抓取完成但 0 匹配时放开走兜底（只开定时，不假装现在能投）。
+    $("obNext").disabled = true;
+    obLaunchReady = false;
     B.innerHTML = `<div class="ob-ok">🎯</div>
-      <h3 style="text-align:center">找到 <b id="obJobCount">…</b> 个匹配职位</h3>
-      <div class="ob-desc" style="text-align:center">每天 8 点 AI 自动投 10 份，改写简历、填表、提交全包。<br>有面试邀请或要验证码，推送到你手机，你审批就行。</div>
+      <h3 style="text-align:center" id="obJobCountWrap">正在为你搜索匹配职位…</h3>
+      <div class="ob-desc" style="text-align:center" id="obLaunchStatus">全网搜索 + 打分进行中，稍等片刻…</div>
+      <div id="obJobList" style="margin-top:12px"></div>
+      <div class="hint" style="text-align:center">每天 8 点 AI 自动投 10 份，改写简历、填表、提交全包。<br>有面试邀请或要验证码，推送到你手机，你审批就行。</div>
       <div class="hint" style="text-align:center">插件还没连？启动后去「插件」页一键连接，30 秒搞定。</div>`;
-    // 查队列数
-    api("/api/v1/queue?top_n=1").then((d) => {
-      const el = $("obJobCount");
-      if (el) el.textContent = ((d && d.jobs) || []).length ? "一批" : "一些";
-    }).catch(() => {});
+    obPollLaunch();
+    obLaunchTimer = setInterval(obPollLaunch, 4000);
   }
 }
 function deriveLevel(years) {
@@ -2080,8 +2147,11 @@ async function obRunAI() {
   }
   const w2 = $("ow2");
   if (w2) w2.style.opacity = 1;
-  // 2. 触发职位发现（后台跑，不阻塞）
-  try { await api("/api/v1/jobs/discover/auto", { method: "POST" }); } catch (e) {}
+  // 2. 触发职位发现（后台跑，不阻塞）；记下 taskId，第 4 步用它轮询真实进度。
+  try {
+    const dt = await api("/api/v1/jobs/discover/auto", { method: "POST" });
+    obDiscoverTaskId = (dt && dt.task_id) || "";
+  } catch (e) { obDiscoverTaskId = ""; }
   if (w2) w2.textContent = "✓ 已开始全网搜索职位";
   await new Promise((r) => setTimeout(r, 800));
   obPhase = "approve_job";
@@ -2160,12 +2230,18 @@ $("obNext").onclick = async () => {
   } else if (obPhase === "approve_launch") {
     obProgress(100, "完成 🎉");
     closeOnboarding(true);
-    toast("全自动投递已启动 🎉 每天 8 点开工");
-    showPage("home");
-    loadAll();
+    // 队列里有真职位：立刻开始一轮投递，跳到队列页让用户直接看过程。
+    // 没职位（兜底）：只开定时，明天 8 点自动投，不假装现在投了。
+    if (obLaunchReady) {
+      showPage("queue");
+      runNow();
+    } else {
+      toast("定时投递已启动 🎉 每天 8 点自动开工");
+      showPage("home");
+      loadAll();
+    }
   }
 };
-setTimeout(checkOnboarding, 1200);
 
 /* ---------- 快捷入口 ---------- */
 async function loadQuickLinks() {
