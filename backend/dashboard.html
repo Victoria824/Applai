@@ -1454,10 +1454,10 @@ loadAllProfiles();
 
 (async () => {
   try {
-    // /health 与 /auth/me 并行：向导弹出只依赖 ME，不该再多等一次健康检查往返
-    const healthP = loadHealth();
+    // /health 只更新角标，向导弹出不依赖它：不 await，健康检查慢/挂起时也不拖住向导
+    // （Deploy #4 实测向导晚 30–60s 弹出，串行等 health 是嫌疑之一）。
+    loadHealth();
     await loadMe();
-    await healthP;
     // 新手指引不等整页数据加载完：ME 一到就查画像（一次往返），新用户立刻弹向导；
     // 之前 1200ms 定时器 + 等 loadAll 是"注册后等好几秒才弹出"的主因，已删。
     checkOnboarding();
