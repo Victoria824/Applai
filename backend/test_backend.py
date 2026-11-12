@@ -365,7 +365,7 @@ def test_discover_auto_async():
 def test_settings():
     c = _authed_client("setqa")
     s = c.get("/api/v1/settings").json()
-    assert s["schedule_time"] == "08:00" and s["daily_count"] == 10
+    assert s["schedule_time"] == "10:00" and s["daily_count"] == 10
     r = c.put("/api/v1/settings", json={"schedule_enabled": True, "schedule_time": "09:30", "daily_count": 5})
     assert r.status_code == 200
     s = c.get("/api/v1/settings").json()
@@ -374,7 +374,7 @@ def test_settings():
     assert c.put("/api/v1/settings", json={"schedule_time": "nope"}).status_code == 400
     # 隔离
     c2 = _authed_client("setqa2")
-    assert c2.get("/api/v1/settings").json()["schedule_time"] == "08:00"
+    assert c2.get("/api/v1/settings").json()["schedule_time"] == "10:00"
 
 
 def test_keywords_fallback_no_llm():
@@ -1010,9 +1010,9 @@ def test_agents_endpoint_returns_five_and_requires_auth():
         assert a["status"] == "idle" and a["current_task"] is None
         assert a["recent_events"] == [] and a["last_activity"] is None
         if a["id"] == "rachel":
-            # 注册默认开定时（每天 8:00、10 份），Rachel 如实报出当日计划。
-            assert a["today_stats"] == [{"label_zh": "今日计划 · 08:00",
-                                         "label_en": "Today's plan · 08:00",
+            # 注册默认开定时（每天 10:00、10 份），Rachel 如实报出当日计划。
+            assert a["today_stats"] == [{"label_zh": "今日计划 · 10:00",
+                                         "label_en": "Today's plan · 10:00",
                                          "value": 10}]
         else:
             assert a["today_stats"] == []

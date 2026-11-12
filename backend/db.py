@@ -132,7 +132,7 @@ CREATE TABLE IF NOT EXISTS user_settings (
   keywords_note TEXT DEFAULT '',
   keywords_updated REAL DEFAULT 0,
   schedule_enabled INTEGER DEFAULT 0,
-  schedule_time TEXT DEFAULT '08:00',
+  schedule_time TEXT DEFAULT '10:00',
   daily_count INTEGER DEFAULT 10,
   updated_at REAL NOT NULL
 );

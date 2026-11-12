@@ -376,7 +376,7 @@ button .en{font-size:10px; opacity:.72; margin-top:1px;}
   <section class="page on" id="page-home">
     <div class="hero">
       <div class="hero-text">
-        <h1>全自动求职投递<span class="grad">，每天 8 点开工</span><span class="en">Fully automated job applications, every day at 8 AM</span></h1>
+        <h1>全自动求职投递<span class="grad">，每天 10 点开工</span><span class="en">Fully automated job applications, every day at 10 AM</span></h1>
         <p>Applai 是你的 AI 求职助手：按画像全网发现职位、智能打分排序、自动填表投递。<br>你只需要传一份简历，剩下的交给它。<span class="en">Applai is your AI job-search assistant: it discovers jobs across the web, ranks them by fit, and auto-fills applications. You only need to upload a resume.</span></p>
         <div class="hero-actions">
           <button class="primary" id="heroProfile">上传简历<span class="en">Upload resume</span></button>
@@ -524,7 +524,7 @@ button .en{font-size:10px; opacity:.72; margin-top:1px;}
       </label>
       <div style="display:flex;gap:16px;flex-wrap:wrap">
         <label style="font-size:13px;color:var(--muted);font-weight:600">开始时间<span class="en">Start time</span><br>
-          <input type="time" id="schTime" value="08:00" style="font-size:16px;padding:9px 12px;border:1px solid var(--line);border-radius:12px;margin-top:4px"></label>
+          <input type="time" id="schTime" value="10:00" style="font-size:16px;padding:9px 12px;border:1px solid var(--line);border-radius:12px;margin-top:4px"></label>
         <label style="font-size:13px;color:var(--muted);font-weight:600">每天份数<span class="en">Jobs per day</span><br>
           <input type="number" id="schCount" value="10" min="1" max="30" style="font-size:16px;padding:9px 12px;border:1px solid var(--line);border-radius:12px;margin-top:4px;width:100px"></label>
       </div>
@@ -596,7 +596,7 @@ button .en{font-size:10px; opacity:.72; margin-top:1px;}
     </div>
 
     <div id="rachelStrip" class="rachel-strip">
-      <div class="rs-row"><span>👩‍💼</span><b>总管 Rachel</b><span class="en">Supervisor</span><span>· 每天 8:00 自动投递 10 份</span><span class="en">Auto-applies 10 jobs daily at 8:00 AM</span><span style="margin-left:auto" class="agent-badge idle">空闲中 · Idle</span></div>
+      <div class="rs-row"><span>👩‍💼</span><b>总管 Rachel</b><span class="en">Supervisor</span><span>· 每天 10:00 自动投递 10 份</span><span class="en">Auto-applies 10 jobs daily at 10:00 AM</span><span style="margin-left:auto" class="agent-badge idle">空闲中 · Idle</span></div>
     </div>
 
     <div class="card-title">智能体<span class="en">Agents</span></div>
@@ -914,7 +914,13 @@ async function runNow() {
     pollRunProgress();
     return;
   }
-  if (result) { done("启动失败，请在插件弹窗里点“立即执行投递”"); return; }
+  if (result) {
+    // 插件回了 ok:false，分两种：内容脚本已失效（插件刚更新过，刷新本页即好），
+    // 或后台没响应（这时弹窗里点“立即执行投递”能走通，因为弹窗跑在最新的插件上下文里）。
+    if (result.error === "context_invalidated") done("插件刚更新过，请刷新本页面（F5）后再点一次");
+    else done("启动失败，请在插件弹窗里点“立即执行投递”");
+    return;
+  }
   // 3 秒无回应不等于没装插件：分级诊断（在不在这个页面 / 版本新旧）
   const pong = await new Promise((resolve) => {
     const h = (e) => {
@@ -1685,7 +1691,7 @@ async function loadSchedule() {
   try {
     const s = await api("/api/v1/settings");
     $("schEnabled").checked = !!s.schedule_enabled;
-    $("schTime").value = s.schedule_time || "08:00";
+    $("schTime").value = s.schedule_time || "10:00";
     $("schCount").value = s.daily_count || 10;
     const k = await api("/api/v1/settings/keywords").catch(() => null);
     if (k && k.keywords && k.keywords.length) {
@@ -1963,8 +1969,8 @@ async function obPollLaunch() {
     // 抓取已结束（或查不到任务）且队列为空：这次没匹配到，不锁死启动——走兜底（只开定时）。
     wrap.textContent = "这次没找到匹配职位";
     statusEl.textContent = obDiscoverTaskId
-      ? "先启动定时投递，明天 8 点自动搜索投递；也可以稍后去「来源」页再抓一次。"
-      : "搜索没能启动，先启动定时投递，明天 8 点自动搜索投递。";
+      ? "先启动定时投递，明天 10 点自动搜索投递；也可以稍后去「来源」页再抓一次。"
+      : "搜索没能启动，先启动定时投递，明天 10 点自动搜索投递。";
     obLaunchReady = false;
     if (nextBtn) nextBtn.disabled = false;
   }
@@ -2054,7 +2060,7 @@ function renderOb() {
       <h3 style="text-align:center" id="obJobCountWrap">正在为你搜索匹配职位…</h3>
       <div class="ob-desc" style="text-align:center" id="obLaunchStatus">全网搜索 + 打分进行中，稍等片刻…</div>
       <div id="obJobList" style="margin-top:12px"></div>
-      <div class="hint" style="text-align:center">每天 8 点 AI 自动投 10 份，改写简历、填表、提交全包。<br>有面试邀请或要验证码，推送到你手机，你审批就行。</div>
+      <div class="hint" style="text-align:center">每天 10 点 AI 自动投 10 份，改写简历、填表、提交全包。<br>有面试邀请或要验证码，推送到你手机，你审批就行。</div>
       <div class="hint" style="text-align:center">插件还没连？启动后去「插件」页一键连接，30 秒搞定。</div>`;
     obPollLaunch();
     obLaunchTimer = setInterval(obPollLaunch, 4000);
@@ -2231,12 +2237,12 @@ $("obNext").onclick = async () => {
     obProgress(100, "完成 🎉");
     closeOnboarding(true);
     // 队列里有真职位：立刻开始一轮投递，跳到队列页让用户直接看过程。
-    // 没职位（兜底）：只开定时，明天 8 点自动投，不假装现在投了。
+    // 没职位（兜底）：只开定时，明天 10 点自动投，不假装现在投了。
     if (obLaunchReady) {
       showPage("queue");
       runNow();
     } else {
-      toast("定时投递已启动 🎉 每天 8 点自动开工");
+      toast("定时投递已启动 🎉 每天 10 点自动开工");
       showPage("home");
       loadAll();
     }
@@ -2667,7 +2673,7 @@ function renderRachel(r) {
   if (!el) return;
   const task = (r && r.current_task)
     ? `<div class="rs-task">正在做：${esc(r.current_task)}<span class="en">Current task</span></div>` : "";
-  // 排班文案来自 Rachel 的 live today_stats，不写死 8:00 / 10 份；定时未开则明说。
+  // 排班文案来自 Rachel 的 live today_stats，不写死时间 / 份数；定时未开则明说。
   const plan = (r && r.today_stats && r.today_stats.length)
     ? `<span>· ${esc(r.today_stats[0].label_zh)} ${esc(r.today_stats[0].value)} 份</span><span class="en">${esc(r.today_stats[0].label_en || "")} · ${esc(r.today_stats[0].value)} jobs</span>`
     : `<span>· 定时投递未开启</span><span class="en">Scheduled applying off</span>`;

@@ -1,10 +1,10 @@
 'use strict';
-/* sw.js — 后台：队列存储 + ntfy 推送 + 每日 8 点自动投递执行器 */
+/* sw.js — 后台：队列存储 + ntfy 推送 + 每日 10 点自动投递执行器 */
 
 const DEFAULTS = {
   topic: '', autoSubmit: false,
   backendUrl: 'https://applai-backend.fly.dev',
-  scheduleEnabled: false, scheduleTime: '08:00', dailyCount: 10,
+  scheduleEnabled: false, scheduleTime: '10:00', dailyCount: 10,
 };
 
 // One-time migration: installs that saved the old local-backend default before
@@ -91,7 +91,7 @@ async function desktopNotify(title, message) {
   } catch (e) { /* ignore */ }
 }
 
-/* ---------- 定时：每天 8 点 ---------- */
+/* ---------- 定时：每天 10 点 ---------- */
 function nextRunMs(timeStr) {
   const [h, m] = timeStr.split(':').map(Number);
   const now = new Date();

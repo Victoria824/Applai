@@ -117,7 +117,7 @@ async function saveSchedule() {
   const next = {
     ...s,
     scheduleEnabled: $('set-schedule').checked,
-    scheduleTime: $('set-time').value || '08:00',
+    scheduleTime: $('set-time').value || '10:00',
     dailyCount: Math.max(1, Math.min(30, Number($('set-count').value) || 10)),
     backendUrl: $('set-backend').value.trim() || 'https://applai-backend.fly.dev',
   };
@@ -503,7 +503,7 @@ $('btn-enqueue').addEventListener('click', async () => {
   $('set-backend').value = settings.backendUrl || 'https://applai-backend.fly.dev';
   $('set-token').value = settings.apiToken || '';
   $('set-schedule').checked = !!settings.scheduleEnabled;
-  $('set-time').value = settings.scheduleTime || '08:00';
+  $('set-time').value = settings.scheduleTime || '10:00';
   $('set-count').value = settings.dailyCount || 10;
   $('user-id').textContent = await getUserId();
   renderQueue();
