@@ -171,6 +171,8 @@ def report_advice(uid: str):
 投递总数：{len(apps)}
 状态分布：{by_status}
 
+建议只围绕 Applai 已有的功能提：画像关键词/目标职位、抓取与打分、队列、定时投递、人工处理。绝对不要建议同步 LinkedIn、Indeed、Glassdoor、牛客、BOSS直聘 或任何外部平台同步/自动化 —— Applai 不做这些。
+
 只返回 JSON：{{"advice": ["建议1", "建议2", "建议3"]}}"""
     try:
         import httpx as _hx
