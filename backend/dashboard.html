@@ -604,6 +604,20 @@ button .en{font-size:10px; opacity:.72; margin-top:1px;}
   </section>
 </main>
 </div>
+<div id="delAcctModal" class="modal" style="display:none">
+  <div class="modal-box">
+    <div class="card-title">删除账号<span class="en">Delete account</span></div>
+    <div class="hint" style="margin:0 0 12px">确定删除账号？所有画像、申请记录、聊天记录都会被永久删除，不可恢复。<span class="en">Delete account? All profiles, applications and chats will be permanently removed.</span></div>
+    <label>请输入 DELETE 确认删除<span class="en">Type DELETE to confirm</span>
+      <input type="text" id="delAcctInput" placeholder="DELETE" autocomplete="off"></label>
+    <div class="hint" id="delAcctErr" style="color:#e00"></div>
+    <div class="actions" style="margin-top:16px">
+      <button class="primary" id="delAcctConfirm" style="background:#e00">确认删除<span class="en">Delete</span></button>
+      <button id="delAcctCancel">取消<span class="en">Cancel</span></button>
+    </div>
+  </div>
+</div>
+
 <div id="obModal" class="modal" style="display:none">
   <div class="modal-box ob-box">
     <div class="ob-progress"><div id="obBar"></div></div>
@@ -722,6 +736,9 @@ function appCard(a, showActions) {
 
 async function loadQueue() {
   const box = $("queue");
+  // 先清掉旧内容：新用户启动时那次加载还是画像为空的 400 旧错，不清掉的话，
+  // 重拉完成前的几秒里旧错还挂在那里，看起来像启动后报错。
+  box.innerHTML = `<div class="loading">加载中…</div>`;
   try {
     const d = await api(`/api/v1/queue?user_id=${encodeURIComponent(userId())}&top_n=10`);
     $("queueCount").textContent = `共 ${d.count} 个`;
@@ -1458,8 +1475,8 @@ loadAllProfiles();
     // （Deploy #4 实测向导晚 30–60s 弹出，串行等 health 是嫌疑之一）。
     loadHealth();
     await loadMe();
-    // 新手指引不等整页数据加载完：ME 一到就查画像（一次往返），新用户立刻弹向导；
-    // 之前 1200ms 定时器 + 等 loadAll 是"注册后等好几秒才弹出"的主因，已删。
+    // 新手指引不等整页数据加载完，也不等画像接口：ME 一到就立刻弹向导，画像在后台核对
+    // （checkOnboarding 里先弹后查）；之前等画像往返是"注册后等好几秒才弹出"的主因之一。
     checkOnboarding();
     await loadAll();
   } catch (e) { if (!/未登录/.test(e.message)) showErr("初始化失败：" + e.message); }
@@ -1923,12 +1940,20 @@ async function checkOnboarding() {
   // app_user_id 删号后不复用，重注册同名也不会误判。
   const obKey = "applai_onboarded_" + (ME && ME.app_user_id ? ME.app_user_id : "");
   if (localStorage.getItem(obKey)) return;
+  // 向导不等画像接口：先立刻弹出（注册后“马上出现”是硬性要求），再在后台核对画像。
+  // 之前是先等 GET /api/v1/profile 回来才弹：服务器一慢（实测 /health 都要 0.2–0.6s，
+  // 共享 1 核 + 后台打分线程抢 CPU），向导就跟着晚 15–25s。c6c1549 只去掉了 /health
+  // 的等待，profile 这一跳还留在关键路径上。
+  openOnboarding();
   try {
     const d = await api("/api/v1/profile");
     const p = (d && d.profile) || {};
-    if (p.email || (p.targetTitles && p.targetTitles.length)) return;
-  } catch (e) { return; }
-  openOnboarding();
+    if (p.email || (p.targetTitles && p.targetTitles.length)) {
+      // 画像已完整（老用户换浏览器/清了缓存）：收回向导；但只在用户还没开始操作时收，
+      // 做到一半不打断。画像接口拉不到就留着向导——新用户本来就没有画像。
+      if (obPhase === "upload") closeOnboarding(false);
+    }
+  } catch (e) { /* 画像拉不到就留着向导 */ }
 }
 function openOnboarding() {
   obPhase = "upload";
@@ -2270,15 +2295,19 @@ $("obNext").onclick = async () => {
 
 /* ---------- 快捷入口 ---------- */
 async function loadQuickLinks() {
-  let stats = {}, manualN = 0;
+  let stats = {}, manualN = 0, queueN = 0;
   try {
     const uid = encodeURIComponent(userId());
     stats = (await api(`/api/v1/stats?user_id=${uid}`)).stats || {};
     const apps = (await api(`/api/v1/applications?user_id=${uid}`)).applications || [];
     manualN = apps.filter((a) => a.status === "needs_manual").length;
+    // “今日队列”以队列页口径为准（≥40 分的待投职位）：stats.queued 只统计
+    // applications 表里的 queued 记录，没投过的用户永远是 0，和队列页对不上。
+    // 没画像的新用户 /api/v1/queue 会 400，那时保持 0。
+    try { queueN = (await api(`/api/v1/queue?user_id=${uid}&top_n=1`)).count || 0; } catch (e) {}
   } catch (e) {}
   const items = [
-    { e: "📋", t: "今日队列", n: stats.queued || 0, u: "待投递", p: "queue" },
+    { e: "📋", t: "今日队列", n: queueN, u: "待投递", p: "queue" },
     { e: "⚠️", t: "待人工", n: manualN, u: "需处理", p: "manual" },
     { e: "✅", t: "已投递", n: stats.submitted || 0, u: "累计", p: "history" },
     { e: "⏰", t: "定时设置", n: "", u: "去配置", p: "schedule" },
@@ -2595,15 +2624,23 @@ $("exportBtn").onclick = async () => {
     toast("已导出 ✓ / Exported");
   } catch (e) { toast("导出失败 / Export failed: " + e.message); }
 };
-$("deleteAcctBtn").onclick = async () => {
-  const c1 = confirm("确定删除账号？所有画像、申请记录、聊天记录都会被永久删除，不可恢复。\nDelete account? All data will be permanently removed.");
-  if (!c1) return;
-  const c2 = prompt("请输入 DELETE 确认删除 / Type DELETE to confirm:");
-  if ((c2 || "").trim().toUpperCase() !== "DELETE") { toast("已取消 / Cancelled"); return; }
+// 删除账号走页内弹窗，不用原生 confirm()/prompt()：
+// 原生弹窗在无头/自动化浏览器里会被自动关掉（confirm 返回 false），按钮看起来像
+// 点了没反应；jsdom 里 confirm 干脆是未实现的桩，同样静默失败。页内弹窗在哪都一样工作。
+$("deleteAcctBtn").onclick = () => {
+  $("delAcctInput").value = "";
+  $("delAcctErr").textContent = "";
+  $("delAcctModal").style.display = "flex";
+  $("delAcctInput").focus();
+};
+$("delAcctCancel").onclick = () => { $("delAcctModal").style.display = "none"; };
+$("delAcctConfirm").onclick = async () => {
+  const v = ($("delAcctInput").value || "").trim().toUpperCase();
+  if (v !== "DELETE") { $("delAcctErr").textContent = "请输入 DELETE 确认 / Type DELETE to confirm"; return; }
   try {
     await api("/api/v1/account", { method: "DELETE" });
     location.href = "/";
-  } catch (e) { toast("删除失败 / Delete failed: " + e.message); }
+  } catch (e) { $("delAcctErr").textContent = "删除失败 / Delete failed: " + e.message; }
 };
 
 
