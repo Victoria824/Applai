@@ -313,37 +313,68 @@ button .en{font-size:10px; opacity:.72; margin-top:1px;}
 .team-teaser-btn{width:100%; text-align:left; background:#fff; border:1px solid var(--line);
   border-radius:var(--radius); padding:14px 18px; font-size:14px; font-weight:600; box-shadow:none;}
 .team-teaser-btn:hover{border-color:var(--blue);}
+.team-hero{background:linear-gradient(135deg,#ede9fe 0%,#d1fae5 55%,#fef3c7 100%);
+  border:1px solid var(--line); border-radius:18px; padding:18px 20px; margin-bottom:16px;}
+.team-hero h2{font-size:20px; font-weight:800; margin:0 0 4px;}
+.team-hero p{font-size:13px; color:var(--muted); margin:0;}
+.team-live-pill{display:inline-flex; align-items:center; gap:7px; background:#fff;
+  border:1px solid var(--line); border-radius:999px; padding:6px 13px;
+  font-size:13px; font-weight:600; margin-top:12px;}
+.team-live-pill .en{display:inline; margin-left:4px;}
+.pulse-dot{width:8px; height:8px; border-radius:50%; background:#22c55e; flex-shrink:0;
+  animation:teampulse 1.8s infinite;}
+@keyframes teampulse{0%{box-shadow:0 0 0 0 rgba(34,197,94,.45)}70%{box-shadow:0 0 0 7px rgba(34,197,94,0)}100%{box-shadow:0 0 0 0 rgba(34,197,94,0)}}
 .pipe{display:flex; align-items:stretch; gap:6px; margin-bottom:16px; overflow-x:auto; padding:2px;}
 .pipe-step{flex:1; min-width:96px; background:#fff; border:1px solid var(--line);
-  border-radius:12px; padding:10px 8px; text-align:center;}
-.pipe-step .pn{font-size:13px; font-weight:700;}
+  border-radius:12px; padding:12px 8px 10px; text-align:center; cursor:pointer;
+  transition:transform .15s, border-color .15s, box-shadow .15s;}
+.pipe-step:hover{transform:translateY(-2px);}
+.pipe-step.sel{border-color:var(--ac,#8B7CF6); box-shadow:0 0 0 2px var(--ac,#8B7CF6);}
+.pipe-dot{width:44px; height:44px; margin:0 auto 6px; border-radius:50%; background:var(--ac,#8B7CF6);
+  color:#fff; font-weight:800; font-size:17px; display:flex; align-items:center; justify-content:center;}
 .pipe-step .pd{font-size:11px; color:var(--muted); margin-top:2px;}
 .pipe-arrow{align-self:center; color:var(--muted); font-size:16px; flex-shrink:0;}
-.rachel-strip{background:#111827; color:#fff; border-radius:var(--radius);
-  padding:14px 18px; margin-bottom:16px; font-size:14px;}
-.rachel-strip .en{color:#9ca3af;}
-.rachel-strip .rs-row{display:flex; align-items:center; gap:8px; flex-wrap:wrap;}
-.rachel-strip .rs-task{margin-top:6px; font-size:13px; color:#d1d5db;}
-.agent-grid{display:grid; grid-template-columns:repeat(2,1fr); gap:12px;}
-@media (max-width:760px){ .agent-grid{grid-template-columns:1fr;} }
-.agent-card{background:#fff; border:1px solid var(--line); border-radius:var(--radius); padding:18px 20px;}
-.agent-head{display:flex; align-items:flex-start; justify-content:space-between; gap:10px;}
-.agent-name{font-size:17px; font-weight:800;}
-.agent-role{font-size:13px; color:var(--muted); margin-top:2px;}
-.agent-badge{flex-shrink:0; font-size:11px; padding:4px 12px; border-radius:999px; font-weight:700; white-space:nowrap;}
+.agent-grid{display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:12px;}
+.agent-card{background:#fff; border:1.5px solid var(--line); border-radius:18px; padding:16px 12px 14px;
+  text-align:center; cursor:pointer; transition:transform .15s, box-shadow .15s, border-color .15s;}
+.agent-card:hover{transform:translateY(-3px); box-shadow:0 8px 20px rgba(0,0,0,.08);}
+.agent-card.sel{border-color:var(--ac,#8B7CF6); box-shadow:0 0 0 2px var(--ac,#8B7CF6), 0 8px 20px rgba(0,0,0,.08);}
+.agent-ava{width:92px; height:92px; margin:0 auto; border-radius:50%;
+  box-shadow:0 0 0 3px #fff, 0 0 0 6px var(--ac,#8B7CF6);}
+.agent-ava svg{display:block; width:100%; height:100%; border-radius:50%;}
+.agent-name{font-size:16px; font-weight:800; margin-top:10px;}
+.agent-role{font-size:12.5px; color:var(--muted); margin-top:2px;}
+.agent-badge{display:inline-flex; align-items:center; gap:5px; font-size:11px; padding:4px 12px;
+  border-radius:999px; font-weight:700; white-space:nowrap; margin-top:8px;}
 .agent-badge.active{background:var(--green-bg); color:var(--green); border:1px solid #b8ecd4;}
 .agent-badge.idle{background:var(--gray-bg); color:var(--muted); border:1px solid var(--line);}
-.agent-task{font-size:13px; background:var(--blue-soft); color:var(--blue);
-  border-radius:10px; padding:8px 12px; margin-top:12px;}
-.agent-stats{margin-top:12px;}
-.agent-stats .as-row{display:flex; justify-content:space-between; align-items:baseline; gap:10px;
-  padding:6px 0; border-bottom:1px solid var(--gray-bg); font-size:13px;}
-.agent-stats .as-row:last-child{border-bottom:none;}
-.agent-stats .as-row b{font-size:15px;}
-.agent-events{margin:12px 0 0; padding:0; list-style:none;}
-.agent-events li{font-size:13px; color:var(--body); padding:6px 0; border-bottom:1px solid var(--gray-bg);}
-.agent-events li:last-child{border-bottom:none;}
-.agent-events .ev-t{font-size:11px; color:var(--muted); display:block;}
+.agent-doing{font-size:12.5px; color:var(--muted); margin-top:8px; min-height:34px; line-height:1.5;}
+.agent-minis{display:flex; gap:6px; margin-top:8px;}
+.agent-mini{flex:1; background:var(--gray-bg); border-radius:10px; padding:6px 2px;}
+.agent-mini b{display:block; font-size:15px;}
+.agent-mini span{font-size:11px; color:var(--muted);}
+.agent-mini .en{font-size:10px;}
+.team-spotlight{background:#fff; border:1.5px solid var(--line); border-radius:18px;
+  padding:16px 18px; margin:16px 0; display:flex; gap:16px; align-items:flex-start;}
+.spot-ava{width:84px; height:84px; flex:none; border-radius:50%;
+  box-shadow:0 0 0 3px #fff, 0 0 0 6px var(--ac,#8B7CF6);}
+.spot-ava svg{display:block; width:100%; height:100%; border-radius:50%;}
+.spot-body{flex:1; min-width:0;}
+.spot-name{font-weight:800; font-size:15px;}
+.spot-power{font-size:12.5px; color:var(--muted); margin-top:2px;}
+.spot-bubble{background:var(--gray-bg); border-radius:4px 16px 16px 16px;
+  padding:10px 12px; font-size:13.5px; line-height:1.55; margin-top:10px;}
+.spot-bubble small{display:block; color:var(--muted); font-size:11px; margin-top:4px;}
+.wave-btn{margin-top:10px; border:1px solid var(--line); background:#fff; border-radius:999px;
+  padding:6px 14px; font-size:12.5px; cursor:pointer; font-weight:600;}
+.wave-btn:active{transform:scale(.96);}
+.team-feed{display:flex; flex-direction:column; gap:8px;}
+.feed-msg{display:flex; gap:8px; align-items:flex-start;}
+.feed-ava{width:34px; height:34px; border-radius:50%; flex:none; overflow:hidden;}
+.feed-ava svg{display:block; width:100%; height:100%;}
+.feed-bubble{background:#fff; border:1px solid var(--line); border-radius:4px 14px 14px 14px;
+  padding:8px 12px; font-size:13px; line-height:1.5;}
+.feed-bubble small{color:var(--muted); font-size:11px;}
 </style>
 </head>
 <body>
@@ -583,27 +614,32 @@ button .en{font-size:10px; opacity:.72; margin-top:1px;}
   </section>
 
   <section class="page" id="page-team">
-    <div class="page-h"><h2>求职团队<span class="en">Your job-search team</span></h2><p>四个 AI 智能体加一位总管，分工协作帮你找工作、投简历、做复盘。<span class="en">Four AI agents plus a supervisor, working together on your job search.</span></p></div>
-
-    <div class="card-title">投递流水线<span class="en">Pipeline</span></div>
-    <div class="pipe">
-      <div class="pipe-step"><div class="pn">Jennifer</div><div class="pd">画像与关键词<span class="en">Profile &amp; keywords</span></div></div>
-      <div class="pipe-arrow">→</div>
-      <div class="pipe-step"><div class="pn">Amy</div><div class="pd">职位搜罗<span class="en">Job hunting</span></div></div>
-      <div class="pipe-arrow">→</div>
-      <div class="pipe-step"><div class="pn">Jennifer</div><div class="pd">打分<span class="en">Scoring</span></div></div>
-      <div class="pipe-arrow">→</div>
-      <div class="pipe-step"><div class="pn">Caroline</div><div class="pd">填表投递<span class="en">Applying</span></div></div>
-      <div class="pipe-arrow">→</div>
-      <div class="pipe-step"><div class="pn">Gloria</div><div class="pd">复盘<span class="en">Review</span></div></div>
-    </div>
-
-    <div id="rachelStrip" class="rachel-strip">
-      <div class="rs-row"><span>👩‍💼</span><b>总管 Rachel</b><span class="en">Supervisor</span><span>· 每天 10:00 自动投递 10 份</span><span class="en">Auto-applies 10 jobs daily at 10:00 AM</span><span style="margin-left:auto" class="agent-badge idle">空闲中 · Idle</span></div>
+    <div class="team-hero">
+      <h2>🐾 你的 AI 求职小队<span class="en">Your AI job-hunting crew</span></h2>
+      <p>五位小伙伴分工协作，帮你找工作、填表格、回邮件、做复盘。<span class="en">Five teammates working together — finding jobs, filling forms, replying to mail, reviewing progress.</span></p>
+      <div id="teamLivePill" class="team-live-pill"><span class="pulse-dot"></span><span id="teamLiveText">加载中…<span class="en">Loading…</span></span></div>
     </div>
 
     <div class="card-title">智能体<span class="en">Agents</span></div>
     <div id="teamCards" class="agent-grid"><div class="loading">加载中…</div></div>
+
+    <div id="teamSpotlight" class="team-spotlight"><div class="loading">加载中…</div></div>
+
+    <div class="card-title">投递流水线<span class="en">Pipeline</span></div>
+    <div class="pipe">
+      <div class="pipe-step" data-agent="jennifer" style="--ac:#2BB3A3"><div class="pipe-dot">J</div><div class="pd">画像与关键词<span class="en">Profile · Jennifer</span></div></div>
+      <div class="pipe-arrow">→</div>
+      <div class="pipe-step" data-agent="amy" style="--ac:#FFB020"><div class="pipe-dot">A</div><div class="pd">职位搜罗<span class="en">Hunting · Amy</span></div></div>
+      <div class="pipe-arrow">→</div>
+      <div class="pipe-step" data-agent="jennifer" style="--ac:#2BB3A3"><div class="pipe-dot">J</div><div class="pd">打分<span class="en">Scoring · Jennifer</span></div></div>
+      <div class="pipe-arrow">→</div>
+      <div class="pipe-step" data-agent="caroline" style="--ac:#5B8DEF"><div class="pipe-dot">C</div><div class="pd">填表投递<span class="en">Applying · Caroline</span></div></div>
+      <div class="pipe-arrow">→</div>
+      <div class="pipe-step" data-agent="gloria" style="--ac:#F27EA9"><div class="pipe-dot">G</div><div class="pd">复盘<span class="en">Review · Gloria</span></div></div>
+    </div>
+
+    <div class="card-title">小队动态<span class="en">Live feed</span></div>
+    <div id="teamFeed" class="team-feed"><div class="loading">加载中…</div></div>
   </section>
 </main>
 </div>
@@ -2731,11 +2767,27 @@ async function loadGmail() {
 
 
 /* ---------- 团队 ---------- */
+// 卡通头像：inline SVG（矢量，无外部图片），字符串与 team-ui-redesign/DESIGN.md 完全一致。
+const TEAM_AVATARS = {
+  jennifer: '<svg viewBox="0 0 120 120"><circle cx="60" cy="60" r="60" fill="#2BB3A3"/><circle cx="60" cy="60" r="46" fill="#5ECFC2" opacity=".55"/><path d="M42 42 L48 28 L56 40 Z" fill="#0F766E"/><path d="M64 40 L72 28 L78 42 Z" fill="#0F766E"/><ellipse cx="60" cy="72" rx="32" ry="28" fill="#0F766E"/><ellipse cx="60" cy="80" rx="20" ry="16" fill="#CCFBF1"/><circle cx="47" cy="54" r="11" fill="#fff"/><circle cx="73" cy="54" r="11" fill="#fff"/><circle cx="47" cy="55" r="5" fill="#134E4A"/><circle cx="73" cy="55" r="5" fill="#134E4A"/><circle cx="47" cy="54" r="14" fill="none" stroke="#134E4A" stroke-width="2.5"/><circle cx="73" cy="54" r="14" fill="none" stroke="#134E4A" stroke-width="2.5"/><path d="M61 54 H59" stroke="#134E4A" stroke-width="2.5"/><path d="M60 64 L54 71 L66 71 Z" fill="#F59E0B"/><circle cx="38" cy="70" r="4" fill="#F9A8D4" opacity=".8"/><circle cx="82" cy="70" r="4" fill="#F9A8D4" opacity=".8"/></svg>',
+  amy: '<svg viewBox="0 0 120 120"><circle cx="60" cy="60" r="60" fill="#FFB020"/><circle cx="60" cy="60" r="46" fill="#FFD166" opacity=".6"/><ellipse cx="26" cy="68" rx="10" ry="17" fill="#fff" opacity=".85" transform="rotate(-18 26 68)"/><ellipse cx="94" cy="68" rx="10" ry="17" fill="#fff" opacity=".85" transform="rotate(18 94 68)"/><path d="M50 38 L42 22" stroke="#3A2E00" stroke-width="3" stroke-linecap="round"/><path d="M70 38 L78 22" stroke="#3A2E00" stroke-width="3" stroke-linecap="round"/><circle cx="42" cy="20" r="4.5" fill="#3A2E00"/><circle cx="78" cy="20" r="4.5" fill="#3A2E00"/><circle cx="60" cy="66" r="30" fill="#FFD93D"/><path d="M33 54 Q60 40 87 54" stroke="#3A2E00" stroke-width="6" fill="none" stroke-linecap="round"/><path d="M33 66 Q60 54 87 66" stroke="#3A2E00" stroke-width="6" fill="none" stroke-linecap="round"/><circle cx="48" cy="66" r="5" fill="#3A2E00"/><circle cx="72" cy="66" r="5" fill="#3A2E00"/><circle cx="50" cy="64" r="1.8" fill="#fff"/><circle cx="74" cy="64" r="1.8" fill="#fff"/><path d="M50 78 Q60 86 70 78" stroke="#3A2E00" stroke-width="3" fill="none" stroke-linecap="round"/><circle cx="38" cy="76" r="4" fill="#F9A8D4" opacity=".85"/><circle cx="82" cy="76" r="4" fill="#F9A8D4" opacity=".85"/></svg>',
+  caroline: '<svg viewBox="0 0 120 120"><circle cx="60" cy="60" r="60" fill="#5B8DEF"/><circle cx="60" cy="60" r="46" fill="#93B4F5" opacity=".55"/><circle cx="60" cy="62" r="32" fill="#1E3A5F"/><ellipse cx="60" cy="70" rx="22" ry="20" fill="#fff"/><circle cx="50" cy="60" r="4.5" fill="#1E3A5F"/><circle cx="70" cy="60" r="4.5" fill="#1E3A5F"/><circle cx="51.5" cy="58.5" r="1.6" fill="#fff"/><circle cx="71.5" cy="58.5" r="1.6" fill="#fff"/><path d="M60 66 L53 73 L67 73 Z" fill="#F97316"/><circle cx="44" cy="72" r="3.5" fill="#F9A8D4" opacity=".8"/><circle cx="76" cy="72" r="3.5" fill="#F9A8D4" opacity=".8"/><path d="M60 94 L46 88 L46 100 Z" fill="#EF4444"/><path d="M60 94 L74 88 L74 100 Z" fill="#EF4444"/><circle cx="60" cy="94" r="4" fill="#B91C1C"/></svg>',
+  gloria: '<svg viewBox="0 0 120 120"><circle cx="60" cy="60" r="60" fill="#F27EA9"/><circle cx="60" cy="60" r="46" fill="#F9A8D4" opacity=".55"/><path d="M48 34 Q54 26 60 34 Q66 26 72 34" stroke="#F27EA9" stroke-width="3" fill="none" stroke-linecap="round"/><circle cx="60" cy="62" r="30" fill="#fff"/><circle cx="49" cy="60" r="4.5" fill="#1F2937"/><circle cx="71" cy="60" r="4.5" fill="#1F2937"/><path d="M44 54 L48 58" stroke="#1F2937" stroke-width="2" stroke-linecap="round"/><path d="M76 54 L72 58" stroke="#1F2937" stroke-width="2" stroke-linecap="round"/><path d="M60 66 L55 72 L65 72 Z" fill="#F472B6"/><ellipse cx="42" cy="72" rx="6" ry="4" fill="#F9A8D4"/><ellipse cx="78" cy="72" rx="6" ry="4" fill="#F9A8D4"/><rect x="82" y="86" width="24" height="17" rx="3" fill="#fff" stroke="#F27EA9" stroke-width="2"/><path d="M82 89 L94 98 L106 89" fill="none" stroke="#F27EA9" stroke-width="2"/></svg>',
+  rachel: '<svg viewBox="0 0 120 120"><circle cx="60" cy="60" r="60" fill="#8B7CF6"/><circle cx="60" cy="60" r="46" fill="#B7A6F9" opacity=".55"/><path d="M40 42 L32 20 L54 30 Z" fill="#EA580C"/><path d="M40 38 L35 26 L48 31 Z" fill="#FED7AA"/><path d="M80 42 L88 20 L66 30 Z" fill="#EA580C"/><path d="M80 38 L85 26 L72 31 Z" fill="#FED7AA"/><circle cx="60" cy="64" r="30" fill="#EA580C"/><ellipse cx="60" cy="78" rx="18" ry="12" fill="#FFF7ED"/><ellipse cx="48" cy="60" rx="8" ry="10" fill="#7C2D12" opacity=".45"/><ellipse cx="72" cy="60" rx="8" ry="10" fill="#7C2D12" opacity=".45"/><circle cx="48" cy="60" r="4" fill="#1F2937"/><circle cx="72" cy="60" r="4" fill="#1F2937"/><circle cx="49.5" cy="58.5" r="1.5" fill="#fff"/><circle cx="73.5" cy="58.5" r="1.5" fill="#fff"/><path d="M60 70 L56 75 L64 75 Z" fill="#451A03"/><path d="M82 30 L84 35 L89 35 L85 38 L86.5 43 L82 40 L77.5 43 L79 38 L75 35 L80 35 Z" fill="#FDE047"/></svg>',
+};
+const TEAM_CHARACTER = {
+  jennifer: { char: "🦉 猫头鹰 · 智慧分析师", power: "超能力：3 秒读完一份 JD，关键词一个不漏", doing: "正在给新职位打分…", color: "#2BB3A3", lines: ["这份简历的关键词我都标好啦！", "这个岗位和你匹配度 85 分，冲！", "打分这件事，交给我你就放心吧～"] },
+  amy: { char: "🐝 小蜜蜂 · 勤劳搜罗员", power: "超能力：全网招聘页逛一圈，新坑一个不漏", doing: "正在逛招聘网站找新职位…", color: "#FFB020", lines: ["刚发现 3 个新职位，正在排队等打分！", "招聘网站我都逛遍啦，一个不漏～", "有新坑位我就第一时间叼回来！"] },
+  caroline: { char: "🐧 小企鹅 · 靠谱投递员", power: "超能力：再长的申请表，也能一次填对", doing: "等 10 点开工，队列已排好", color: "#5B8DEF", lines: ["表格我来填，你只管等好消息～", "验证码搞不定我就交给你，别担心。", "今天 10 点，准时开工！"] },
+  gloria: { char: "🕊️ 小白鸽 · 温柔信使", power: "超能力：邮件语气拿捏到位，复盘比你还了解你", doing: "正在读你的新邮件…", color: "#F27EA9", lines: ["有 2 封回复要回，我已经打好草稿啦！", "本周复盘我周日发你，记得看哦～", "邮件里的小情绪，我都帮你留意着。"] },
+  rachel: { char: "🦊 小熊猫 · 全队总指挥", power: "超能力：一眼看穿全队进度，谁卡住就去救场", doing: "正在盯全队进度…", color: "#8B7CF6", lines: ["全队就位，今天 10 点准时开工！", "进度我都盯着呢，你安心忙别的去吧。", "有情况我第一个汇报！"] },
+};
 const TEAM_META = [
   { id: "jennifer", name: "Jennifer", role_zh: "简历与市场分析", role_en: "Resume & Market Analysis" },
   { id: "amy", name: "Amy", role_zh: "职位搜罗", role_en: "Job Hunter" },
   { id: "caroline", name: "Caroline", role_zh: "填表投递", role_en: "Application Specialist" },
-  { id: "gloria", name: "Gloria", role_zh: "复盘", role_en: "Review Coach" },
+  { id: "gloria", name: "Gloria", role_zh: "复盘 · 邮件助手", role_en: "Review Coach" },
+  { id: "rachel", name: "Rachel", role_zh: "总管 · 调度", role_en: "Supervisor" },
 ];
 const fmtISO = (iso) => {
   if (!iso) return "";
@@ -2745,41 +2797,91 @@ const fmtISO = (iso) => {
 };
 function agentStatusBadge(a) {
   return (a && a.status === "active")
-    ? `<span class="agent-badge active">工作中 · Active</span>`
-    : `<span class="agent-badge idle">空闲中 · Idle</span>`;
+    ? `<span class="agent-badge active"><span class="pulse-dot"></span>工作中 · Working</span>`
+    : `<span class="agent-badge idle">待命 · Standby</span>`;
 }
 function agentCard(m, a) {
-  const task = (a && a.current_task)
-    ? `<div class="agent-task">正在做：${esc(a.current_task)}<span class="en">Current task</span></div>` : "";
+  const c = TEAM_CHARACTER[m.id] || {};
+  const color = c.color || "#8B7CF6";
+  // “正在做”：有 live 任务就显示它，没有就显示该 agent 的固定文案。
+  const doing = (a && a.current_task)
+    ? `正在做：${esc(a.current_task)}<span class="en">Current task</span>`
+    : esc(c.doing || "");
   const stats = (a && a.today_stats && a.today_stats.length)
-    ? `<div class="agent-stats">${a.today_stats.map((s) =>
-        `<div class="as-row"><span>${esc(s.label_zh)}<span class="en">${esc(s.label_en || "")}</span></span><b>${esc(s.value)}</b></div>`).join("")}</div>`
+    ? `<div class="agent-minis">${a.today_stats.slice(0, 2).map((s) =>
+        `<div class="agent-mini"><b>${esc(s.value)}</b><span>${esc(s.label_zh)}<span class="en">${esc(s.label_en || "")}</span></span></div>`).join("")}</div>`
     : `<div class="hint">今日暂无数据<span class="en">No data today</span></div>`;
-  const events = (a && a.recent_events && a.recent_events.length)
-    ? `<ul class="agent-events">${a.recent_events.map((ev) =>
-        `<li>${esc(ev.summary || ev.event || "")}<span class="ev-t">${fmtISO(ev.created_at)}</span></li>`).join("")}</ul>`
-    : `<div class="hint">暂无动态<span class="en">No recent activity</span></div>`;
-  return `<div class="agent-card">
-    <div class="agent-head">
-      <div><div class="agent-name">${esc(m.name)}</div>
-      <div class="agent-role">${esc(m.role_zh)}<span class="en">${esc(m.role_en)}</span></div></div>
-      ${agentStatusBadge(a)}
-    </div>
-    ${task}
+  return `<div class="agent-card" data-agent="${esc(m.id)}" style="--ac:${color}">
+    <div class="agent-ava">${TEAM_AVATARS[m.id] || ""}</div>
+    <div class="agent-name">${esc(m.name)}</div>
+    <div class="agent-role">${esc(m.role_zh)}<span class="en">${esc(m.role_en)}</span></div>
+    ${agentStatusBadge(a)}
+    <div class="agent-doing">${doing}</div>
     ${stats}
-    ${events}
   </div>`;
 }
-function renderRachel(r) {
-  const el = $("rachelStrip");
+// 头顶 live pill：工作人数 + Rachel 的 live 排班（不写死时间 / 份数；定时未开则明说）。
+function renderTeamHeader(byId) {
+  const el = $("teamLiveText");
   if (!el) return;
-  const task = (r && r.current_task)
-    ? `<div class="rs-task">正在做：${esc(r.current_task)}<span class="en">Current task</span></div>` : "";
-  // 排班文案来自 Rachel 的 live today_stats，不写死时间 / 份数；定时未开则明说。
+  const working = TEAM_META.filter((m) => byId[m.id] && byId[m.id].status === "active").length;
+  const r = byId.rachel;
   const plan = (r && r.today_stats && r.today_stats.length)
-    ? `<span>· ${esc(r.today_stats[0].label_zh)} ${esc(r.today_stats[0].value)} 份</span><span class="en">${esc(r.today_stats[0].label_en || "")} · ${esc(r.today_stats[0].value)} jobs</span>`
-    : `<span>· 定时投递未开启</span><span class="en">Scheduled applying off</span>`;
-  el.innerHTML = `<div class="rs-row"><span>👩‍💼</span><b>总管 Rachel</b><span class="en">Supervisor</span>${plan}<span style="margin-left:auto">${agentStatusBadge(r)}</span></div>${task}`;
+    ? ` · ${esc(r.today_stats[0].label_zh)} ${esc(r.today_stats[0].value)} 份<span class="en">${esc(r.today_stats[0].label_en || "")} · ${esc(r.today_stats[0].value)} jobs</span>`
+    : ` · 定时投递未开启<span class="en">Scheduled applying off</span>`;
+  el.innerHTML = `全队在线 · ${working} 位工作中<span class="en">Team online · ${working} working</span>${plan}`;
+}
+// 小队动态：同一份 recent_events，换成带 mini 头像的气泡；不新增数据源。
+function renderTeamFeed(byId) {
+  const el = $("teamFeed");
+  if (!el) return;
+  const rows = [];
+  TEAM_META.forEach((m) => {
+    const a = byId[m.id];
+    ((a && a.recent_events) || []).forEach((ev) => {
+      const summary = ev.summary || ev.event || "";
+      if (summary) rows.push({ id: m.id, name: m.name, summary, at: ev.created_at });
+    });
+  });
+  rows.sort((x, y) => String(y.at || "").localeCompare(String(x.at || "")));
+  const top = rows.slice(0, 8);
+  el.innerHTML = top.length ? top.map((r) =>
+    `<div class="feed-msg"><div class="feed-ava">${TEAM_AVATARS[r.id] || ""}</div><div class="feed-bubble"><b>${esc(r.name)}</b> <small>${fmtISO(r.at)}</small><br>${esc(r.summary)}</div></div>`).join("")
+    : `<div class="hint">暂无动态<span class="en">No recent activity</span></div>`;
+}
+let teamSelected = "rachel";
+let teamHiIndex = 0;
+function teamMetaById(id) {
+  return TEAM_META.find((m) => m.id === id) || TEAM_META[TEAM_META.length - 1];
+}
+function renderSpotlight() {
+  const el = $("teamSpotlight");
+  if (!el) return;
+  const m = teamMetaById(teamSelected);
+  const c = TEAM_CHARACTER[m.id] || {};
+  const lines = c.lines || [""];
+  const line = lines[teamHiIndex % lines.length];
+  el.innerHTML = `<div class="spot-ava" style="--ac:${c.color || "#8B7CF6"}">${TEAM_AVATARS[m.id] || ""}</div>
+    <div class="spot-body">
+      <div class="spot-name">${esc(m.name)} · ${esc(c.char || "")}</div>
+      <div class="spot-power">${esc(c.power || "")}</div>
+      <div class="spot-bubble">“${esc(line)}”<small>${esc(m.name)} · ${esc(m.role_zh)}</small></div>
+      <button class="wave-btn" id="teamSayHi">👋 跟 TA 打招呼<span class="en">Say hi</span></button>
+    </div>`;
+  const btn = $("teamSayHi");
+  if (btn) btn.onclick = () => { teamHiIndex++; renderSpotlight(); };
+}
+function selectTeamAgent(id) {
+  if (!TEAM_CHARACTER[id]) return;
+  teamSelected = id;
+  teamHiIndex = 0;
+  document.querySelectorAll("#teamCards .agent-card").forEach((el) => {
+    el.classList.toggle("sel", el.dataset.agent === id);
+  });
+  document.querySelectorAll("#page-team .pipe-step").forEach((el) => {
+    el.classList.toggle("sel", el.dataset.agent === id);
+  });
+  renderSpotlight();
 }
 async function loadTeam() {
   const box = $("teamCards");
@@ -2790,8 +2892,19 @@ async function loadTeam() {
   const byId = {};
   ((data && data.agents) || []).forEach((a) => { if (a && a.id) byId[a.id] = a; });
   box.innerHTML = TEAM_META.map((m) => agentCard(m, byId[m.id])).join("");
-  renderRachel(byId.rachel);
+  box.querySelectorAll(".agent-card").forEach((el) => {
+    el.onclick = () => selectTeamAgent(el.dataset.agent);
+    el.classList.toggle("sel", el.dataset.agent === teamSelected);
+  });
+  renderTeamHeader(byId);
+  renderTeamFeed(byId);
+  renderSpotlight();
 }
+// 流水线步骤点选（静态 HTML，绑定一次即可）
+document.querySelectorAll("#page-team .pipe-step").forEach((el) => {
+  el.onclick = () => selectTeamAgent(el.dataset.agent);
+});
+renderSpotlight();  // 先按默认选中（Rachel）渲染，loadTeam 时再刷新
 $("teamLink").onclick = () => showPage("team");
 
 /* ---------- 复盘 ---------- */

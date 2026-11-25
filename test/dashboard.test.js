@@ -36,6 +36,7 @@ function boot(opts = {}) {
     : opts.profileBody;
   const statsBody = opts.statsBody || { stats: { queued: 0, submitted: 0, needs_manual: 0, skipped: 0 } };
   const queueBody = opts.queueBody || { count: 0, jobs: [] };
+  const agentsBody = opts.agentsBody || { agents: [] };
   const job1 = { id: 101, title: 'Data Scientist', company: 'Wealthsimple',
     location: 'Remote (Canada)', score: 64, score_reasons: ['Python'], url: 'https://example.com/j1' };
 
@@ -48,6 +49,7 @@ function boot(opts = {}) {
       json: async () => body, text: async () => JSON.stringify(body),
     });
     if (u.includes('/api/v1/auth/me')) return ok({ app_user_id: 'probe-user-1', username: 'wobtest-probe' });
+    if (u.includes('/api/v1/agents')) return ok(agentsBody);
     if (u.includes('/health')) return ok({ ok: true, version: '0.2.0', llm: true });
     if (u.includes('/api/v1/profile')) {
       if (profileDelay === Infinity) return new Promise(() => {});
@@ -373,6 +375,112 @@ async function main() {
       t.document.getElementById('obNext').textContent);
     const qe = t.document.getElementById('obQErr');
     check('通过时错误框保持空白', !qe || qe.textContent === '', qe && JSON.stringify(qe.textContent));
+    t.dom.window.close();
+  }
+
+  // T13 — 团队页卡通头像改版（Deploy #10）：5 张头像卡、状态 pill 跟 live 状态、
+  // 点卡片选中进 spotlight、打招呼轮换台词、流水线映射、头顶 live pill、小队动态。
+  // 修复前（DASH_HTML=/tmp/dashboard_before.html）应失败：旧团队页只有 4 张无头像卡、
+  // 没有 spotlight / live pill / feed，流水线步骤也没有 data-agent。
+  console.log('T13 团队页卡通头像改版');
+  {
+    const agentsBody = { agents: [
+      { id: 'jennifer', name: 'Jennifer', status: 'active', current_task: '给新职位打分',
+        today_stats: [{ label_zh: '今日已打分', label_en: 'Scored today', value: 57 },
+          { label_zh: '待打分', label_en: 'Pending scoring', value: 162 }],
+        recent_events: [{ summary: '打分完成：StackAdapt ML 岗 85 分', created_at: '2026-11-25T09:58:00Z' }] },
+      { id: 'amy', name: 'Amy', status: 'idle', current_task: null,
+        today_stats: [{ label_zh: '今日新增职位', label_en: 'New jobs today', value: 485 },
+          { label_zh: '今日新发现', label_en: 'Newly found', value: 32 }],
+        recent_events: [{ summary: '发现 3 个新职位', created_at: '2026-11-25T09:41:00Z' }] },
+      { id: 'caroline', name: 'Caroline', status: 'idle', current_task: null,
+        today_stats: [{ label_zh: '今日队列', label_en: "Today's queue", value: 103 }],
+        recent_events: [] },
+      { id: 'gloria', name: 'Gloria', status: 'active', current_task: '读新邮件',
+        today_stats: [{ label_zh: '待回邮件', label_en: 'Replies pending', value: 2 }],
+        recent_events: [] },
+      { id: 'rachel', name: 'Rachel', status: 'idle', current_task: null,
+        today_stats: [{ label_zh: '今日计划 · 10:00', label_en: "Today's plan · 10:00", value: 10 }],
+        recent_events: [{ summary: '定时任务已排好', created_at: '2026-11-25T10:00:00Z' }] },
+    ] };
+    const t = boot({ agentsBody });
+    await sleep(700);
+    const spot = () => t.document.getElementById('teamSpotlight');
+    // 默认选中 Rachel（改版前 spotlight 元素根本不存在）
+    check('默认 spotlight 是 Rachel', spot() && spot().textContent.includes('Rachel')
+      && spot().textContent.includes('🦊 小熊猫 · 全队总指挥'), spot() && spot().textContent.slice(0, 120));
+    check('默认 spotlight 有第一句台词', spot() && spot().textContent.includes('全队就位，今天 10 点准时开工！'),
+      spot() && spot().textContent.slice(0, 120));
+    await t.window.loadTeam();
+    const cards = () => Array.from(t.document.querySelectorAll('#teamCards .agent-card'));
+    const card = (id) => t.document.querySelector(`#teamCards .agent-card[data-agent="${id}"]`);
+    check('团队页有 5 张卡（含 Rachel）', cards().length === 5, `cards=${cards().length}`);
+    // 头像：5 位都有 inline SVG，且颜色对得上
+    const avaColors = { jennifer: '#2BB3A3', amy: '#FFB020', caroline: '#5B8DEF', gloria: '#F27EA9', rachel: '#8B7CF6' };
+    let avaOk = cards().length === 5;
+    for (const [id, color] of Object.entries(avaColors)) {
+      const c = card(id);
+      const svg = c && c.querySelector('.agent-ava svg');
+      if (!svg || !svg.outerHTML.includes(color)) avaOk = false;
+    }
+    check('5 张卡都有头像 SVG 且颜色正确', avaOk);
+    // 状态 pill 跟 live 状态走
+    const jenBadge = card('jennifer') && card('jennifer').querySelector('.agent-badge');
+    const amyBadge = card('amy') && card('amy').querySelector('.agent-badge');
+    check('工作中（Jennifer）是绿色 active pill', jenBadge && jenBadge.classList.contains('active')
+      && jenBadge.textContent.includes('工作中'), jenBadge && jenBadge.className);
+    check('工作中 pill 有脉冲绿点', jenBadge && !!jenBadge.querySelector('.pulse-dot'));
+    check('待命（Amy）是灰色 idle pill', amyBadge && amyBadge.classList.contains('idle')
+      && amyBadge.textContent.includes('待命'), amyBadge && amyBadge.className);
+    check('待命 pill 没有脉冲绿点', amyBadge && !amyBadge.querySelector('.pulse-dot'));
+    // “正在做”：有 live 任务显示 live 文案，没有则显示固定文案
+    check('有 live 任务时卡片显示它', card('jennifer') && card('jennifer').textContent.includes('正在做：给新职位打分'));
+    check('无 live 任务时显示固定文案', card('amy') && card('amy').textContent.includes('正在逛招聘网站找新职位…'));
+    // mini stats：只取前两项
+    check('卡片 mini stats 显示前两项', card('jennifer') && card('jennifer').textContent.includes('57')
+      && card('jennifer').textContent.includes('162'));
+    // 头顶 live pill：工作人数 + Rachel 的 live 排班（不写死）
+    const pill = t.document.getElementById('teamLiveText');
+    check('live pill 有工作人数', pill && pill.textContent.includes('全队在线 · 2 位工作中'),
+      pill && pill.textContent);
+    check('live pill 有 Rachel 的 live 排班', pill && pill.textContent.includes('今日计划 · 10:00 10 份'),
+      pill && pill.textContent);
+    // 点卡片选中进 spotlight
+    if (card('amy')) card('amy').click();
+    check('点 Amy 卡后 spotlight 是 Amy', spot() && spot().textContent.includes('Amy')
+      && spot().textContent.includes('🐝 小蜜蜂 · 勤劳搜罗员'), spot() && spot().textContent.slice(0, 120));
+    check('点卡片后该卡有 sel 态', card('amy') && card('amy').classList.contains('sel'));
+    check('点卡片后其它卡无 sel 态', card('jennifer') && !card('jennifer').classList.contains('sel'));
+    // 打招呼轮换台词
+    const sayHi = () => t.document.getElementById('teamSayHi');
+    check('Amy 第一句台词', spot() && spot().textContent.includes('刚发现 3 个新职位，正在排队等打分！'));
+    if (sayHi()) sayHi().click();
+    check('打招呼后换第二句', spot() && spot().textContent.includes('招聘网站我都逛遍啦，一个不漏～'),
+      spot() && spot().textContent.slice(0, 120));
+    if (sayHi()) sayHi().click();
+    check('再打招呼换第三句', spot() && spot().textContent.includes('有新坑位我就第一时间叼回来！'));
+    if (sayHi()) sayHi().click();
+    check('三句轮完回到第一句', spot() && spot().textContent.includes('刚发现 3 个新职位，正在排队等打分！'));
+    // 流水线映射：Jennifer→画像，Amy→搜罗，Jennifer→打分，Caroline→投递，Gloria→复盘
+    const steps = Array.from(t.document.querySelectorAll('#page-team .pipe-step'));
+    check('流水线有 5 步', steps.length === 5, `steps=${steps.length}`);
+    check('流水线映射到正确 agent',
+      steps.map((s) => s.dataset.agent).join(',') === 'jennifer,amy,jennifer,caroline,gloria',
+      steps.map((s) => s.dataset.agent).join(','));
+    check('流水线圆点是 agent 首字母',
+      steps.map((s) => (s.querySelector('.pipe-dot') || {}).textContent).join('') === 'JAJCG',
+      steps.map((s) => (s.querySelector('.pipe-dot') || {}).textContent).join(''));
+    // 点流水线一步也选中
+    if (steps[3]) steps[3].click();
+    check('点流水线投递步后 spotlight 是 Caroline', spot() && spot().textContent.includes('Caroline')
+      && spot().textContent.includes('🐧 小企鹅 · 靠谱投递员'));
+    // 小队动态：用同一份 recent_events，带 mini 头像的气泡
+    const feed = t.document.getElementById('teamFeed');
+    check('动态里有 Jennifer 的事件', feed && feed.textContent.includes('打分完成：StackAdapt ML 岗 85 分'),
+      feed && feed.textContent.slice(0, 120));
+    check('动态里有 Amy 的事件', feed && feed.textContent.includes('发现 3 个新职位'));
+    check('动态气泡带 mini 头像', feed && feed.querySelectorAll('.feed-msg .feed-ava svg').length >= 2,
+      feed && String(feed.querySelectorAll('.feed-msg').length));
     t.dom.window.close();
   }
 
