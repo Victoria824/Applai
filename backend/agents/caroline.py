@@ -79,9 +79,11 @@ def _log_event(uid: str, event: str, summary: str, ref_id=None) -> None:
 
 # ---------- 队列 / Queue ----------
 
-def _queue_jobs(uid: str, top_n: int = 10) -> list:
-    """待投递队列：chatbot 手动加入的（status='queued'）最优先，其余按混合
-    分数排序并排除已处理过的职位。"""
+def _queue_jobs(uid: str) -> list:
+    """待投递队列（完整有序列表，不截取）：chatbot 手动加入的（status='queued'）
+    最优先，其余按混合分数排序并排除已处理过的职位。调用方自己按需截取：
+    get_queue 按 top_n 切片返回 jobs、按总数返回 count；gloria 的聊天上下文
+    只取前 15 条。注意 db.list_jobs 上限 500 条，总数最多就是 500。"""
     jobs = db.list_jobs(uid, limit=500)
     by_id = {j["id"]: j for j in jobs}
     done = db.applied_job_ids(uid)
@@ -89,17 +91,20 @@ def _queue_jobs(uid: str, top_n: int = 10) -> list:
     fresh = [j for j in jobs
              if j["id"] not in done and (j.get("score") or 0) >= 40]
     fresh.sort(key=lambda j: (-(j.get("score") or 0), j.get("created_at", 0)))
-    return (manual + fresh)[:top_n]
+    return manual + fresh
 
 
 def get_queue(uid: str, top_n: int = 10):
     """今日投递队列：只读，无副作用。没画像的新用户返回空队列而不是 400：
     注册后启动时队列框会先拉一次，没画像就 400 会挂一条吓人的报错；
-    队列是只读视图，“没画像”自然就是“暂时没有可投职位”。"""
+    队列是只读视图，“没画像”自然就是“暂时没有可投职位”。
+    count 是可投总数（截取前），jobs 才是 top_n 切片——首页 top_n=1
+    拉到的 count 必须是总数，否则首页永远最多显示 1（Deploy #7 走查：首页 1，
+    队列页 2→3→4）。"""
     if not db.get_profile(uid):
         return {"user_id": uid, "count": 0, "jobs": []}
-    queue = _queue_jobs(uid, top_n)
-    return {"user_id": uid, "count": len(queue), "jobs": queue}
+    all_jobs = _queue_jobs(uid)
+    return {"user_id": uid, "count": len(all_jobs), "jobs": all_jobs[:top_n]}
 
 
 # ---------- 投递留痕 / Snapshots ----------

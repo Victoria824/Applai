@@ -3,7 +3,9 @@
    跑法：node test/dashboard.test.js
    对比修复前：DASH_HTML=/tmp/dashboard_before.html node test/dashboard.test.js
    （修复前 T1/T3/T4/T5 应失败，T2 通过；T6/T7/T8/T9 是 Deploy #7 新增的回归测试，
-   修复前也应失败；修复后应全部通过） */
+   修复前也应失败；T10 是 Deploy #8 新增：它测的是首页渲染 count 而非 jobs.length，
+   对旧后端（count=页内数）用 DASH_HTML 跑不到失败——它的失败前对照在后端测试里；
+   但把 HTML 里两处 .count 换成 jobs.length 后 T10 应失败，见下方注释）修复后应全部通过 */
 const fs = require('fs');
 const path = require('path');
 const { JSDOM, VirtualConsole } = require('jsdom');
@@ -277,6 +279,24 @@ async function main() {
     await sleep(3000);  // 距点击约 7.6 秒：旧 2.2 秒留存早已消失，新 8 秒还在
     check('诊断 toast 7.6 秒后仍可见（8 秒留存）', toastEl.style.display === 'block',
       `display=${toastEl.style.display} text=${toastEl.textContent}`);
+    t.dom.window.close();
+  }
+
+  // T10 — 首页计数是总数不是页内数：队列接口 top_n=1 只回 1 条 jobs，
+  // 但 count=4 时首页“今日队列”和统计行“待投递”都应显示 4（Deploy #7
+  // 走查：首页 1，队列页 2→3→4；旧后端 count=截取后的页内数所以首页最多是 1）。
+  // 注意：这是前端渲染 count 的契约测试——后端修法的失败前对照在
+  // test_backend.py 的 test_queue_count_is_total_not_page_size 里。
+  console.log('T10 首页计数取总数（count），不是页内 jobs 数');
+  {
+    const t = boot({ statsBody: { stats: { queued: 0, submitted: 0, needs_manual: 0, skipped: 0 } },
+      queueBody: { count: 4 } });
+    await sleep(900);
+    const ql = t.document.getElementById('quickLinks').innerHTML;
+    check('首页今日队列显示 4（总数，不是 1 条 jobs）', ql.includes('<div class="n">4</div>'), ql.slice(0, 200));
+    const firstStat = () => t.document.querySelector('#stats .stat .n');
+    check('统计行待投递显示 4', firstStat() && firstStat().textContent === '4',
+      firstStat() && firstStat().textContent);
     t.dom.window.close();
   }
 

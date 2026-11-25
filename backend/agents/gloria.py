@@ -254,7 +254,7 @@ def _queue_jobs(uid: str, top_n: int = 10) -> list:
     """待投递队列：chatbot 手动加入的（status='queued'）最优先，其余按混合
     分数排序并排除已处理过的职位 — canonical in agents.caroline."""
     from agents.caroline import _queue_jobs as _c_queue_jobs
-    return _c_queue_jobs(uid, top_n)
+    return _c_queue_jobs(uid)[:top_n]
 
 
 # app.py:1425 chat -> chat(uid, body). Logic verbatim except the two

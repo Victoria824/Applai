@@ -2337,7 +2337,7 @@ async function loadQuickLinks() {
     manualN = apps.filter((a) => a.status === "needs_manual").length;
     // “今日队列”以队列页口径为准（≥40 分的待投职位）：stats.queued 只统计
     // applications 表里的 queued 记录，没投过的用户永远是 0，和队列页对不上。
-    // 没画像的新用户 /api/v1/queue 会 400，那时保持 0。
+    // count 是可投总数（后端截取前就数好了），top_n=1 拉到的也是总数。
     try { queueN = (await api(`/api/v1/queue?user_id=${uid}&top_n=1`)).count || 0; } catch (e) {}
   } catch (e) {}
   const items = [

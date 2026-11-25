@@ -118,6 +118,27 @@ def test_queue_empty_for_user_without_profile():
     assert r.json()["jobs"] == []
 
 
+def test_queue_count_is_total_not_page_size():
+    # count 是可投总数，不是 top_n 切片后的页内数：4 个可投职位、top_n=1 时
+    # count 必须是 4、jobs 只有 1 条（Deploy #7 走查：首页 top_n=1 拉到的
+    # count 永远是 1，队列页却 2→3→4）。
+    c = _authed_client("qcount_user")
+    c.put("/api/v1/profile", json={"user_id": "x", "profile": {
+        "targetTitles": ["Cleaner"], "preferredLocations": ["Toronto"]}})
+    import db as dbm
+    for i in range(4):
+        jid = c.post("/api/v1/jobs", json={
+            "user_id": "x", "url": f"https://example.com/qc{i}", "title": f"Cleaner {i}",
+            "company": "Acme", "location": "Toronto"}).json()["id"]
+        dbm.update_job_score(jid, 80, ["test"], "rules")
+    r1 = c.get("/api/v1/queue", params={"top_n": 1})
+    assert r1.json()["count"] == 4
+    assert len(r1.json()["jobs"]) == 1
+    r2 = c.get("/api/v1/queue", params={"top_n": 10})
+    assert r2.json()["count"] == 4
+    assert len(r2.json()["jobs"]) == 4
+
+
 def test_applications_and_stats():
     r = client.get("/api/v1/applications", params={"user_id": UID})
     assert any(a["status"] == "submitted" for a in r.json()["applications"])
