@@ -5,7 +5,9 @@
    （修复前 T1/T3/T4/T5 应失败，T2 通过；T6/T7/T8/T9 是 Deploy #7 新增的回归测试，
    修复前也应失败；T10 是 Deploy #8 新增：它测的是首页渲染 count 而非 jobs.length，
    对旧后端（count=页内数）用 DASH_HTML 跑不到失败——它的失败前对照在后端测试里；
-   但把 HTML 里两处 .count 换成 jobs.length 后 T10 应失败，见下方注释）修复后应全部通过 */
+   但把 HTML 里两处 .count 换成 jobs.length 后 T10 应失败，见下方注释）修复后应全部通过；
+   T11/T12 是 Step-3 缺项提示新增：T11（Deploy #8 走查现场：空国家栏 + 空错误框）
+   修复前应失败；T12（真正预填值 untouched 通过）是 DOM 读值的回归守护，前后都应通过 */
 const fs = require('fs');
 const path = require('path');
 const { JSDOM, VirtualConsole } = require('jsdom');
@@ -112,6 +114,21 @@ function boot(opts = {}) {
   return { dom, window: dom.window, document: dom.window.document, calls, jsdomErrors,
     releaseQueue: () => { if (queueRelease) queueRelease(); },
     setQueueCount: (n) => { queueBody.count = n; } };
+}
+
+/* 把向导从第 1 步带到第 3 步（上传假简历 → 第 2 步确认）。返回是否到达第 3 步。 */
+async function driveToStep3(t) {
+  await sleep(700);
+  const nextBtn = () => t.document.getElementById('obNext');
+  const fileInput = t.document.getElementById('obFile');
+  const file = new t.window.File(['%PDF-1.4 fake'], 'resume.pdf', { type: 'application/pdf' });
+  Object.defineProperty(fileInput, 'files', { value: [file] });
+  fileInput.dispatchEvent(new t.window.Event('change', { bubbles: true }));
+  await sleep(2200);  // 解析 + FileReader + obRunAI（800ms 停顿）+ 渲染
+  if (!nextBtn() || !nextBtn().textContent.includes('就这样，下一步')) return false;
+  nextBtn().click();
+  await sleep(700);
+  return !!(nextBtn() && nextBtn().textContent.includes('确认，下一步'));
 }
 
 async function main() {
@@ -297,6 +314,65 @@ async function main() {
     const firstStat = () => t.document.querySelector('#stats .stat .n');
     check('统计行待投递显示 4', firstStat() && firstStat().textContent === '4',
       firstStat() && firstStat().textContent);
+    t.dom.window.close();
+  }
+
+  // T11 — 第 3 步缺项时错误信息要常驻可读（Deploy #8 走查现场）：
+  // 新用户画像里没有 authorizedWorkCountries（简历解析白名单不含它），国家栏是空的，
+  // 只填其它三项就点确认：旧代码只弹 2.2 秒 toast，#obQErr 永远是空的，而空的 .ob-err
+  // 框一直显示成粉色空框。修后：缺项提示写进 #obQErr（常驻），空框隐藏。
+  console.log('T11 第 3 步缺项提示常驻在错误框里');
+  {
+    const t = boot({});
+    const reached = await driveToStep3(t);
+    check('到达第 3 步', reached);
+    const c = t.document.getElementById('obqCountries');
+    check('新用户国家栏值为空（不是预填）', c && c.value === '', c && JSON.stringify(c.value));
+    check('国家栏没有会冒充已填值的 placeholder', c && !c.placeholder, c && JSON.stringify(c.placeholder));
+    const qe = t.document.getElementById('obQErr');
+    check('渲染时错误框内容为空', qe && qe.textContent === '', qe && JSON.stringify(qe.textContent));
+    const cssText = Array.from(t.document.querySelectorAll('style')).map((s) => s.textContent).join('');
+    check('样式里有空错误框隐藏规则', cssText.includes('.ob-err:empty'));
+    const setVal = (id, v) => { const el = t.document.getElementById(id); if (el) el.value = v; };
+    setVal('obqSponsor', 'no');
+    setVal('obqCompany', 'TestCorp');
+    setVal('obqTitle', 'AI Engineer');
+    t.document.getElementById('obNext').click();
+    await sleep(300);
+    const toastEl = t.document.getElementById('toast');
+    check('缺项时仍停在第 3 步', (t.document.getElementById('obNext').textContent || '').includes('确认，下一步'),
+      t.document.getElementById('obNext').textContent);
+    check('toast 提示缺项', (toastEl.textContent || '').includes('请先填好：合法工作国家'), toastEl.textContent);
+    check('错误框里有可读的缺项提示', qe && qe.textContent === '请先填好：合法工作国家',
+      qe && JSON.stringify(qe.textContent));
+    // 走查里的 workaround：补填国家后一次点确认就应通过
+    setVal('obqCountries', 'Canada, United States');
+    t.document.getElementById('obNext').click();
+    await sleep(900);
+    check('补填国家后进入第 4 步', (t.document.getElementById('obNext').textContent || '').includes('启动全自动投递'),
+      t.document.getElementById('obNext').textContent);
+    t.dom.window.close();
+  }
+
+  // T12 — 真正预填好的值、没动过也能保存通过（DOM 实时读值的契约）：
+  // 画像里已有 authorizedWorkCountries/公司/职位/担保时，第 3 步不碰任何栏直接点确认
+  // 就应进入第 4 步，且错误框保持空白。Deploy #8 走查的原始假设（预填值不在表单
+  // 状态里）经复现被证伪——读值走的是 DOM，这条是回归守护。
+  console.log('T12 预填值 untouched 也能保存通过');
+  {
+    const t = boot({ profileBody: { user_id: 'probe-user-1',
+      profile: { authorizedWorkCountries: ['Canada', 'United States'], currentCompany: 'TestCorp',
+        currentTitle: 'AI Engineer', needsSponsorship: false }, person: {}, job: {}, tailor_enabled: false } });
+    const reached = await driveToStep3(t);
+    check('到达第 3 步', reached);
+    const c = t.document.getElementById('obqCountries');
+    check('国家栏预填了值', c && c.value === 'Canada, United States', c && JSON.stringify(c.value));
+    t.document.getElementById('obNext').click();  // 一个栏都不碰
+    await sleep(900);
+    check('不碰任何栏直接确认进入第 4 步', (t.document.getElementById('obNext').textContent || '').includes('启动全自动投递'),
+      t.document.getElementById('obNext').textContent);
+    const qe = t.document.getElementById('obQErr');
+    check('通过时错误框保持空白', !qe || qe.textContent === '', qe && JSON.stringify(qe.textContent));
     t.dom.window.close();
   }
 

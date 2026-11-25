@@ -152,6 +152,9 @@ main{flex:1; min-width:0; max-width:860px; margin:0 auto; padding:24px 28px 70px
 .ob-foot{margin-top:20px;}
 .ob-ok{font-size:48px; text-align:center; margin:8px 0;}
 .ob-err{background:#fef2f2; border:1px solid #fecaca; color:#991b1b; border-radius:10px; padding:12px 14px; font-size:14px; margin-bottom:16px; line-height:1.7;}
+/* 空的错误框不占位：#obQErr 常驻在第 3 步模板里，没内容时必须隐藏，
+   否则用户会看到一个空的红色框（Deploy #8 走查现场）。有内容时自动显示。 */
+.ob-err:empty{display:none;}
 .ob-err .hint{color:#b45309;}
 #pfWidget{margin-top:auto; border-top:1px solid var(--line); padding:12px 8px 4px; cursor:pointer;}
 #pfWidget:hover{background:var(--gray-bg); border-radius:8px;}
@@ -2093,7 +2096,7 @@ function renderOb() {
       <div class="ob-desc">这几项决定插件以后能不能自动答工作许可、薪资和客户层级题；
       带 * 的必须填，答完点确认。不想现在答？点左下角跳过，之后去「画像」页补填。</div>
       <label>合法工作国家 *<span style="font-size:12px;color:var(--muted)">（逗号分隔，如 Canada, United States）</span>
-        <input type="text" id="obqCountries" value="${esc((q.authorizedWorkCountries || []).join(", "))}" placeholder="Canada, United States"></label>
+        <input type="text" id="obqCountries" value="${esc((q.authorizedWorkCountries || []).join(", "))}"></label>
       <label>雇主担保签证 *<select id="obqSponsor">
         <option value=""${sp === "" ? " selected" : ""}>请选择</option>
         <option value="no"${sp === "no" ? " selected" : ""}>不需要雇主担保</option>
@@ -2276,7 +2279,16 @@ $("obNext").onclick = async () => {
     if (sponsor !== "yes" && sponsor !== "no") missing.push("雇主担保签证");
     if (!company) missing.push("当前公司");
     if (!title) missing.push("当前职位");
-    if (missing.length) { toast("请先填好：" + missing.join("、")); return; }
+    // 缺项提示要落在常驻的 #obQErr 里，不能只靠 2.2 秒就消失的 toast：
+    // Deploy #8 走查：toast 闪过没人看到，页面上只剩一个空的红色框，完全看不出缺什么。
+    // （注意：这里读的是 DOM 实时值——真正预填好的值就算没动过也能读到；
+    //  当时走查里那栏其实是空的，只有 placeholder 看着像填好的值。）
+    if (missing.length) {
+      const msg = "请先填好：" + missing.join("、");
+      toast(msg);
+      const qe = $("obQErr"); if (qe) qe.textContent = msg;
+      return;
+    }
     obBusy(true, "保存中…");
     try {
       const saveKind = async (kind, payload) => {
