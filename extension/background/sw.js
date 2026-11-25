@@ -296,6 +296,20 @@ async function sleepWithGate(ms, counts) {
   return true;
 }
 
+/* ---------- 跑批等待心跳 ----------
+ * MV3 Service Worker 在 ~30 秒无活动后可能被 Chrome 回收；一旦回收，本轮投递就无声
+ * 无息地死掉——内存里的循环状态全丢，也没有恢复路径（2026-11-25 真实跑批只跑了
+ * 1/10 就停了，进度停在 1/10，原因就卡在这里）。所以跑批里的每一次长等待
+ * （等标签页加载、等插件回填/提交）都要带心跳，每 5 秒向后端报一次进度，
+ * 让 SW 一直有活动。心跳走 control-aware 的上报，不会把用户点的暂停/停止写回 running。
+ * 限速等待已经由 sleepWithGate 每 5 秒读一次控制态（自带活动），抓取等待每 5 秒
+ * 轮询一次任务状态，也都不需要再包一层。 */
+async function withHeartbeat(promise, counts) {
+  const beat = setInterval(() => { reportRunState({ state: 'running', ...counts }).catch(() => {}); }, 5000);
+  try { return await promise; }
+  finally { clearInterval(beat); }
+}
+
 async function recordSnapshot(userId, job, fillResult, profile, resumeInfo) {
   try {
     const r = fillResult || {};
@@ -404,12 +418,14 @@ async function _runDailyQueueImpl(trigger) {
   await reportRunState({ state: 'running', total: queue.length, processed: 0, submitted: 0, manual: 0, failed: 0, current_job_id: 0, current_title: '' });
   for (let qi = 0; qi < queue.length; qi++) {
     const job = queue[qi];
+    // 心跳上报用的计数快照：一次等待内 submitted/manual/failed 不会变
+    const counts = { total: queue.length, processed: qi, submitted, manual, failed, current_job_id: job.id, current_title: job.title || '' };
     if (!(await runControlGate({ total: queue.length, processed: qi, submitted, manual, failed }))) { stopped = true; break; }
     await reportProgress({ state: 'running', total: queue.length, processed: qi, submitted, manual, failed, current_job_id: job.id, current_title: job.title || '' });
     let tab = null;
     try {
       tab = await chrome.tabs.create({ url: job.url, active: false });
-      const loaded = await waitForTabLoad(tab.id);
+      const loaded = await withHeartbeat(waitForTabLoad(tab.id), counts);
       if (!loaded) throw new Error('page load timeout');
       await sleep(rand(1500, 3500)); // 等动态表单渲染
 
@@ -419,13 +435,13 @@ async function _runDailyQueueImpl(trigger) {
         resumeInfo.name = displayResumeName(profile, resumeInfo.name);
         profile.resumeFile = { name: resumeInfo.name, dataUrl: resumeInfo.dataUrl };
       }
-      let fill = await sendToTab(tab.id, { type: 'AUTOAPPLY_FILL', profile: profile || {}, options: { jobLocation: job.location || '' } }, 120000);
+      let fill = await withHeartbeat(sendToTab(tab.id, { type: 'AUTOAPPLY_FILL', profile: profile || {}, options: { jobLocation: job.location || '' } }, 120000), counts);
       if (!fill.ok) throw new Error('fill failed: ' + (fill.error || ''));
       // 后台标签页渲染慢：首扫没找到表单时多等几次再扫，表单出现即填上。
       // 只在 noForm（整页无字段）时重试，正常填过的页面不受影响。
       for (let attempt = 0; attempt < 2 && fill.result && fill.result.noForm; attempt++) {
         await sleep(3000);
-        const retry = await sendToTab(tab.id, { type: 'AUTOAPPLY_FILL', profile: profile || {}, options: { jobLocation: job.location || '' } }, 120000);
+        const retry = await withHeartbeat(sendToTab(tab.id, { type: 'AUTOAPPLY_FILL', profile: profile || {}, options: { jobLocation: job.location || '' } }, 120000), counts);
         if (retry.ok && retry.result) fill = retry;
         else break;
       }
@@ -446,7 +462,7 @@ async function _runDailyQueueImpl(trigger) {
           `缺失字段: ${r.missing.map((m) => intentLbl(m.intent)).join(',') || '无'}; 待确认: ${r.needsReview.map((m) => intentLbl(m.intent)).join(',') || '无'}`);
         manual++;
       } else if (s.autoSubmit) {
-        const sub = await sendToTab(tab.id, { type: 'AUTOAPPLY_SUBMIT', timeoutMs: 15000 }, 60000);
+        const sub = await withHeartbeat(sendToTab(tab.id, { type: 'AUTOAPPLY_SUBMIT', timeoutMs: 15000 }, 60000), counts);
         if (sub.ok && sub.result.submitted) {
           await recordApp(userId, job.id, 'submitted', `signal=${sub.result.signal}`);
           submitted++;
