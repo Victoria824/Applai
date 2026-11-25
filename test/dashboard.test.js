@@ -7,7 +7,9 @@
    对旧后端（count=页内数）用 DASH_HTML 跑不到失败——它的失败前对照在后端测试里；
    但把 HTML 里两处 .count 换成 jobs.length 后 T10 应失败，见下方注释）修复后应全部通过；
    T11/T12 是 Step-3 缺项提示新增：T11（Deploy #8 走查现场：空国家栏 + 空错误框）
-   修复前应失败；T12（真正预填值 untouched 通过）是 DOM 读值的回归守护，前后都应通过 */
+   修复前应失败；T12（真正预填值 untouched 通过）是 DOM 读值的回归守护，前后都应通过；
+   T14/T15/T16 是 Deploy #11 新增：T14 跑批暂停/停止/继续、T15 待人工原因结构化、
+   T16 岗位描述去转义，修复前（DASH_HTML=/tmp/dashboard_before.html）应失败 */
 const fs = require('fs');
 const path = require('path');
 const { JSDOM, VirtualConsole } = require('jsdom');
@@ -37,13 +39,20 @@ function boot(opts = {}) {
   const statsBody = opts.statsBody || { stats: { queued: 0, submitted: 0, needs_manual: 0, skipped: 0 } };
   const queueBody = opts.queueBody || { count: 0, jobs: [] };
   const agentsBody = opts.agentsBody || { agents: [] };
+  const applicationsBody = opts.applicationsBody || [];
+  const snapshotBody = opts.snapshotBody || { job_url: 'https://example.com/job/101', site: 'example.com',
+    jd_text: '', filled_fields: [], salary_info: '', cover_letter: '', has_resume: false,
+    resume_hash: '', resume_name: '', resume_tailored: false, created_at: Math.floor(Date.now() / 1000) };
+  // 跑批进度做成有状态的：控制台的暂停/停止/继续 POST 会改写它，后续 GET 能读回——
+  // 这样才能在 jsdom 里走完“点暂停→轮询看到 paused→点继续→跑起来”的整条链。
+  let progState = opts.runProgressBody ? { ...opts.runProgressBody } : null;
   const job1 = { id: 101, title: 'Data Scientist', company: 'Wealthsimple',
     location: 'Remote (Canada)', score: 64, score_reasons: ['Python'], url: 'https://example.com/j1' };
 
   function stubFetch(url, o) {
     const u = String(url);
     const method = (o && o.method) || 'GET';
-    calls.push({ url: u, method });
+    calls.push({ url: u, method, body: (o && o.body) || '' });
     const ok = (body) => Promise.resolve({
       ok: true, status: 200,
       json: async () => body, text: async () => JSON.stringify(body),
@@ -80,7 +89,8 @@ function boot(opts = {}) {
       return ok({ fields: { firstName: 'Alex', lastName: 'Chen', email: 'alex@test.com',
         targetTitles: ['AI Engineer'], preferredLocations: ['Toronto'], yearsExperience: 5 } });
     }
-    if (u.includes('/api/v1/applications')) return ok({ applications: [] });
+    if (/\/api\/v1\/applications\/\d+\/snapshot/.test(u)) return ok({ snapshot: snapshotBody });
+    if (u.includes('/api/v1/applications')) return ok({ applications: applicationsBody });
     if (u.includes('/api/v1/stats')) return ok(statsBody);
     if (u.includes('/api/v1/chat/conversations') && method === 'POST') return ok({ id: 1, title: '新对话' });
     if (u.includes('/api/v1/chat/conversations/1/messages')) return ok({ messages: [] });
@@ -90,7 +100,13 @@ function boot(opts = {}) {
     if (u.includes('/api/v1/gmail/status')) return ok({ configured: false });
     if (u.includes('/api/v1/settings/keywords')) return ok({ keywords: [] });
     if (u.includes('/api/v1/settings')) return ok({ schedule_enabled: false, schedule_time: '10:00', daily_count: 10 });
-    if (u.includes('/api/v1/run-progress')) return ok({ progress: null });
+    if (u.includes('/api/v1/run-progress')) {
+      if (method === 'POST') {
+        try { const b = JSON.parse(o.body || '{}'); progState = { ...(progState || {}), ...b, updated_at: Date.now() / 1000 }; } catch (e) {}
+        return ok({ ok: true });
+      }
+      return ok({ progress: progState });
+    }
     if (u.includes('/api/v1/account') && method === 'DELETE') return ok({ ok: true });
     return ok({});
   }
@@ -481,6 +497,134 @@ async function main() {
     check('动态里有 Amy 的事件', feed && feed.textContent.includes('发现 3 个新职位'));
     check('动态气泡带 mini 头像', feed && feed.querySelectorAll('.feed-msg .feed-ava svg').length >= 2,
       feed && String(feed.querySelectorAll('.feed-msg').length));
+    t.dom.window.close();
+  }
+
+  // T14 — 跑批暂停/停止/继续（Deploy #11 FIX 1）：进行中卡片上有暂停/停止按钮；
+  // 点暂停 POST state=paused 并出现已暂停卡片（带继续/停止）；点继续 POST running；
+  // 点停止 POST stopped 并出现已停止卡片、开始按钮恢复；空闲时没有控制按钮。
+  // 修复前（DASH_HTML=/tmp/dashboard_before.html）应失败：旧进度卡没有 data-run-ctl 按钮，
+  // 也没有 paused/stopped 分支。
+  console.log('T14 跑批暂停/停止/继续');
+  {
+    const now = Math.floor(Date.now() / 1000);
+    const t = boot({ runProgressBody: { state: 'running', total: 10, processed: 1, submitted: 0,
+      manual: 1, failed: 0, current_job_id: 101, current_title: 'Senior/Staff Machine Learning Engineer',
+      updated_at: now, started_at: now } });
+    await sleep(700);
+    await t.window.pollRunProgress();
+    await sleep(100);
+    const prog = () => t.document.getElementById('runProgress');
+    const ctl = (a) => prog() && prog().querySelector(`button[data-run-ctl="${a}"]`);
+    const posted = (state) => t.calls.some((c) => c.method === 'POST' && c.url.includes('/api/v1/run-progress')
+      && String(c.body || '').includes(`"state":"${state}"`));
+    check('进行中卡片有暂停按钮', !!ctl('pause'));
+    check('进行中卡片有停止按钮', !!ctl('stop'));
+    check('进行中卡片显示 1/10 进度', prog() && prog().textContent.includes('1/10'),
+      prog() && prog().textContent.slice(0, 100));
+    check('进行中时开始按钮禁用', t.document.getElementById('queueRunNowBtn').disabled);
+    if (ctl('pause')) ctl('pause').click();
+    await sleep(200);
+    await t.window.pollRunProgress();
+    await sleep(100);
+    check('点暂停 POST state=paused', posted('paused'));
+    check('暂停后显示已暂停卡片', prog() && prog().textContent.includes('已暂停'),
+      prog() && prog().textContent.slice(0, 100));
+    check('暂停后有继续按钮', !!ctl('resume'));
+    check('暂停后仍有停止按钮', !!ctl('stop'));
+    check('暂停时开始按钮仍禁用', t.document.getElementById('queueRunNowBtn').disabled);
+    if (ctl('resume')) ctl('resume').click();
+    await sleep(200);
+    await t.window.pollRunProgress();
+    await sleep(100);
+    check('点继续 POST state=running', posted('running'));
+    check('继续后回到进行中卡片', prog() && prog().textContent.includes('投递进行中'),
+      prog() && prog().textContent.slice(0, 100));
+    check('继续后又有暂停按钮', !!ctl('pause'));
+    if (ctl('stop')) ctl('stop').click();
+    await sleep(200);
+    await t.window.pollRunProgress();
+    await sleep(100);
+    check('点停止 POST state=stopped', posted('stopped'));
+    check('停止后显示已停止卡片', prog() && prog().textContent.includes('已停止'),
+      prog() && prog().textContent.slice(0, 100));
+    check('停止后开始按钮恢复', !t.document.getElementById('queueRunNowBtn').disabled);
+    t.dom.window.close();
+  }
+  {
+    const t = boot({}); // 进度为空：空闲态
+    await sleep(700);
+    await t.window.pollRunProgress();
+    await sleep(100);
+    check('空闲时没有暂停/停止按钮',
+      !t.document.querySelector('button[data-run-ctl="pause"]')
+      && !t.document.querySelector('button[data-run-ctl="stop"]'));
+    t.dom.window.close();
+  }
+
+  // T15 — 待人工原因结构化（Deploy #11 FIX 2a）：每项有“为什么 + 下一步”，带职位地点；
+  // 旧版一行密文不再出现。修复前应失败：旧 fmtDetail 只拼两行密文。
+  console.log('T15 待人工原因结构化');
+  {
+    const t = boot({ applicationsBody: [{ job_id: 101, title: 'Senior/Staff Machine Learning Engineer',
+      company: 'stackadapt', url: 'https://example.com/job/101', location: 'Paris, France',
+      status: 'needs_manual', has_snapshot: true, updated_at: Math.floor(Date.now() / 1000),
+      detail: '缺失字段: 简历文件(resume); 待确认: 工作许可(workAuth)、签证担保(sponsorship)' }] });
+    await sleep(700);
+    const manual = t.document.getElementById('manual');
+    const html = manual ? manual.innerHTML : '';
+    check('待人工卡片按项结构化（pend-item）', manual && manual.querySelectorAll('.pend-item').length === 3,
+      `items=${manual ? manual.querySelectorAll('.pend-item').length : 'n/a'}`);
+    check('每项都有“为什么”', (html.match(/为什么：/g) || []).length >= 3);
+    check('每项都有“下一步”', (html.match(/下一步：/g) || []).length >= 3);
+    check('原因里带职位地点', html.includes('Paris, France'), html.slice(0, 200));
+    check('工作许可原因讲清国家匹配规则', html.includes('合法工作国家'),
+      html.slice(0, 400));
+    check('画像项有去完善画像按钮', !!manual.querySelector('button[data-fixprofile="authorizedWorkCountries"]')
+      || !!manual.querySelector('button[data-fixprofile="needsSponsorship"]'));
+    check('简历项下一步是打开职位页', html.includes('会自动附上'));
+    check('旧版密文行不再出现', !html.includes('待确认（插件拿不准、没敢替你答）：工作许可'),
+      html.slice(0, 300));
+    // fmtDetail 直接调用：无 location 时也不崩，仍结构化
+    const bare = t.window.fmtDetail('缺失字段: 简历文件(resume); 待确认: 工作许可(workAuth)', {});
+    check('无地点时 fmtDetail 仍结构化', bare.includes('pend-item') && !bare.includes('职位地点'));
+    // 非“缺失/待确认”格式的 detail（如验证码）保持原样透传
+    const cap = t.window.fmtDetail('验证码（reCAPTCHA）', {});
+    check('验证码类原因原样透传', cap.includes('验证码'));
+    t.dom.window.close();
+  }
+
+  // T16 — 岗位描述不再出现转义实体（Deploy #11 FIX 2b）：双重转义的 HTML 先解码再去标签；
+  // 快照弹窗里只剩可读纯文本。修复前应失败：旧 formatJD 直接 esc，&lt; 原样显示。
+  console.log('T16 岗位描述去转义');
+  {
+    const t = boot({ applicationsBody: [{ job_id: 101, title: 'Senior/Staff Machine Learning Engineer',
+      company: 'stackadapt', url: 'https://example.com/job/101', location: 'Toronto, Canada',
+      status: 'needs_manual', has_snapshot: true, updated_at: Math.floor(Date.now() / 1000),
+      detail: '缺失字段: 简历文件(resume); 待确认: 工作许可(workAuth)' }],
+      snapshotBody: { job_url: 'https://example.com/job/101', site: 'job-boards.greenhouse.io',
+        jd_text: 'company that empowers marketers.&lt;/p&gt;&lt;div class=&quot;section page-centered&quot;&gt;&lt;div class=&quot;section page-centered&quot;&gt;We&amp;#39;re looking to add &lt;strong&gt;Senior and Staff Machine Learning Engineers&lt;/strong&gt; to our team!',
+        filled_fields: [], salary_info: '', cover_letter: '', has_resume: false,
+        resume_hash: '', resume_name: '', resume_tailored: false, created_at: Math.floor(Date.now() / 1000) } });
+    await sleep(700);
+    const out = t.window.formatJD('&lt;/p&gt;&lt;div class=&quot;section page-centered&quot;&gt;Hello world&lt;/div&gt;');
+    // 判的是渲染出来的文字（textContent），不是 innerHTML：旧版 esc 会把 & 再转一次，
+    // innerHTML 里是 &amp;lt;、子串匹配查不到，但屏上显示的仍是 &lt; 原样。
+    const jdDiv = t.document.createElement('div');
+    jdDiv.innerHTML = out;
+    const jdText = jdDiv.textContent;
+    check('formatJD 去掉 &lt; 实体', !jdText.includes('&lt;') && !jdText.includes('&quot;'), jdText.slice(0, 120));
+    check('formatJD 保留正文', jdText.includes('Hello world'), jdText.slice(0, 120));
+    check('formatJD 不输出原始标签汤', !jdText.includes('section page-centered'), jdText.slice(0, 120));
+    check('formatJD 仍处理普通纯文本', t.window.formatJD('About the Role\nDo things').includes('About the Role'));
+    await t.window.openSnapshot(101);
+    await sleep(200);
+    const snapEl = t.document.getElementById('snapBody');
+    const snapText = snapEl ? snapEl.textContent : '';
+    check('快照弹窗描述可读', snapText.includes('Senior and Staff Machine Learning Engineers'), snapText.slice(0, 300));
+    check('快照弹窗无 &lt; 实体', !snapText.includes('&lt;'), snapText.slice(0, 300));
+    check('快照弹窗无 &quot; 实体', !snapText.includes('&quot;'), snapText.slice(0, 300));
+    check('快照弹窗正确解码 &#39;', snapText.includes("We're looking"), snapText.slice(0, 300));
     t.dom.window.close();
   }
 

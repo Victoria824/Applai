@@ -246,6 +246,56 @@ async function reportProgress(patch) {
   try { await apiPost('/api/v1/run-progress', patch); } catch (e) { console.warn('[Applai] run-progress 上报失败', e); }
 }
 
+/* ---------- 跑批控制：暂停 / 停止 ----------
+ * 控制台把 state=paused/stopped 写进 run-progress 行；执行器在每步之前读回这行，
+ * 所以停止是真停——不会再开新职位页、不会再调简历接口、不会再烧 token。
+ * 暂停 = 当前职位处理完后原地等待（带心跳），点继续后从下一份接着跑；
+ * 停止 = 本轮结束，剩下的职位留在队列里。
+ * 读控制态失败时默认继续（fail-open），免得后端抖动误杀一轮。 */
+async function getRunControlState() {
+  try {
+    const d = await apiGet('/api/v1/run-progress');
+    const s = (d && d.progress && d.progress.state) || '';
+    return (s === 'paused' || s === 'stopped' || s === 'done') ? s : 'running';
+  } catch (e) { return 'running'; }
+}
+async function waitWhilePaused(counts) {
+  // 返回 'resumed' 或 'stopped'；等待期间每 5 秒报一次 paused 心跳
+  for (;;) {
+    await reportProgress({ state: 'paused', ...counts, current_job_id: 0, current_title: '已暂停' });
+    await sleep(5000);
+    const s = await getRunControlState();
+    if (s === 'stopped' || s === 'done') return 'stopped';
+    if (s === 'running') return 'resumed';
+  }
+}
+// 在继续下一步之前检查一次控制态；返回 true=继续跑，false=本轮结束
+async function runControlGate(counts) {
+  const s = await getRunControlState();
+  if (s === 'stopped' || s === 'done') return false;
+  if (s === 'paused') return (await waitWhilePaused(counts)) === 'resumed';
+  return true;
+}
+// 发进度之前先看一眼控制态，避免把用户刚点的暂停/停止又写回 running
+async function reportRunState(patch) {
+  const s = await getRunControlState();
+  if (s === 'paused' || s === 'stopped') {
+    await reportProgress({ ...patch, state: s });
+    return s;
+  }
+  await reportProgress(patch);
+  return 'running';
+}
+// 20–60 秒的限速等待切成 5 秒一段，每段都看一眼控制态，点停止不用等满一分钟
+async function sleepWithGate(ms, counts) {
+  const end = Date.now() + ms;
+  while (Date.now() < end) {
+    await sleep(Math.min(5000, end - Date.now()));
+    if (!(await runControlGate(counts))) return false;
+  }
+  return true;
+}
+
 async function recordSnapshot(userId, job, fillResult, profile, resumeInfo) {
   try {
     const r = fillResult || {};
@@ -313,12 +363,18 @@ async function _runDailyQueueImpl(trigger) {
       if (t && t.task_id) {
         for (let i = 0; i < 72; i++) {
           await sleep(5000);
+          if (!(await runControlGate({ total: 0, processed: 0, submitted: 0, manual: 0, failed: 0 }))) {
+            await reportProgress({ state: 'stopped', total: 0, processed: 0, submitted: 0, manual: 0, failed: 0, current_job_id: 0, current_title: '已停止' });
+            await pushViaNtfy('Applai：投递已停止', '在抓取新职位阶段就停下了，队列里的职位都没动');
+            await desktopNotify('Applai：投递已停止', '在抓取阶段停下，队列里的职位都没动');
+            return;
+          }
           try {
             const st = await apiGet(`/api/v1/jobs/discover/status/${t.task_id}`);
             if (st.status === 'done' || st.status === 'error') break;
           } catch (e) { break; }
           // 抓取可能持续数分钟：每 30 秒报一次心跳，免得控制台把进度判为中断
-          if (i % 6 === 5) await reportProgress({ state: 'running', total: 0, processed: 0, submitted: 0, manual: 0, failed: 0, current_job_id: 0, current_title: '正在抓取新职位…' });
+          if (i % 6 === 5) await reportRunState({ state: 'running', total: 0, processed: 0, submitted: 0, manual: 0, failed: 0, current_job_id: 0, current_title: '正在抓取新职位…' });
         }
       }
     } catch (e) { /* best effort */ }
@@ -344,10 +400,11 @@ async function _runDailyQueueImpl(trigger) {
   let profile = (await fetchBackendProfile())
     || (await chrome.storage.local.get(['aap_profile'])).aap_profile || {};
 
-  let submitted = 0, manual = 0, failed = 0;
-  await reportProgress({ state: 'running', total: queue.length, processed: 0, submitted: 0, manual: 0, failed: 0, current_job_id: 0, current_title: '' });
+  let submitted = 0, manual = 0, failed = 0, processed = 0, stopped = false;
+  await reportRunState({ state: 'running', total: queue.length, processed: 0, submitted: 0, manual: 0, failed: 0, current_job_id: 0, current_title: '' });
   for (let qi = 0; qi < queue.length; qi++) {
     const job = queue[qi];
+    if (!(await runControlGate({ total: queue.length, processed: qi, submitted, manual, failed }))) { stopped = true; break; }
     await reportProgress({ state: 'running', total: queue.length, processed: qi, submitted, manual, failed, current_job_id: job.id, current_title: job.title || '' });
     let tab = null;
     try {
@@ -408,11 +465,19 @@ async function _runDailyQueueImpl(trigger) {
     } finally {
       if (tab) { try { await chrome.tabs.remove(tab.id); } catch (e) { /* ignore */ } }
     }
-    await reportProgress({ state: 'running', total: queue.length, processed: qi + 1, submitted, manual, failed, current_job_id: 0, current_title: '' });
-    // 限速：每份投递间隔 20–60 秒随机，避免触发反爬
-    await sleep(rand(20000, 60000));
+    await reportRunState({ state: 'running', total: queue.length, processed: qi + 1, submitted, manual, failed, current_job_id: 0, current_title: '' });
+    processed = qi + 1;
+    // 限速：每份投递间隔 20–60 秒随机，避免触发反爬（等待中也可暂停/停止）
+    if (!(await sleepWithGate(rand(20000, 60000), { total: queue.length, processed, submitted, manual, failed }))) { stopped = true; break; }
   }
 
+  if (stopped) {
+    await reportProgress({ state: 'stopped', total: queue.length, processed, submitted, manual, failed, current_job_id: 0, current_title: '' });
+    const stopSummary = `投递已停止：已处理 ${processed} 个，成功 ${submitted}，待人工 ${manual}，失败 ${failed}；剩下的留在队列里`;
+    await pushViaNtfy('Applai：投递已停止', stopSummary);
+    await desktopNotify('Applai：投递已停止', stopSummary);
+    return;
+  }
   await reportProgress({ state: 'done', total: queue.length, processed: queue.length, submitted, manual, failed, current_job_id: 0, current_title: '' });
   const summary = `今日投递完成：成功 ${submitted}，待人工 ${manual}，失败 ${failed}`;
   await pushViaNtfy('Applai：' + summary, `共处理 ${queue.length} 个职位`);

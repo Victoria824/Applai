@@ -198,6 +198,10 @@ def post_run_progress(uid: str, body: RunProgressIn):
         _log_event(uid, "run_finished",
                    f"跑批完成：已投递 {body.submitted}，待人工 {body.manual}，"
                    f"失败 {body.failed}")
+    elif body.state == "stopped":
+        _log_event(uid, "run_stopped",
+                   f"投递已手动停止：已投递 {body.submitted}，待人工 {body.manual}，"
+                   f"失败 {body.failed}")
     return {"ok": True}
 
 

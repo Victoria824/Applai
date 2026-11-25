@@ -294,6 +294,23 @@ button .en{font-size:10px; opacity:.72; margin-top:1px;}
 .prog-fill{height:100%;background:#2f7cf6;border-radius:99px;transition:width .6s ease}
 .prog-meta{color:#445;font-size:13px}
 .prog-dismiss{float:right;border:0;background:transparent;font-size:18px;line-height:1;color:#889;cursor:pointer;padding:0 2px}
+.prog-card.paused{background:#fff7e6;border-color:#f0d9a8}
+.prog-card.stopped{background:#f4f4f5;border-color:#ddd}
+.prog-actions{display:flex;gap:8px;margin-top:10px;flex-wrap:wrap}
+.prog-actions .ghost-btn{margin-left:0}
+.prog-actions .ghost-btn.danger{color:#dc2626;border-color:#f3c2c2}
+.pend-loc{font-size:12.5px;color:var(--muted);margin:2px 0 4px}
+.pend-group{font-weight:700;font-size:12.5px;margin:10px 0 2px}
+.pend-group:first-child{margin-top:2px}
+.pend-list{display:flex;flex-direction:column;gap:8px;margin-top:4px}
+.pend-item{background:#fff;border:1px solid var(--line);border-radius:10px;padding:8px 10px}
+.pend-t{font-weight:700;font-size:13px}
+.pend-tag{display:inline-block;font-size:11px;font-weight:400;color:#ea580c;background:var(--orange-bg);border-radius:99px;padding:1px 8px;margin-left:4px}
+.pend-tag.miss{color:#b45309;background:#fef3c7}
+.pend-why{font-size:12.5px;color:var(--muted);margin-top:3px;line-height:1.6}
+.pend-next{font-size:12.5px;margin-top:5px;line-height:1.6}
+.pend-next .ghost-btn{margin-left:6px;padding:3px 10px;font-size:11.5px}
+.pend-foot{font-size:12px;color:var(--muted);margin-top:8px}
 .badge-applying{display:inline-block;background:#2f7cf6;color:#fff;font-size:11px;border-radius:99px;padding:1px 8px;vertical-align:middle;animation:apulse 1.2s infinite}
 .badge-applying .en{color:#dceaff}
 @keyframes apulse{0%,100%{opacity:1}50%{opacity:.45}}
@@ -768,7 +785,7 @@ function appCard(a, showActions) {
   return `<div class="card"><div class="top"><div>
     <h3>${esc(a.title || "(未知职位)")} ${stBadge(a.status)}</h3>
     <div class="meta">${esc(a.company || "")}</div></div></div>
-    ${a.detail && fmtDetail(a.detail) ? `<div class="detail">${fmtDetail(a.detail)}</div>` : ""}
+    ${a.detail && fmtDetail(a.detail, a) ? `<div class="detail">${fmtDetail(a.detail, a)}</div>` : ""}
     <div class="time">更新于 ${esc(fmtTime(a.updated_at))}</div>
     ${btns}${snapBtn}</div>`;
 }
@@ -868,21 +885,37 @@ function renderRunProgress(p) {
   const age = Date.now() / 1000 - (p.updated_at || 0);
   let state = p.state;
   if (state === "running" && age > 1200) state = "stale";
+  if (state === "paused" && age > 1200) state = "stale"; // 暂停中心跳停了 20 分钟：插件已死，不是真暂停
   if (state === "done" && age > 1800) { box.style.display = "none"; if (btn) btn.disabled = false; return; }
-  if (state !== "running" && state !== "done") {
+  if (state === "stopped" && age > 1800) { box.style.display = "none"; if (btn) btn.disabled = false; return; }
+  if (state !== "running" && state !== "done" && state !== "paused" && state !== "stopped") {
     // 中断横幅和完成横幅一样，30 分钟后自动消失；× 关闭后只对这一轮生效
     if (age > 1800) { box.style.display = "none"; if (btn) btn.disabled = false; return; }
     const dismissed = _progDismissedAt();
     if (dismissed && String(p.started_at) === dismissed) { box.style.display = "none"; if (btn) btn.disabled = false; return; }
   }
   box.style.display = "block";
-  if (btn) btn.disabled = (state === "running");
+  if (btn) btn.disabled = (state === "running" || state === "paused");
   const pct = p.total ? Math.round(100 * p.processed / p.total) : 10;
+  const meta = `${p.total ? `已处理 <b>${p.processed}/${p.total}</b>` : "正在准备…"} · 已提交 ${p.submitted} · 待人工 ${p.manual} · 失败 ${p.failed}`;
   if (state === "running") {
     box.innerHTML = `<div class="prog-card">
       <div class="prog-head">🚀 投递进行中<span class="en">Applying in progress</span></div>
       <div class="prog-bar"><div class="prog-fill" style="width:${pct}%"></div></div>
-      <div class="prog-meta">${p.total ? `已处理 <b>${p.processed}/${p.total}</b>` : "正在准备…"} · 已提交 ${p.submitted} · 待人工 ${p.manual} · 失败 ${p.failed}${p.current_title ? `<br>正在投递：${esc(p.current_title)}` : ""}</div>
+      <div class="prog-meta">${meta}${p.current_title ? `<br>正在投递：${esc(p.current_title)}` : ""}</div>
+      <div class="prog-actions"><button class="ghost-btn" data-run-ctl="pause">⏸ 暂停<span class="en">Pause</span></button><button class="ghost-btn danger" data-run-ctl="stop">⏹ 停止<span class="en">Stop</span></button></div>
+    </div>`;
+  } else if (state === "paused") {
+    box.innerHTML = `<div class="prog-card paused">
+      <div class="prog-head">⏸ 已暂停<span class="en">Paused</span></div>
+      <div class="prog-bar"><div class="prog-fill" style="width:${pct}%"></div></div>
+      <div class="prog-meta">${meta}${p.current_title ? `<br>${esc(p.current_title)}` : ""}<br>当前职位处理完后停下；点「继续」从下一份接着跑，剩下的职位一直留在队列里。</div>
+      <div class="prog-actions"><button class="ghost-btn" data-run-ctl="resume">▶ 继续<span class="en">Resume</span></button><button class="ghost-btn danger" data-run-ctl="stop">⏹ 停止<span class="en">Stop</span></button></div>
+    </div>`;
+  } else if (state === "stopped") {
+    box.innerHTML = `<div class="prog-card stopped">
+      <div class="prog-head">⏹ 本轮投递已停止<span class="en">Run stopped</span></div>
+      <div class="prog-meta">停在 ${p.processed}/${p.total} · 已提交 ${p.submitted} · 待人工 ${p.manual} · 失败 ${p.failed}；剩下的职位留在队列里，随时可以再开始。</div>
     </div>`;
   } else if (state === "done") {
     box.innerHTML = `<div class="prog-card done">
@@ -898,14 +931,45 @@ function renderRunProgress(p) {
   }
 }
 
+// 暂停 / 停止 / 继续：经 run-progress 行发控制信号，插件在下一步之前读回并执行，
+// 所以是真停——不会再开新职位页、不会再调简历接口、不会再烧 token。
+// 暂停 = 当前职位处理完后停下，可继续；停止 = 本轮结束，剩下的留在队列。
+async function controlRun(action) {
+  const p = RUNPROG || {};
+  const state = action === "pause" ? "paused" : action === "stop" ? "stopped" : "running";
+  const btns = document.querySelectorAll("button[data-run-ctl]");
+  btns.forEach((b) => { b.disabled = true; });
+  try {
+    await apiPost("/api/v1/run-progress", { state, total: p.total || 0, processed: p.processed || 0,
+      submitted: p.submitted || 0, manual: p.manual || 0, failed: p.failed || 0,
+      current_job_id: p.current_job_id || 0, current_title: p.current_title || "" });
+    renderRunProgress({ ...p, state, updated_at: Date.now() / 1000 });
+    if (action === "pause") toast("已暂停：当前职位处理完后停下，点「继续」接着跑");
+    else if (action === "stop") toast("已停止：剩下的职位留在队列里", 5000);
+    else toast("已继续投递 ✓");
+    pollRunProgress();
+  } catch (e) {
+    toast("操作失败：" + e.message);
+    renderRunProgress(RUNPROG);
+  } finally {
+    btns.forEach((b) => { b.disabled = false; });
+  }
+}
+
 async function pollRunProgress() {
   try {
     const d = await api("/api/v1/run-progress");
     const p = d.progress;
     const fresh = p && (Date.now() / 1000 - (p.updated_at || 0)) <= 1200;
     const freshRunning = p && p.state === "running" && fresh;
+    const freshPaused = p && p.state === "paused" && fresh;
+    const freshActive = freshRunning || freshPaused;
     if (_progExpectUntil && Date.now() < _progExpectUntil) {
       if (freshRunning) { _progExpectUntil = 0; _progExpectHint = false; }
+      else if (p && (p.state === "paused" || p.state === "stopped" || p.state === "done")) {
+        // 用户在等插件上报的 60 秒内点了暂停/停止：这就是新一轮的状态，别再报“未检测到插件”
+        _progExpectUntil = 0; _progExpectHint = false;
+      }
       else {
         // 还在等插件上报新一轮：保持乐观态，别把旧横幅画回来
         if (!_progTimer) _progTimer = setInterval(pollRunProgress, 4000);
@@ -919,7 +983,7 @@ async function pollRunProgress() {
       }
     }
     renderRunProgress(p);
-    if (freshRunning) {
+    if (freshActive) {
       _clearProgDismiss();
       if (p.processed !== _lastProgProcessed || p.current_job_id !== _lastProgJob) {
         _lastProgProcessed = p.processed;
@@ -930,7 +994,7 @@ async function pollRunProgress() {
       if (!_progTimer) _progTimer = setInterval(pollRunProgress, 4000);
     } else {
       if (_progTimer) { clearInterval(_progTimer); _progTimer = null; }
-      if (p && p.state === "done" && _lastProgProcessed !== -2) {
+      if (p && (p.state === "done" || p.state === "stopped") && _lastProgProcessed !== -2) {
         _lastProgProcessed = -2;
         loadQueue();
         loadApps();
@@ -940,6 +1004,8 @@ async function pollRunProgress() {
 }
 
 document.addEventListener("click", (ev) => {
+  const ctl = ev.target.closest("button[data-run-ctl]");
+  if (ctl) { controlRun(ctl.dataset.runCtl); return; }
   const dbtn = ev.target.closest("button[data-dismiss-prog]");
   if (dbtn) {
     try { localStorage.setItem("applai_prog_dismissed", dbtn.dataset.dismissProg); } catch (e) {}
@@ -2543,21 +2609,79 @@ function gotoProfileFor(keys) {
     }, 300);
   }, 300);
 }
-function fmtDetail(detail) {
+function profileCountries() {
+  try {
+    const p = (typeof curPerson !== "undefined" && curPerson && curPerson.profile) || {};
+    const arr = p.authorizedWorkCountries || [];
+    return (Array.isArray(arr) ? arr : String(arr).split(",")).map((x) => String(x).trim()).filter(Boolean);
+  } catch (e) { return []; }
+}
+// 每项待确认/缺失：为什么卡住 + 下一步做什么。WHY 要讲清机制，不甩术语。
+function pendWhy(intent, group, ctx) {
+  const loc = (ctx && ctx.location) || "";
+  if (intent === "workAuth") {
+    const ctry = profileCountries();
+    return `插件只在能确定岗位国家、且都在你登记的合法工作国家里时，才敢答 Yes；地点对不上、或者地点里看不出国家时，它不会替你答 No，而是交给你确认。${loc ? `这个职位在「${loc}」。` : ""}${ctry.length ? `你登记的是：${ctry.join("、")}。` : ""}`;
+  }
+  if (intent === "sponsorship") return "申请表问是否需要签证担保。插件没有拿到你明确表态的答案，不敢替你答。";
+  if (intent === "resume") return "申请表要求上传简历文件，这一步插件没法替你自动完成。";
+  if (intent === "salary" || intent === "salaryMin") return "申请表问期望薪资，画像里没有登记这一项。";
+  if (group === "missing") return "画像里没有这一项的答案，插件没东西可填。";
+  return "申请表问了这一项，插件从你的画像里找不到能对上的答案，不敢替你答。";
+}
+function pendNextHtml(intent) {
+  if (intent === "resume") return "打开职位页：系统已按这个岗位生成了 1 页定制简历，会自动附上，你检查后提交就行。";
+  if (PROFILE_INTENTS.has(intent)) {
+    const field = INTENT_FIELD[intent] || intent;
+    return `去完善画像添加这一项 <button class="ghost-btn" data-fixprofile="${esc(field)}">✏️ 去完善画像<span class="en">Fix profile</span></button>`;
+  }
+  return "打开职位页回答这个问题。";
+}
+function pendItemHtml(intent, group, ctx) {
+  const tag = group === "missing" ? "缺失" : "待确认";
+  return `<div class="pend-item"><div class="pend-t">${intentLabel(intent)} <span class="pend-tag${group === "missing" ? " miss" : ""}">${tag}</span></div><div class="pend-why">为什么：${esc(pendWhy(intent, group, ctx))}</div><div class="pend-next">下一步：${pendNextHtml(intent)}</div></div>`;
+}
+function fmtDetail(detail, app) {
   const d = String(detail || "");
   const m = d.match(/缺失字段[:：]\s*([^;；]+)[;；]\s*待确认[:：]\s*(.+)$/);
   if (!m) return esc(d);
   const split = (s) => s.split(/[,，、]/).map((x) => x.trim()).filter((x) => x && x !== "无");
-  const miss = split(m[1]);
-  const conf = split(m[2]);
-  const lines = [];
-  if (miss.length) lines.push(`缺失字段（画像里没有答案）：${miss.map(intentLabel).join("、")}`);
-  if (conf.length) lines.push(`待确认（插件拿不准、没敢替你答）：${conf.map(intentLabel).join("、")}`);
-  return lines.join("<br>");
+  const grab = (s) => split(s).map((x) => { const mm = x.match(/\((\w+)\)$/); return mm ? mm[1] : x; });
+  const miss = [...new Set(grab(m[1]))];
+  const conf = [...new Set(grab(m[2]))];
+  const ctx = { location: (app && app.location) || "" };
+  const out = [];
+  if (ctx.location) out.push(`<div class="pend-loc">📍 职位地点：${esc(ctx.location)}<span class="en">Job location</span></div>`);
+  if (miss.length) {
+    out.push(`<div class="pend-group">缺失 — 画像里没有答案<span class="en">Missing — not in your profile</span></div><div class="pend-list">${miss.map((i) => pendItemHtml(i, "missing", ctx)).join("")}</div>`);
+  }
+  if (conf.length) {
+    out.push(`<div class="pend-group">待确认 — 插件拿不准，没敢替你答<span class="en">Needs review — the extension wasn't sure</span></div><div class="pend-list">${conf.map((i) => pendItemHtml(i, "confirm", ctx)).join("")}</div>`);
+  }
+  out.push(`<div class="pend-foot">如果不想投这个职位，直接点「跳过」就行。<span class="en">Don't want this one? Just skip it.</span></div>`);
+  return out.join("");
 }
 const JD_HEAD_SET = new Set(["about the role","about the job","about us","about the company","the role","role overview","position summary","job summary","summary","responsibilities","key responsibilities","what you'll do","what you will do","your role","what we're looking for","what we are looking for","requirements","qualifications","required qualifications","preferred qualifications","minimum qualifications","basic qualifications","skills","experience","what you bring","benefits","perks","compensation","salary","how to apply","equal opportunity","why join","who you are","about you","what you'll bring","nice to have","bonus points","our values","the team","about the team"]);
+// 岗位描述在库里常是双重转义的 HTML（&lt;div class=&quot;...&quot;&gt;）：先解码实体再去标签，
+// 最后只剩纯文本；再由 formatJD 分段渲染，绝不直接插原始 HTML。
+function cleanJDText(text) {
+  let t = String(text || "");
+  for (let i = 0; i < 4; i++) {
+    const prev = t;
+    t = t.replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"')
+      .replace(/&#39;|&apos;/g, "'").replace(/&nbsp;/g, " ")
+      .replace(/&#(\d+);/g, (_, n) => { const c = parseInt(n, 10); return c > 31 && c < 0x110000 ? String.fromCodePoint(c) : " "; })
+      .replace(/&#x([0-9a-fA-F]+);/g, (_, n) => { const c = parseInt(n, 16); return c > 31 && c < 0x110000 ? String.fromCodePoint(c) : " "; })
+      .replace(/&amp;/g, "&");
+    if (t === prev) break;
+  }
+  t = t.replace(/<script[\s\S]*?<\/script>/gi, " ").replace(/<style[\s\S]*?<\/style>/gi, " ");
+  t = t.replace(/<br\s*\/?>/gi, "\n").replace(/<\/(p|div|li|ul|ol|section|article|h[1-6])>/gi, "\n").replace(/<li[^>]*>/gi, "\n• ");
+  t = t.replace(/<[^>]*>/g, " ");
+  return t.replace(/[ \t]+/g, " ").replace(/\n[ \t]*\n+/g, "\n\n").trim();
+}
 function formatJD(text) {
-  let t = String(text || "").replace(/\r/g, "");
+  let t = cleanJDText(text).replace(/\r/g, "");
   if ((t.match(/\n/g) || []).length < 6) {
     const HEADS = ["About the Role","About the Job","About the Company","What You'll Do","What You Will Do","Key Responsibilities","What We're Looking For","What We Are Looking For","Minimum Qualifications","Preferred Qualifications","Required Qualifications","Basic Qualifications","How to Apply","Equal Opportunity","Responsibilities","Requirements","Qualifications","Benefits","Compensation"];
     for (const h of HEADS) t = t.split(h).join("\n" + h + "\n");
@@ -2605,7 +2729,7 @@ async function openSnapshot(jobId) {
       `<tr><td style="color:var(--muted);width:34%">${esc(f.label || f.intent)}</td><td style="word-break:break-word">${esc(f.value || "")}</td></tr>`).join("");
     const OC_LABEL = { needs_manual: "⚠️ 待人工原因 / Why manual", submitted: "✅ 投递结果 / Outcome",
       failed: "❌ 失败原因 / Why failed", filled: "📝 填写结果 / Outcome", skipped: "⏭️ 已跳过 / Skipped" };
-    const outcome = a.detail ? `<div class="snap-outcome oc-${esc(a.status || "")}"><div class="oc-k">${OC_LABEL[a.status] || "结果 / Outcome"}</div><div>${fmtDetail(a.detail) || "无待处理项 / Nothing pending"}</div></div>` : "";
+    const outcome = a.detail ? `<div class="snap-outcome oc-${esc(a.status || "")}"><div class="oc-k">${OC_LABEL[a.status] || "结果 / Outcome"}</div><div>${fmtDetail(a.detail, a) || "无待处理项 / Nothing pending"}</div></div>` : "";
     const _pend = parsePending(a.detail || "");
     const _profKeys = _pend.filter((i) => PROFILE_INTENTS.has(i)).map((i) => INTENT_FIELD[i] || i);
     const manualGuide = (a.status === "needs_manual" && s.job_url) ? `<div class="snap-guide">👉 怎么处理<span class="en">What to do</span><br>打开职位页后，插件会<b>自动把能填的重新填上</b>（页面右上角会弹出提示，告诉你还剩哪几项），你只需补上上面这几项、检查无误后点提交即可。<span class="en">Open the job page — the extension will re-fill everything it can (a banner in the top-right corner will tell you what's left); just answer the items above and submit.</span><br><a class="btn-link" href="${esc(safeUrl(s.job_url))}" target="_blank" rel="noopener">打开职位页处理 ↗</a>${_profKeys.length ? `<div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap"><button class="ghost-btn" id="snapFixProfileBtn" style="padding:6px 12px;font-size:12px">✏️ 去完善画像<span class="en">Complete profile</span></button></div>` : ""}${_pend.includes("resume") ? `<div style="margin-top:8px">📄 简历文件：系统已在后台按此岗位自动生成 1 页定制简历，打开职位页会自动附上，无需单独操作。<span class="en">A tailored 1-page resume is generated automatically in the background and will be attached when you open the job page — no action needed.</span></div>` : ""}</div>` : "";
@@ -2614,6 +2738,7 @@ async function openSnapshot(jobId) {
     if (s.has_resume) facts.push(`<div class="snap-fact"><div class="k">使用的简历<span class="en">Resume used</span></div><div class="v">${esc(s.resume_name || "resume.pdf")}${s.resume_tailored ? ' <span class="tag-ai">AI 按岗定制</span>' : ""}<br><button class="ghost-btn" id="snapResumeBtn" style="margin-top:6px;padding:5px 12px;font-size:12px">下载简历<span class="en">Download</span></button></div></div>`);
     if (s.salary_info) facts.push(`<div class="snap-fact"><div class="k">填写的薪资<span class="en">Salary filled</span></div><div class="v">${esc(s.salary_info)}</div></div>`);
     facts.push(`<div class="snap-fact"><div class="k">快照时间<span class="en">Snapshot at</span></div><div class="v">${esc(fmtTime(s.created_at))}</div></div>`);
+    const _jd = cleanJDText(s.jd_text || "");
     $("snapBody").innerHTML = `
       <div class="snap-head">
         <div class="snap-title">${esc(a.title || "投递快照")}</div>
@@ -2626,9 +2751,9 @@ async function openSnapshot(jobId) {
       ${fieldsHtml ? `<table class="snap-table"><tbody>${fieldsHtml}</tbody></table>` : '<div class="hint">无字段记录</div>'}
       ${s.cover_letter ? `<div class="card-title" style="font-size:14px;margin-top:12px">发出的求职信<span class="en">Cover letter sent</span></div>
         <div class="detail" style="white-space:pre-wrap;max-height:220px;overflow-y:auto">${esc(s.cover_letter)}</div>` : ""}
-      ${s.jd_text ? `<div class="card-title" style="font-size:14px;margin-top:12px">岗位描述<span class="en">Job description</span></div>
-        <details><summary style="cursor:pointer;color:var(--blue);font-size:13px">展开查看（${s.jd_text.length} 字）/ Expand</summary>
-        <div class="detail jd-box">${formatJD(s.jd_text.slice(0, 12000))}</div></details>` : ""}`;
+      ${_jd ? `<div class="card-title" style="font-size:14px;margin-top:12px">岗位描述<span class="en">Job description</span></div>
+        <details><summary style="cursor:pointer;color:var(--blue);font-size:13px">展开查看（${_jd.length} 字）/ Expand</summary>
+        <div class="detail jd-box">${formatJD(_jd.slice(0, 12000))}</div></details>` : ""}`;
     const _fb = $("snapFixProfileBtn");
     if (_fb) _fb.onclick = () => { $("snapModal").style.display = "none"; gotoProfileFor(_profKeys); };
     const rb = $("snapResumeBtn");
