@@ -744,7 +744,16 @@ async function loadQueue() {
     $("queueCount").textContent = `共 ${d.count} 个`;
     box.innerHTML = d.jobs.length ? d.jobs.map(jobCard).join("")
       : `<div class="empty">今日队列为空。可能职位库还没有数据，先点「来源」页抓取一次。<span class=\"en\">Queue is empty. Fetch jobs from the Sources page first.</span></div>`;
-  } catch (e) { box.innerHTML = `<div class="empty">加载失败<span class=\"en\">Load failed</span>：${esc(e.message)}</div>`; }
+  } catch (e) {
+    // 没画像的新用户拉队列会 400（后端现已改为空队列，但旧部署/其它路径仍可能
+    // 遇到）：这不是故障，别挂“加载失败”，显示中性未就绪态。
+    if (/profile not found/.test(e.message)) {
+      $("queueCount").textContent = "共 0 个";
+      box.innerHTML = `<div class="empty">队列还没准备好：完成设置、画像建好后自动出现。<span class=\"en\">Queue isn't ready yet — it will appear once your profile is set up.</span></div>`;
+    } else {
+      box.innerHTML = `<div class="empty">加载失败<span class=\"en\">Load failed</span>：${esc(e.message)}</div>`;
+    }
+  }
 }
 
 async function loadApps() {
@@ -767,6 +776,10 @@ async function loadApps() {
   // 统计
   let s = {};
   try { s = (await api(`/api/v1/stats?user_id=${uid}`)).stats || {}; } catch (e) {}
+  // “待投递 Pending”以队列页口径为准（≥40 分的待投职位）：stats.queued 只统计
+  // applications 表里的 queued 记录，没投过的用户永远是 0，和队列页对不上。
+  // 拉不到就沿用 stats.queued。
+  try { s.queued = (await api(`/api/v1/queue?user_id=${uid}&top_n=1`)).count || 0; } catch (e) {}
   const defs = [["queued","待投递<span class=\"en\">Pending</span>","#2563eb"],["submitted","已投递<span class=\"en\">Submitted</span>","#059669"],
                 ["needs_manual","待人工<span class=\"en\">Manual</span>","#ea580c"],["skipped","已跳过<span class=\"en\">Skipped</span>","#64748b"]];
   $("stats").innerHTML = defs.map(([k, t, c]) =>
@@ -904,10 +917,10 @@ async function runNow() {
   const btn = $("queueRunNowBtn");
   btn.disabled = true;
   btn.textContent = "正在启动…";
-  const done = (msg) => {
+  const done = (msg, ms) => {
     btn.disabled = false;
     btn.innerHTML = "🚀 立即开始投递<span class=\"en\">Apply now</span>";
-    if (msg) toast(msg);
+    if (msg) toast(msg, ms);
   };
   const result = await new Promise((resolve) => {
     const handler = (e) => {
@@ -934,8 +947,8 @@ async function runNow() {
   if (result) {
     // 插件回了 ok:false，分两种：内容脚本已失效（插件刚更新过，刷新本页即好），
     // 或后台没响应（这时弹窗里点“立即执行投递”能走通，因为弹窗跑在最新的插件上下文里）。
-    if (result.error === "context_invalidated") done("插件刚更新过，请刷新本页面（F5）后再点一次");
-    else done("启动失败，请在插件弹窗里点“立即执行投递”");
+    if (result.error === "context_invalidated") done("插件刚更新过，请刷新本页面（F5）后再点一次", 8000);
+    else done("启动失败，请在插件弹窗里点“立即执行投递”", 8000);
     return;
   }
   // 3 秒无回应不等于没装插件：分级诊断（在不在这个页面 / 版本新旧）
@@ -951,20 +964,23 @@ async function runNow() {
     window.addEventListener("message", h);
     window.postMessage({ type: "APPLAI_PING" }, "*");
   });
-  if (!pong) { done("未检测到插件：已安装的话请先刷新本页面（F5），还没装请先安装并连接 Chrome 插件"); return; }
+  // 启动失败的反馈要留够阅读时间：默认 2.2 秒的 toast 在走查里三次都没被看到。
+  if (!pong) { done("未检测到插件：已安装的话请先刷新本页面（F5），还没装请先安装并连接 Chrome 插件", 8000); return; }
   const ver = String(pong.version || "").split(".").map((x) => parseInt(x, 10) || 0);
   if (ver.length && (ver[0] < 0 || (ver[1] === 2 && ver[2] < 1) || ver[1] < 2)) {
-    done("插件版本过旧：请重新下载最新版插件、在 chrome://extensions 重新加载，然后刷新本页");
+    done("插件版本过旧：请重新下载最新版插件、在 chrome://extensions 重新加载，然后刷新本页", 8000);
     return;
   }
-  done("插件在，但没响应投递指令：请先刷新本页面（F5）再试；仍不行请更新插件到最新版后重试");
+  done("插件在，但没响应投递指令：请先刷新本页面（F5）再试；仍不行请更新插件到最新版后重试", 8000);
 }
 $("queueRunNowBtn").onclick = runNow;
 
 async function loadAll() {
   clearErr();
   if (!userId()) return;
-  await Promise.all([loadHealth(), loadAllProfiles(), loadSources(), loadLatestFetch(), loadQueue(), loadApps()]);
+  // 首页快捷卡片也要跟着刷新：之前 loadQuickLinks 只在脚本加载时跑一次，
+  // 那时新用户还没画像、队列接口会 400，卡片就一直停在 0，直到刷新整页。
+  await Promise.all([loadHealth(), loadAllProfiles(), loadSources(), loadLatestFetch(), loadQueue(), loadApps(), loadQuickLinks()]);
   pollRunProgress();
 }
 
@@ -1175,9 +1191,10 @@ const TAILOR_HINT = "按岗位自动优化简历（AI 按每份 JD 改写措辞�
 let personProfiles = [], jobProfiles = [];
 let curPerson = null, curJob = null;
 let pendingResume = null;
-const toast = (msg) => {
+const toast = (msg, ms) => {
   const t = $("toast"); t.textContent = msg; t.style.display = "block";
-  clearTimeout(t._h); t._h = setTimeout(() => t.style.display = "none", 2200);
+  // 默认 2.2 秒；启动失败这类需要用户读完去操作的反馈用更久（见 runNow）
+  clearTimeout(t._h); t._h = setTimeout(() => t.style.display = "none", ms || 2200);
 };
 const splitList = (v) => String(v || "").split(/[,，]/).map((s) => s.trim()).filter(Boolean);
 
@@ -2211,7 +2228,17 @@ $("obSkip").onclick = () => closeOnboarding(true);
 $("obNext").onclick = async () => {
   // 向导字段读取统一走 obVal：元素缺失时返回空串而非抛 reading 'value' 的裸错
   const obVal = (id) => { const el = $(id); return el ? el.value : ""; };
+  // 保存要等好几轮接口（服务器慢时数秒没反馈），上次走查里第一下点击“没反应”
+  // 又补点了一下：保存期间锁住按钮并显示“保存中…”，renderOb/失败分支再恢复。
+  const obBusy = (on, label) => {
+    const nb = $("obNext");
+    nb.disabled = !!on;
+    if (label !== undefined) nb.textContent = label;
+  };
   if (obPhase === "approve_job") {
+    if ($("obNext").disabled) return;
+    const nbLabel = $("obNext").textContent;
+    obBusy(true, "保存中…");
     // 保存用户审批后的岗位画像
     try {
       const jr = await apiGet("/api/v1/profiles?kind=job");
@@ -2229,7 +2256,7 @@ $("obNext").onclick = async () => {
             salaryCurrency: "CAD", salaryPeriod: "annual" } }) });
         await loadAllProfiles();
       }
-    } catch (e) { toast("保存失败：" + e.message); return; }
+    } catch (e) { toast("保存失败：" + e.message); obBusy(false, nbLabel); return; }
     try {
       const d = await apiGet("/api/v1/profile");
       obQPrefill = (d && d.profile) || {};
@@ -2237,6 +2264,8 @@ $("obNext").onclick = async () => {
     obPhase = "questions";
     renderOb();
   } else if (obPhase === "questions") {
+    if ($("obNext").disabled) return;
+    const nbLabel = $("obNext").textContent;
     // 必答项：国家、担保、现公司、现职位；X / OTE / 客户层级可选（销售岗才用得上）
     const countries = splitList(obVal("obqCountries"));
     const sponsor = obVal("obqSponsor");
@@ -2248,6 +2277,7 @@ $("obNext").onclick = async () => {
     if (!company) missing.push("当前公司");
     if (!title) missing.push("当前职位");
     if (missing.length) { toast("请先填好：" + missing.join("、")); return; }
+    obBusy(true, "保存中…");
     try {
       const saveKind = async (kind, payload) => {
         const jr = await apiGet(`/api/v1/profiles?kind=${kind}`);
@@ -2274,7 +2304,7 @@ $("obNext").onclick = async () => {
         segments: splitList(obVal("obqSegments")),
       });
       await loadAllProfiles();
-    } catch (e) { toast("保存失败：" + e.message); const qe = $("obQErr"); if (qe) qe.textContent = "保存失败：" + e.message; return; }
+    } catch (e) { toast("保存失败：" + e.message); const qe = $("obQErr"); if (qe) qe.textContent = "保存失败：" + e.message; obBusy(false, nbLabel); return; }
     obPhase = "approve_launch";
     renderOb();
   } else if (obPhase === "approve_launch") {
@@ -2284,7 +2314,11 @@ $("obNext").onclick = async () => {
     // 没职位（兜底）：只开定时，明天 10 点自动投，不假装现在投了。
     if (obLaunchReady) {
       showPage("queue");
+      // 点下启动必须立刻有反馈：之前这条分支完全不 toast，只靠 runNow
+      // 几秒后的诊断 toast（默认 2.2 秒），走查里三次都没被看到。
+      toast("已启动 ✓ 正在通知插件开始投递…");
       runNow();
+      loadAll();  // 启动后首页卡片/统计也要刷新（之前只在无职位分支里调）
     } else {
       toast("定时投递已启动 🎉 每天 10 点自动开工");
       showPage("home");

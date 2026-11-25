@@ -2,7 +2,8 @@
 /* dashboard.test.js — 用 jsdom 验证 Dashboard：向导弹出、删号弹窗、队列旧错清理、首页计数
    跑法：node test/dashboard.test.js
    对比修复前：DASH_HTML=/tmp/dashboard_before.html node test/dashboard.test.js
-   （修复前 T1/T3/T4/T5 应失败，T2 通过；修复后应全部通过） */
+   （修复前 T1/T3/T4/T5 应失败，T2 通过；T6/T7/T8/T9 是 Deploy #7 新增的回归测试，
+   修复前也应失败；修复后应全部通过） */
 const fs = require('fs');
 const path = require('path');
 const { JSDOM, VirtualConsole } = require('jsdom');
@@ -53,11 +54,25 @@ function boot(opts = {}) {
     if (u.includes('/api/v1/sources')) return ok({ sources: [] });
     if (u.includes('/api/v1/jobs/discover/latest')) return ok({ task: null, jobs: [], pending_scoring: 0 });
     if (u.includes('/api/v1/queue')) {
+      if (opts.queueError400) {
+        return Promise.resolve({ ok: false, status: 400,
+          json: async () => ({ detail: 'profile not found, sync profile first' }),
+          text: async () => JSON.stringify({ detail: 'profile not found, sync profile first' }) });
+      }
       if (opts.deferQueue && !queueDeferred) {
         queueDeferred = new Promise((r) => { queueRelease = () => r(ok({ ...queueBody, jobs: [job1] })); });
         return queueDeferred;
       }
       return ok({ ...queueBody, jobs: queueBody.count ? [job1] : [] });
+    }
+    if (u.includes('/api/v1/profile/suggest-job') && method === 'POST') {
+      return ok({ suggestion: { targetTitles: ['AI Engineer'], industries: ['Artificial Intelligence'],
+        preferredLocations: ['Toronto'], salaryMin: 95000, salaryMax: 135000, reason: 'test' } });
+    }
+    if (u.includes('/api/v1/jobs/discover/auto') && method === 'POST') return ok({ task_id: 'task-1' });
+    if (u.includes('/api/v1/resume/parse') && method === 'POST') {
+      return ok({ fields: { firstName: 'Alex', lastName: 'Chen', email: 'alex@test.com',
+        targetTitles: ['AI Engineer'], preferredLocations: ['Toronto'], yearsExperience: 5 } });
     }
     if (u.includes('/api/v1/applications')) return ok({ applications: [] });
     if (u.includes('/api/v1/stats')) return ok(statsBody);
@@ -93,7 +108,8 @@ function boot(opts = {}) {
     },
   });
   return { dom, window: dom.window, document: dom.window.document, calls, jsdomErrors,
-    releaseQueue: () => { if (queueRelease) queueRelease(); } };
+    releaseQueue: () => { if (queueRelease) queueRelease(); },
+    setQueueCount: (n) => { queueBody.count = n; } };
 }
 
 async function main() {
@@ -179,6 +195,88 @@ async function main() {
     await sleep(900);
     const ql = t.document.getElementById('quickLinks').innerHTML;
     check('首页今日队列显示 7（不是 stats.queued 的 0）', ql.includes('<div class="n">7</div>'), ql.slice(0, 200));
+    t.dom.window.close();
+  }
+
+  // T6 — 没画像时队列 400 不应挂“加载失败”：显示中性未就绪态
+  console.log('T6 队列 400 显示中性未就绪态');
+  {
+    const t = boot({ queueError400: true });
+    await sleep(900);
+    const box = t.document.getElementById('queue');
+    check('400 时不显示“加载失败”', !box.innerHTML.includes('加载失败'), box.innerHTML.slice(0, 120));
+    check('400 时不出现 profile not found 原文', !box.innerHTML.includes('profile not found'), box.innerHTML.slice(0, 120));
+    check('400 时显示队列未就绪', box.innerHTML.includes('还没准备好'), box.innerHTML.slice(0, 120));
+    t.dom.window.close();
+  }
+
+  // T7 — 启动/重拉后首页与队列页一致：stats.queued=0 但队列 1 个时都显示 1
+  console.log('T7 重拉后首页计数与队列页一致');
+  {
+    const t = boot({ statsBody: { stats: { queued: 0, submitted: 0, needs_manual: 0, skipped: 0 } },
+      queueBody: { count: 0 } });
+    await sleep(900);
+    const firstStat = () => t.document.querySelector('#stats .stat .n');
+    check('入队前首页待投递为 0', firstStat() && firstStat().textContent === '0',
+      firstStat() && firstStat().textContent);
+    t.setQueueCount(1);
+    await t.window.loadAll();
+    await sleep(300);
+    const ql = t.document.getElementById('quickLinks').innerHTML;
+    check('重拉后首页今日队列显示 1', ql.includes('<div class="n">1</div>'), ql.slice(0, 200));
+    check('重拉后统计行待投递显示 1', firstStat() && firstStat().textContent === '1',
+      firstStat() && firstStat().textContent);
+    t.dom.window.close();
+  }
+
+  // T8 — 点启动立刻有反馈：有真职位时点“启动全自动投递”，马上出现 toast；
+  // 无插件时 runNow 的诊断 toast 要留够 8 秒（旧 2.2 秒在走查里三次都没被看到）
+  // T9 — 第 2 步确认保存期间按钮锁住并显示“保存中…”（旧代码数秒无反馈，走查里补点了一下）
+  console.log('T8/T9 向导启动 toast 与保存忙态');
+  {
+    const t = boot({});
+    await sleep(700);
+    const nextBtn = () => t.document.getElementById('obNext');
+    // 第 1 步：上传简历
+    const fileInput = t.document.getElementById('obFile');
+    const file = new t.window.File(['%PDF-1.4 fake'], 'resume.pdf', { type: 'application/pdf' });
+    Object.defineProperty(fileInput, 'files', { value: [file] });
+    fileInput.dispatchEvent(new t.window.Event('change', { bubbles: true }));
+    await sleep(2200);  // 解析 + FileReader + obRunAI（800ms 停顿）+ 渲染
+    check('上传后进入第 2 步', nextBtn() && nextBtn().textContent.includes('就这样，下一步'),
+      nextBtn() && nextBtn().textContent);
+    // 第 2 步：点确认——同步检查忙态（T9），再等切到第 3 步
+    t.setQueueCount(1);  // 让第 4 步轮询一开始就看到 1 个职位
+    nextBtn().click();
+    check('保存期间按钮锁住', nextBtn().disabled === true, `disabled=${nextBtn().disabled}`);
+    check('保存期间显示“保存中…”', (nextBtn().textContent || '').includes('保存中'), nextBtn().textContent);
+    await sleep(700);
+    check('第 2 步确认后进入第 3 步', nextBtn() && nextBtn().textContent.includes('确认，下一步'),
+      nextBtn() && nextBtn().textContent);
+    // 第 3 步：填必答项并确认
+    const setVal = (id, v) => { const el = t.document.getElementById(id); if (el) el.value = v; };
+    setVal('obqCountries', 'Canada, United States');
+    setVal('obqSponsor', 'no');
+    setVal('obqCompany', 'Fictional Test Corp');
+    setVal('obqTitle', 'AI Engineer');
+    nextBtn().click();
+    await sleep(900);  // 保存 + 第 4 步渲染 + 首轮 obPollLaunch
+    check('第 3 步确认后进入第 4 步', nextBtn() && nextBtn().textContent.includes('启动全自动投递'),
+      nextBtn() && nextBtn().textContent);
+    check('第 4 步有职位时启动按钮已放开', nextBtn().disabled === false, `disabled=${nextBtn().disabled}`);
+    // 第 4 步：点启动——马上就应有 toast（T8）
+    nextBtn().click();
+    const toastEl = t.document.getElementById('toast');
+    check('点启动后立刻出现 toast', toastEl && toastEl.style.display === 'block',
+      toastEl ? `display=${toastEl.style.display} text=${toastEl.textContent}` : 'toast 缺失');
+    check('启动 toast 文案提到已启动', (toastEl.textContent || '').includes('已启动'), toastEl.textContent);
+    // runNow 无插件：3s 等待 + 1.2s 诊断后出“未检测到插件”，8 秒内不应消失
+    await sleep(4600);
+    check('无插件时出现“未检测到插件”提示', (toastEl.textContent || '').includes('未检测到插件'), toastEl.textContent);
+    check('诊断 toast 仍可见', toastEl.style.display === 'block', `display=${toastEl.style.display}`);
+    await sleep(3000);  // 距点击约 7.6 秒：旧 2.2 秒留存早已消失，新 8 秒还在
+    check('诊断 toast 7.6 秒后仍可见（8 秒留存）', toastEl.style.display === 'block',
+      `display=${toastEl.style.display} text=${toastEl.textContent}`);
     t.dom.window.close();
   }
 

@@ -108,6 +108,16 @@ def test_queue_excludes_applied():
     assert all(j["id"] != job_id for j in r2.json()["jobs"])
 
 
+def test_queue_empty_for_user_without_profile():
+    # 没画像的新用户：队列返回空而不是 400，否则启动时队列框会挂
+    # "profile not found" 的报错（Deploy #6 走查仍见）。
+    c = _authed_client("queue_noprofile_user")
+    r = c.get("/api/v1/queue", params={"top_n": 10})
+    assert r.status_code == 200
+    assert r.json()["count"] == 0
+    assert r.json()["jobs"] == []
+
+
 def test_applications_and_stats():
     r = client.get("/api/v1/applications", params={"user_id": UID})
     assert any(a["status"] == "submitted" for a in r.json()["applications"])

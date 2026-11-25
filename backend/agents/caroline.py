@@ -93,9 +93,11 @@ def _queue_jobs(uid: str, top_n: int = 10) -> list:
 
 
 def get_queue(uid: str, top_n: int = 10):
-    """今日投递队列：只读，无副作用。"""
+    """今日投递队列：只读，无副作用。没画像的新用户返回空队列而不是 400：
+    注册后启动时队列框会先拉一次，没画像就 400 会挂一条吓人的报错；
+    队列是只读视图，“没画像”自然就是“暂时没有可投职位”。"""
     if not db.get_profile(uid):
-        raise HTTPException(400, "profile not found, sync profile first")
+        return {"user_id": uid, "count": 0, "jobs": []}
     queue = _queue_jobs(uid, top_n)
     return {"user_id": uid, "count": len(queue), "jobs": queue}
 
