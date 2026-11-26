@@ -1205,3 +1205,170 @@ def test_latest_fetch_empty_and_ownership():
     assert d["task"] is None and d["jobs"] == [] and d["pending_scoring"] == 0
     anon = TestClient(app.app)
     assert anon.get("/api/v1/jobs/discover/latest").status_code == 401
+
+
+def test_update_profile_preserves_resume_dataurl():
+    """Issue 2 根因：列表接口剥离 dataUrl 后，前端把 stub 合并回传时，
+    库里的简历正文不能被覆盖掉。向导 Step-3 / 画像页保存都是这个写法，
+    母版简历就是这么丢的；修好后 stub 回写必须保留旧 dataUrl。"""
+    c = _authed_client("resume_keep_tester")
+    data_url = "data:application/pdf;base64,JVBERi0xLjQKZmFrZS1wZGY="
+    r = c.put("/api/v1/profile", json={"user_id": "x", "profile": {**PROFILE,
+        "resumeFile": {"name": "V_Resume.pdf", "dataUrl": data_url}}})
+    assert r.status_code == 200, r.text
+    r = c.get("/api/v1/profiles?kind=person")
+    assert r.status_code == 200
+    profs = r.json()["profiles"]
+    assert profs, "no person profile"
+    pid = profs[0]["id"]
+    # 列表接口确实剥离了 dataUrl（只剩 name/hasData）
+    assert profs[0]["profile"].get("resumeFile", {}).get("dataUrl") is None
+    assert profs[0]["profile"]["resumeFile"]["hasData"] is True
+    # 模拟前端合并回传：stub 原样 PUT 回去
+    stub = dict(profs[0]["profile"])
+    stub["firstName"] = "Victoria"
+    r = c.put(f"/api/v1/profiles/{pid}", json={"profile": stub})
+    assert r.status_code == 200, r.text
+    got = c.get("/api/v1/profile").json()["profile"]
+    assert got["resumeFile"]["dataUrl"] == data_url
+    assert got["resumeFile"]["name"] == "V_Resume.pdf"
+
+
+def test_update_profile_new_resume_upload_replaces():
+    """带 dataUrl 的新上传仍应替换旧简历（保留逻辑不能变成永远不更新）。"""
+    c = _authed_client("resume_replace_tester")
+    old = "data:application/pdf;base64,T0xE"
+    new = "data:application/pdf;base64,TkVX"
+    c.put("/api/v1/profile", json={"user_id": "x", "profile": {**PROFILE,
+        "resumeFile": {"name": "Old.pdf", "dataUrl": old}}})
+    r = c.get("/api/v1/profiles?kind=person")
+    pid = r.json()["profiles"][0]["id"]
+    stub = dict(r.json()["profiles"][0]["profile"])
+    stub["resumeFile"] = {"name": "New.pdf", "dataUrl": new}
+    r = c.put(f"/api/v1/profiles/{pid}", json={"profile": stub})
+    assert r.status_code == 200, r.text
+    got = c.get("/api/v1/profile").json()["profile"]
+    assert got["resumeFile"]["dataUrl"] == new
+    assert got["resumeFile"]["name"] == "New.pdf"
+
+
+def test_update_job_profile_dashboard_payload():
+    """Issue 1 后端侧：画像页保存的 PUT 体（needsSponsorship=false 等）能成功写回。"""
+    c = _authed_client("job_save_tester")
+    r = c.get("/api/v1/profiles?kind=job")
+    assert r.status_code == 200
+    pid = r.json()["profiles"][0]["id"]
+    payload = {"targetTitles": ["AI Engineer"], "industries": [], "yearsExperience": None,
+               "level": "", "remotePreference": "any", "preferredLocations": [],
+               "salaryMin": None, "salaryMax": None, "salaryCurrency": "CAD",
+               "salaryPeriod": "annual", "oteMin": None, "oteMax": None,
+               "segments": [], "needsSponsorship": False}
+    r = c.put(f"/api/v1/profiles/{pid}", json={"profile": payload, "tailor_enabled": True})
+    assert r.status_code == 200, r.text
+    got = c.get("/api/v1/profiles?kind=job").json()["profiles"][0]["profile"]
+    assert got["needsSponsorship"] is False
+    assert got["salaryCurrency"] == "CAD"
+    assert got["salaryPeriod"] == "annual"
+
+
+def test_location_countries_deterministic_and_stored():
+    """Issue 3：StackAdapt 原串直接认出 Canada，第二次走已存结果（不重复花 LLM）。"""
+    c = _authed_client("loc_det_tester")
+    jid = c.post("/api/v1/jobs", json={
+        "user_id": "x", "url": "https://example.com/loc-det",
+        "title": "Machine Learning Engineer", "company": "StackAdapt",
+        "location": "Toronto, Ontario, Canada / Alberta, Canada; British Columbia; "
+                    "Calgary, Alberta, Canada; Ontario; Toronto; Vancouver"}).json()["id"]
+    r = c.post("/api/v1/location/countries", json={"job_id": jid})
+    assert r.status_code == 200, r.text
+    assert r.json()["countries"] == ["Canada"]
+    assert r.json()["source"] == "deterministic"
+    r2 = c.post("/api/v1/location/countries", json={"job_id": jid})
+    assert r2.json()["countries"] == ["Canada"]
+    assert r2.json()["source"] == "stored"
+
+
+def test_location_countries_llm_fallback(monkeypatch):
+    """Issue 3：地点串里没有国家名（只有巴黎）→ LLM 兜底解析，结果存回职位。"""
+    import llm as llm_mod
+    monkeypatch.setattr(llm_mod, "llm_extract_job_countries", lambda loc, jd="", timeout=20: ["France"])
+    c = _authed_client("loc_llm_tester")
+    jid = c.post("/api/v1/jobs", json={
+        "user_id": "x", "url": "https://example.com/loc-llm",
+        "title": "AI Engineer", "company": "Artefact",
+        "location": "9th arrondissement of Paris, 75009, Paris"}).json()["id"]
+    r = c.post("/api/v1/location/countries", json={"job_id": jid})
+    assert r.status_code == 200, r.text
+    assert r.json()["countries"] == ["France"]
+    assert r.json()["source"] == "llm"
+    r2 = c.post("/api/v1/location/countries", json={"job_id": jid})
+    assert r2.json()["source"] == "stored"
+
+
+def test_location_countries_unknown_returns_empty(monkeypatch):
+    """Issue 3：Remote + LLM 也认不出 → 返回空列表，不编国家（插件按认不出进待人工）。"""
+    import llm as llm_mod
+    monkeypatch.setattr(llm_mod, "llm_extract_job_countries", lambda loc, jd="", timeout=20: [])
+    c = _authed_client("loc_none_tester")
+    jid = c.post("/api/v1/jobs", json={
+        "user_id": "x", "url": "https://example.com/loc-none",
+        "title": "AI Engineer", "company": "Acme", "location": "Remote"}).json()["id"]
+    r = c.post("/api/v1/location/countries", json={"job_id": jid})
+    assert r.status_code == 200, r.text
+    assert r.json() == {"countries": [], "source": "none"}
+
+
+def test_location_countries_wrong_user(monkeypatch):
+    """Issue 3：别人的职位 id 拿不到国家（不越权），返回空。"""
+    c = _authed_client("loc_owner_tester")
+    other = _authed_client("loc_other_tester")
+    jid = c.post("/api/v1/jobs", json={
+        "user_id": "x", "url": "https://example.com/loc-own",
+        "title": "AI Engineer", "company": "Acme", "location": "Toronto"}).json()["id"]
+    r = other.post("/api/v1/location/countries", json={"job_id": jid})
+    assert r.status_code == 200, r.text
+    assert r.json() == {"countries": [], "source": "none"}
+
+
+def test_llm_extract_job_countries_parses_json(monkeypatch):
+    """Issue 3：LLM 国家解析只取 JSON 里的 countries；调用失败/无 key 时返回 []。"""
+    import llm as llm_mod
+
+    class _Resp:
+        def __init__(self, content):
+            self._content = content
+        def raise_for_status(self):
+            pass
+        def json(self):
+            return {"choices": [{"message": {"content": self._content}}]}
+
+    monkeypatch.setenv("APPLAI_LLM_API_KEY", "test-key")
+    monkeypatch.setattr(llm_mod.httpx, "post",
+                        lambda *a, **k: _Resp('{"countries": ["France", "Canada"]}'))
+    assert llm_mod.llm_extract_job_countries("Paris") == ["France", "Canada"]
+
+    def _boom(*a, **k):
+        raise RuntimeError("down")
+    monkeypatch.setattr(llm_mod.httpx, "post", _boom)
+    assert llm_mod.llm_extract_job_countries("Paris") == []
+
+    monkeypatch.delenv("APPLAI_LLM_API_KEY", raising=False)
+    assert llm_mod.llm_extract_job_countries("Paris") == []
+
+
+def test_queue_surfaces_countries():
+    """Issue 3：队列返回的职位自带已解析的 countries，插件填表直接读。"""
+    import db as dbm
+    c = _authed_client("loc_queue_tester")
+    c.put("/api/v1/profile", json={"user_id": "x", "profile": {
+        "targetTitles": ["AI Engineer"], "preferredLocations": ["Toronto"]}})
+    jid = c.post("/api/v1/jobs", json={
+        "user_id": "x", "url": "https://example.com/loc-q",
+        "title": "AI Engineer", "company": "Acme", "location": "Toronto, Ontario, Canada"}).json()["id"]
+    dbm.update_job_score(jid, 80, ["test"], "rules")
+    c.post("/api/v1/location/countries", json={"job_id": jid})
+    r = c.get("/api/v1/queue", params={"top_n": 10})
+    assert r.status_code == 200, r.text
+    jobs = [j for j in r.json()["jobs"] if j["id"] == jid]
+    assert jobs, r.json()
+    assert jobs[0]["countries"] == ["Canada"]

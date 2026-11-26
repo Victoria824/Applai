@@ -623,6 +623,39 @@ def job_description(job: dict) -> str:
     return raw.get("description", "")
 
 
+def get_job_countries(job: dict) -> list:
+    """从职位记录读已存的归一化国家列表（raw_json 可能是字符串）。"""
+    try:
+        raw = json.loads(job.get("raw_json") or "{}")
+    except Exception:
+        raw = {}
+    countries = raw.get("countries") or []
+    return [str(c) for c in countries if c]
+
+
+def set_job_countries(job_id: int, countries: list, source: str = "") -> None:
+    """把解析好的职位国家存进 jobs.raw_json（Issue 3）：插件填表时直接读，
+    不用每次重新解析。失败静默——国家解析永远不能影响主流程。"""
+    try:
+        conn = get_db()
+        r = conn.execute("SELECT raw_json FROM jobs WHERE id=?", (job_id,)).fetchone()
+        if not r:
+            conn.close()
+            return
+        try:
+            raw = json.loads(dict(r)["raw_json"] or "{}")
+        except Exception:
+            raw = {}
+        raw["countries"] = list(countries or [])
+        raw["countries_source"] = source or ""
+        conn.execute("UPDATE jobs SET raw_json=? WHERE id=?",
+                     (json.dumps(raw, ensure_ascii=False), job_id))
+        conn.commit()
+        conn.close()
+    except Exception:
+        pass
+
+
 def reset_scores(uid: str) -> int:
     """画像变更后：未处理职位的分数清零，等待重打分。返回受影响行数。"""
     conn = get_db()
@@ -1226,6 +1259,24 @@ def update_profile(profile_id: int, user_id: str, profile: dict = None,
     conn = get_db()
     sets, vals = [], []
     if profile is not None:
+        # Issue 2：保留已存的简历正文。列表接口（list_profiles）默认剥离
+        # resumeFile.dataUrl，只留 {name, hasData}；前端把列表结果合并回传时，
+        # 这个 stub 会把库里的简历正文永久覆盖掉（向导 Step-3 / 画像页保存都
+        # 是这个写法，母版简历就是这么丢的）。新值里没有 dataUrl 时，从库里
+        # 把旧正文接回来；只有带 dataUrl 的新上传才替换。
+        rf = profile.get("resumeFile")
+        if not (isinstance(rf, dict) and rf.get("dataUrl")):
+            cur = conn.execute(
+                "SELECT profile_json FROM profiles WHERE id=? AND user_id=?",
+                (profile_id, user_id)).fetchone()
+            if cur:
+                try:
+                    old = json.loads(dict(cur)["profile_json"] or "{}")
+                except Exception:
+                    old = {}
+                old_rf = (old or {}).get("resumeFile")
+                if isinstance(old_rf, dict) and old_rf.get("dataUrl"):
+                    profile = {**profile, "resumeFile": old_rf}
         sets.append("profile_json=?")
         vals.append(json.dumps(profile, ensure_ascii=False))
     if name:

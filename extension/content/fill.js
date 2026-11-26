@@ -69,48 +69,209 @@
 
   /* ---------- 工作许可按国家匹配 ----------
    * 画像里的 authorizedWorkCountries 是用户声明的合法工作国家清单；
-   * 岗位地点来自后端 job.location（跑批经 sw 传入，手动经待人工记录传入）。
+   * 岗位地点来自后端 job.location（跑批经 sw 传入，手动经待人工记录传入），
+   * 或后端打分/解析时存好的 job.countries（见 sw.js resolveJobCountries）。
    * 只有岗位国家全在清单里才答 Yes；其他情况一律留人工。
    * 旧 workAuth 自由文本不再驱动自动作答——拿加拿大授权去答美国岗，
    * 就是 2026-11-03 1Password 真实页暴露的虚假陈述风险。
-   * 地点按逗号切段、每段整体归一化（城市名忽略，只认国家名）；
-   * “Remote”等无国家信息的地点解析为空 → 留人工。 */
-  const COUNTRY_ALIASES = [
-    [/^(canada|ca)$/, 'Canada'],
-    [/^(united states|usa|us|u\.s\.|america)$/, 'United States'],
-    [/^(united kingdom|uk|u\.k\.|great britain|britain|england)$/, 'United Kingdom'],
-    [/^(ireland|ie)$/, 'Ireland'],
-    [/^(germany|de|deutschland)$/, 'Germany'],
-    [/^(france|fr)$/, 'France'],
-    [/^(netherlands|nl|holland)$/, 'Netherlands'],
-    [/^(australia|au)$/, 'Australia'],
-    [/^(new zealand|nz)$/, 'New Zealand'],
-    [/^(singapore|sg)$/, 'Singapore'],
-    [/^(india|in)$/, 'India'],
-    [/^(japan|jp)$/, 'Japan'],
+   * 地点解析三层（Issue 3）：①整段/词组里找国家名；②省·州·城市映射到国家
+   * （"Toronto"→Canada，"9th arrondissement of Paris"→France）；③仍认不出
+   * 时由后端 LLM 解析（打分/跑批时存到职位上），插件只做决定、不直接调 LLM。
+   * 两字母简码（CA/US/UK…）只在其它办法都失败后才试，避免 "San Francisco, CA"
+   * 把 CA 认成加拿大。 */
+  function fold(s) {
+    return String(s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase()
+      .replace(/\./g, '').replace(/[^a-z0-9\s-]/g, ' ').replace(/\s+/g, ' ').trim();
+  }
+  const COUNTRY_NAMES = [
+    [/^canada$/, 'Canada'],
+    [/^(united states|usa|america)$/, 'United States'],
+    [/^(united kingdom|great britain|britain|england)$/, 'United Kingdom'],
+    [/^ireland$/, 'Ireland'],
+    [/^germany$/, 'Germany'],
+    [/^france$/, 'France'],
+    [/^(netherlands|holland)$/, 'Netherlands'],
+    [/^australia$/, 'Australia'],
+    [/^new zealand$/, 'New Zealand'],
+    [/^singapore$/, 'Singapore'],
+    [/^india$/, 'India'],
+    [/^japan$/, 'Japan'],
+    [/^china$/, 'China'],
+    [/^(south korea|korea)$/, 'South Korea'],
+    [/^taiwan$/, 'Taiwan'],
+    [/^mexico$/, 'Mexico'],
+    [/^brazil$/, 'Brazil'],
+    [/^spain$/, 'Spain'],
+    [/^italy$/, 'Italy'],
+    [/^switzerland$/, 'Switzerland'],
+    [/^sweden$/, 'Sweden'],
+    [/^norway$/, 'Norway'],
+    [/^denmark$/, 'Denmark'],
+    [/^finland$/, 'Finland'],
+    [/^belgium$/, 'Belgium'],
+    [/^austria$/, 'Austria'],
+    [/^portugal$/, 'Portugal'],
+    [/^israel$/, 'Israel'],
+    [/^(czech republic|czechia)$/, 'Czech Republic'],
+    [/^poland$/, 'Poland'],
+    [/^greece$/, 'Greece'],
+    [/^turkey$/, 'Türkiye'],
+    [/^south africa$/, 'South Africa'],
+    [/^thailand$/, 'Thailand'],
+    [/^vietnam$/, 'Vietnam'],
+    [/^philippines$/, 'Philippines'],
+    [/^indonesia$/, 'Indonesia'],
+    [/^malaysia$/, 'Malaysia'],
   ];
-  function normalizeCountry(s) {
-    const t = String(s || '').trim().toLowerCase().replace(/\./g, '');
-    for (const [re, name] of COUNTRY_ALIASES) if (re.test(t)) return name;
+  const COUNTRY_CODES = [
+    [/^ca$/, 'Canada'],
+    [/^us$/, 'United States'],
+    [/^uk$/, 'United Kingdom'],
+    [/^de$/, 'Germany'],
+    [/^fr$/, 'France'],
+    [/^nl$/, 'Netherlands'],
+    [/^au$/, 'Australia'],
+    [/^nz$/, 'New Zealand'],
+    [/^sg$/, 'Singapore'],
+    [/^in$/, 'India'],
+    [/^jp$/, 'Japan'],
+    [/^ie$/, 'Ireland'],
+    [/^cn$/, 'China'],
+    [/^kr$/, 'South Korea'],
+  ];
+  function normalizeCountry(s, allowShort) {
+    const t = fold(s);
+    if (!t) return '';
+    for (const [re, name] of COUNTRY_NAMES) if (re.test(t)) return name;
+    if (allowShort) for (const [re, name] of COUNTRY_CODES) if (re.test(t)) return name;
     return '';
   }
   function normalizeCountryList(v) {
     const arr = Array.isArray(v) ? v : String(v || '').split(',');
     const out = [];
-    for (const x of arr) { const n = normalizeCountry(x); if (n && !out.includes(n)) out.push(n); }
+    for (const x of arr) { const n = normalizeCountry(x, true); if (n && !out.includes(n)) out.push(n); }
     return out;
+  }
+  // 省/州/城市 → 国家（地点里只有城市或省份、没有国家名时用）。
+  // 后端 LLM 是最终兜底（见 sw.js resolveJobCountries），这里只放最常见的，
+  // 保持可维护：新增时按 “地点小写 → 国家英文名” 加一行即可。
+  const PLACE_TO_COUNTRY = {
+    // Canada — 省/地区 + 主要城市
+    'alberta': 'Canada', 'british columbia': 'Canada', 'manitoba': 'Canada',
+    'new brunswick': 'Canada', 'newfoundland and labrador': 'Canada',
+    'nova scotia': 'Canada', 'ontario': 'Canada', 'prince edward island': 'Canada',
+    'quebec': 'Canada', 'saskatchewan': 'Canada', 'northwest territories': 'Canada',
+    'nunavut': 'Canada', 'yukon': 'Canada',
+    'toronto': 'Canada', 'vancouver': 'Canada', 'montreal': 'Canada', 'ottawa': 'Canada',
+    'calgary': 'Canada', 'edmonton': 'Canada', 'winnipeg': 'Canada',
+    'quebec city': 'Canada', 'halifax': 'Canada', 'waterloo': 'Canada',
+    'mississauga': 'Canada', 'brampton': 'Canada', 'hamilton': 'Canada',
+    'victoria': 'Canada', 'saskatoon': 'Canada', 'regina': 'Canada',
+    // United States — 州 + 主要城市
+    'california': 'United States', 'new york': 'United States', 'texas': 'United States',
+    'washington': 'United States', 'massachusetts': 'United States',
+    'illinois': 'United States', 'florida': 'United States', 'georgia': 'United States',
+    'colorado': 'United States', 'oregon': 'United States', 'arizona': 'United States',
+    'north carolina': 'United States', 'pennsylvania': 'United States',
+    'ohio': 'United States', 'michigan': 'United States', 'minnesota': 'United States',
+    'tennessee': 'United States', 'missouri': 'United States', 'utah': 'United States',
+    'nevada': 'United States', 'indiana': 'United States', 'wisconsin': 'United States',
+    'los angeles': 'United States', 'san francisco': 'United States',
+    'san jose': 'United States', 'san diego': 'United States', 'seattle': 'United States',
+    'chicago': 'United States', 'boston': 'United States', 'austin': 'United States',
+    'dallas': 'United States', 'houston': 'United States', 'denver': 'United States',
+    'atlanta': 'United States', 'miami': 'United States', 'portland': 'United States',
+    'phoenix': 'United States', 'philadelphia': 'United States', 'detroit': 'United States',
+    'minneapolis': 'United States', 'nashville': 'United States',
+    'pittsburgh': 'United States', 'raleigh': 'United States', 'durham': 'United States',
+    'salt lake city': 'United States', 'las vegas': 'United States',
+    'baltimore': 'United States', 'arlington': 'United States',
+    'sunnyvale': 'United States', 'mountain view': 'United States',
+    'palo alto': 'United States', 'menlo park': 'United States',
+    'cupertino': 'United States', 'bellevue': 'United States', 'redmond': 'United States',
+    'irvine': 'United States', 'santa clara': 'United States',
+    // United Kingdom
+    'england': 'United Kingdom', 'scotland': 'United Kingdom', 'wales': 'United Kingdom',
+    'northern ireland': 'United Kingdom',
+    'london': 'United Kingdom', 'manchester': 'United Kingdom',
+    'birmingham': 'United Kingdom', 'edinburgh': 'United Kingdom',
+    'glasgow': 'United Kingdom', 'leeds': 'United Kingdom', 'bristol': 'United Kingdom',
+    'cambridge': 'United Kingdom', 'oxford': 'United Kingdom',
+    // France
+    'paris': 'France', 'lyon': 'France', 'marseille': 'France', 'toulouse': 'France',
+    'nice': 'France', 'nantes': 'France', 'bordeaux': 'France', 'lille': 'France',
+    'strasbourg': 'France',
+    // Germany
+    'berlin': 'Germany', 'munich': 'Germany', 'hamburg': 'Germany',
+    'frankfurt': 'Germany', 'cologne': 'Germany', 'stuttgart': 'Germany',
+    'dusseldorf': 'Germany', 'dortmund': 'Germany', 'leipzig': 'Germany',
+    // Netherlands / Ireland
+    'amsterdam': 'Netherlands', 'rotterdam': 'Netherlands', 'utrecht': 'Netherlands',
+    'eindhoven': 'Netherlands', 'the hague': 'Netherlands',
+    'dublin': 'Ireland', 'cork': 'Ireland', 'galway': 'Ireland',
+    // Australia / New Zealand
+    'sydney': 'Australia', 'melbourne': 'Australia', 'brisbane': 'Australia',
+    'perth': 'Australia', 'adelaide': 'Australia', 'canberra': 'Australia',
+    'auckland': 'New Zealand', 'wellington': 'New Zealand', 'christchurch': 'New Zealand',
+    // Asia
+    'tokyo': 'Japan', 'osaka': 'Japan', 'kyoto': 'Japan', 'nagoya': 'Japan',
+    'yokohama': 'Japan', 'fukuoka': 'Japan',
+    'beijing': 'China', 'shanghai': 'China', 'shenzhen': 'China', 'guangzhou': 'China',
+    'hangzhou': 'China', 'chengdu': 'China', 'wuhan': 'China', 'nanjing': 'China',
+    'suzhou': 'China', 'xian': 'China',
+    'seoul': 'South Korea', 'busan': 'South Korea',
+    'taipei': 'Taiwan', 'hsinchu': 'Taiwan',
+    'bangalore': 'India', 'bengaluru': 'India', 'mumbai': 'India', 'delhi': 'India',
+    'hyderabad': 'India', 'pune': 'India', 'chennai': 'India', 'gurgaon': 'India',
+    'noida': 'India',
+    'tel aviv': 'Israel', 'jerusalem': 'Israel', 'haifa': 'Israel',
+    // Europe — others
+    'zurich': 'Switzerland', 'geneva': 'Switzerland', 'basel': 'Switzerland',
+    'stockholm': 'Sweden', 'gothenburg': 'Sweden',
+    'madrid': 'Spain', 'barcelona': 'Spain',
+    'milan': 'Italy', 'rome': 'Italy',
+    'warsaw': 'Poland', 'krakow': 'Poland',
+    // Americas — others
+    'sao paulo': 'Brazil', 'rio de janeiro': 'Brazil',
+    'mexico city': 'Mexico', 'guadalajara': 'Mexico', 'monterrey': 'Mexico',
+  };
+  function resolveSegment(seg, allowShort) {
+    const t = fold(seg);
+    if (!t) return '';
+    const words = t.split(' ');
+    const phrases = [t];
+    for (let i = 0; i < words.length - 1; i++) phrases.push(words[i] + ' ' + words[i + 1]);
+    for (const w of words) phrases.push(w);
+    for (const ph of phrases) {
+      if (PLACE_TO_COUNTRY[ph]) return PLACE_TO_COUNTRY[ph];
+      const n = normalizeCountry(ph, allowShort);
+      if (n) return n;
+    }
+    return '';
   }
   function countriesFromLocation(loc) {
     const found = [];
-    for (const part of String(loc || '').split(/[,;|/]/)) {
-      const n = normalizeCountry(part);
-      if (n && !found.includes(n)) found.push(n);
-    }
-    if (!found.length) { const n = normalizeCountry(loc); if (n) found.push(n); }
+    const push = (c) => { if (c && !found.includes(c)) found.push(c); };
+    const parts = String(loc || '').split(/[,;|/\n]/);
+    for (const part of parts) push(resolveSegment(part, false));
+    if (!found.length) for (const part of parts) push(resolveSegment(part, true));
+    if (!found.length) push(normalizeCountry(loc, true));
     return found;
   }
-  // 本次填写对应的岗位国家（fillApplication 入口从 options.jobLocation 设置）
   let JOB_COUNTRIES = [];
+
+  // 工作许可三态（Issue 3）：'yes'（岗位国家全在授权清单里，可答 Yes）/
+  // 'foreign'（岗位国家已知、但不在清单里）/ 'unknown'（地点里认不出国家，
+  // 或画像里没登记国家）。后两种都不许替答 No——调用方把它们进待人工，
+  // 而不是静默跳过：旧逻辑里这两种都返回 ''，表单上的问题会被空着略过，
+  // 巴黎岗对加拿大授权就是这么漏掉的。
+  function workAuthDetail(p) {
+    const auth = normalizeCountryList(p.authorizedWorkCountries);
+    if (!auth.length) return { state: 'unknown', reason: '画像里没有登记合法工作国家' };
+    if (!JOB_COUNTRIES.length) return { state: 'unknown', reason: '地点里看不出岗位国家' };
+    if (JOB_COUNTRIES.every((c) => auth.includes(c))) return { state: 'yes', reason: '' };
+    return { state: 'foreign', reason: '岗位国家不在你登记的合法工作国家里' };
+  }
 
   function valueForKey(key, p) {
     switch (key) {
@@ -126,11 +287,7 @@
       case 'coverLetter': return p.coverLetter || '';
       case 'salary': return formatSalary(p);
       case 'yearsExperience': return p.yearsExperience || '';
-      case 'workAuth': {
-        const auth = normalizeCountryList(p.authorizedWorkCountries);
-        if (!auth.length || !JOB_COUNTRIES.length) return '';
-        return JOB_COUNTRIES.every((c) => auth.includes(c)) ? 'yes' : '';
-      }
+      case 'workAuth': return workAuthDetail(p).state === 'yes' ? 'yes' : '';
       case 'sponsorship': return p.needsSponsorship ? 'yes' : 'no';
       case 'relocate': return '';
       case 'startDate': return '';
@@ -487,7 +644,10 @@
 
   async function fillApplication(profile, options) {
     options = options || {};
-    JOB_COUNTRIES = countriesFromLocation(options.jobLocation || '');
+    // 后端已解析好的国家优先（跑批时存到职位上的 LLM/规则结果），没有才就地解析地点串。
+    JOB_COUNTRIES = (options.jobCountries && options.jobCountries.length)
+      ? normalizeCountryList(options.jobCountries)
+      : countriesFromLocation(options.jobLocation || '');
     const M = window.__autofillMatch;
     const report = {
       ats: (window.__autoapply.detectATS && window.__autoapply.detectATS().ats) || 'unknown',
@@ -517,11 +677,19 @@
       }
     }
 
+    // 工作许可问到了但答不上来：记下来，循环结束时进待人工（Issue 3）。
+    // 旧逻辑是直接 continue，问题被空着略过——巴黎岗对加拿大授权就是这么漏掉的。
+    let workAuthUnanswered = '';
     for (const f of fields) {
       const key = matchKey(f.sig);
       if (!key || filledKeys.has(key)) continue;
       const value = valueForKey(key, profile);
-      if (value === '' || value == null) continue;
+      if (value === '' || value == null) {
+        if (key === 'workAuth' && !workAuthUnanswered) {
+          workAuthUnanswered = workAuthDetail(profile).reason;
+        }
+        continue;
+      }
       let ok = false;
       try {
         if (f.kind === 'select') ok = fillSelect(f.el, value, key);
@@ -552,6 +720,11 @@
           report.needsReview.push({ intent: key, label: key, reason: '未找到对应问题，请人工确认' });
         }
       }
+    }
+    // 工作许可问题在本页、但国家对不上或认不出：进待人工，永不替答 No。
+    if (workAuthUnanswered && !filledKeys.has('workAuth')
+      && !report.needsReview.some((m) => m.intent === 'workAuth')) {
+      report.needsReview.push({ intent: 'workAuth', label: '工作许可', reason: workAuthUnanswered });
     }
 
     // 文件上传：简历意图 + 画像有简历数据 → 自动附上；其余（作品集附件、无简历数据、失败）走人工队列

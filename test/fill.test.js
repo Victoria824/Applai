@@ -630,6 +630,67 @@ console.log('\n[20] 工作许可按国家匹配（岗位国家全在授权清单
       JSON.stringify(r.needsReview));
   }
 }
+
+console.log('\n[21] 工作许可地点解析（Issue 3：省/市映射 + 词组匹配 + 兜底进人工）');
+{
+  const fixture = () => makeDom(`<html><body><form>
+    <label>Are you legally authorized to work in Canada?</label>
+    <select id="auth"><option value="">Select...</option><option>Yes</option><option>No</option></select>
+  </form></body></html>`, 'https://boards.greenhouse.io/acme/jobs/21');
+  const run = async (prof, opts) => {
+    const w = fixture();
+    const r = await w.__autoapply.fillApplication(prof, opts);
+    return { sel: w.document.getElementById('auth').value, r };
+  };
+  const STACKADAPT = 'Toronto, Ontario, Canada / Alberta, Canada; British Columbia; Calgary, Alberta, Canada; Ontario; Toronto; Vancouver';
+  // (a) StackAdapt 原串 + canada → Yes（Victoria 的原案）
+  {
+    const { sel, r } = await run({ ...PROFILE, authorizedWorkCountries: ['Canada'] }, { jobLocation: STACKADAPT });
+    check('StackAdapt 多地串认出 Canada 答 Yes', sel === 'Yes', sel);
+    check('StackAdapt 工作许可记为已填', r.filled.some((x) => x.intent === 'workAuth'));
+    check('StackAdapt 不进待确认', !r.needsReview.some((x) => x.intent === 'workAuth'), JSON.stringify(r.needsReview));
+  }
+  // (b) 只有城市名 "Toronto" → Yes
+  {
+    const { sel } = await run({ ...PROFILE, authorizedWorkCountries: ['canada'] }, { jobLocation: 'Toronto' });
+    check('只有城市名 Toronto 也认出 Canada', sel === 'Yes', sel);
+  }
+  // (c) 巴黎岗 + canada → 不答 No，留人工（不再静默跳过）
+  {
+    const { sel, r } = await run({ ...PROFILE, authorizedWorkCountries: ['Canada'] }, { jobLocation: '9th arrondissement of Paris, 75009, Paris' });
+    check('巴黎岗不替答', sel === '', sel);
+    check('巴黎岗工作许可进待确认', r.needsReview.some((x) => x.intent === 'workAuth'), JSON.stringify(r.needsReview));
+    check('巴黎岗不记已填', !r.filled.some((x) => x.intent === 'workAuth'));
+  }
+  // (d) "San Francisco, CA" 的 CA 不是加拿大 → 留人工
+  {
+    const { sel, r } = await run({ ...PROFILE, authorizedWorkCountries: ['Canada'] }, { jobLocation: 'San Francisco, CA' });
+    check('San Francisco, CA 不认成加拿大', sel === '', sel);
+    check('San Francisco, CA 工作许可进待确认', r.needsReview.some((x) => x.intent === 'workAuth'));
+  }
+  // (e) 后端已存国家优先于地点串
+  {
+    const { sel, r } = await run({ ...PROFILE, authorizedWorkCountries: ['Canada'] }, { jobLocation: 'Toronto', jobCountries: ['France'] });
+    check('已存国家 France 优先于地点 Toronto', sel === '', sel);
+    check('已存国家优先时进待确认', r.needsReview.some((x) => x.intent === 'workAuth'));
+  }
+  // (f) Remote/无国家信息 → 留人工
+  {
+    const { sel, r } = await run({ ...PROFILE, authorizedWorkCountries: ['Canada'] }, { jobLocation: 'Remote' });
+    check('Remote 不替答', sel === '', sel);
+    check('Remote 工作许可进待确认', r.needsReview.some((x) => x.intent === 'workAuth'));
+  }
+  // (g) 巴黎岗 + 法国授权 → Yes（同一地点串，授权不同结果不同）
+  {
+    const { sel } = await run({ ...PROFILE, authorizedWorkCountries: ['France'] }, { jobLocation: '9th arrondissement of Paris, 75009, Paris' });
+    check('巴黎岗 + 法国授权答 Yes', sel === 'Yes', sel);
+  }
+  // (h) 带重音的 Montréal → Yes
+  {
+    const { sel } = await run({ ...PROFILE, authorizedWorkCountries: ['Canada'] }, { jobLocation: 'Montréal, QC' });
+    check('Montréal（带重音）认出 Canada', sel === 'Yes', sel);
+  }
+}
 }
 
 main().catch((e) => { console.error(e); process.exit(1); });

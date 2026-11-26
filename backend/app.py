@@ -610,6 +610,16 @@ def resume_for_job(job_id: int, user: dict = Depends(get_current_user)):
     return caroline.resume_for_job(user["app_user_id"], job_id)
 
 
+@app.post("/api/v1/location/countries")
+def location_countries(body: dict, user: dict = Depends(get_current_user)):
+    """Issue 3：解析职位的归一化国家列表（插件跑批时用）。
+    body: {job_id?, location?}。已存的直接返回；否则确定性直认，认不出
+    再调 LLM，结果存回职位。失败返回空列表——插件按“认不出”进待人工，
+    永不替答。"""
+    job_id = int(body.get("job_id") or 0)
+    return caroline.resolve_job_countries(user["app_user_id"], job_id, body.get("location") or "")
+
+
 @app.get("/api/v1/resume/versions")
 def list_resume_versions(profile_id: int = 0, user: dict = Depends(get_current_user)):
     """列出某画像的简历版本。"""

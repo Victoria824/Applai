@@ -60,12 +60,32 @@ function boot(opts = {}) {
     if (u.includes('/api/v1/auth/me')) return ok({ app_user_id: 'probe-user-1', username: 'wobtest-probe' });
     if (u.includes('/api/v1/agents')) return ok(agentsBody);
     if (u.includes('/health')) return ok({ ok: true, version: '0.2.0', llm: true });
-    if (u.includes('/api/v1/profile')) {
+    if (u.includes('/api/v1/profile') && !u.includes('/api/v1/profiles')) {
       if (profileDelay === Infinity) return new Promise(() => {});
       if (profileDelay > 0) return new Promise((r) => setTimeout(() => r(ok(profileBody)), profileDelay));
       return ok(profileBody);
     }
-    if (u.includes('/api/v1/profiles')) return ok({ profiles: [] });
+    if (u.includes('/api/v1/profiles')) {
+      // 画像列表 PUT：T17 用 putDelayMs 模拟慢服务器、putErrorStatus 模拟 500。
+      // 注意 '/api/v1/profiles' 包含 '/api/v1/profile' 子串，上面的分支必须先排除它，
+      // 否则这条分支永远走不到（T17 之前它就是死代码，画像保存一直没被测到）。
+      if (method === 'PUT' && /\/api\/v1\/profiles\/\d+/.test(u)) {
+        if (opts.putErrorStatus) {
+          return Promise.resolve({ ok: false, status: opts.putErrorStatus,
+            json: async () => ({ detail: 'boom' }),
+            text: async () => JSON.stringify({ detail: 'boom' }) });
+        }
+        if (opts.putDelayMs) return new Promise((r) => setTimeout(() => r(ok({ ok: true })), opts.putDelayMs));
+        return ok({ ok: true });
+      }
+      // profilesBody 可按 kind 分流：{ person: [...], job: [...] }，或直接 { profiles: [...] }
+      const pb = opts.profilesBody;
+      if (pb && (pb.person || pb.job)) {
+        const kind = (u.match(/kind=(\w+)/) || [])[1] || 'job';
+        return ok({ profiles: pb[kind] || [] });
+      }
+      return ok(pb || { profiles: [] });
+    }
     if (u.includes('/api/v1/sources')) return ok({ sources: [] });
     if (u.includes('/api/v1/jobs/discover/latest')) return ok({ task: null, jobs: [], pending_scoring: 0 });
     if (u.includes('/api/v1/queue')) {
@@ -625,6 +645,82 @@ async function main() {
     check('快照弹窗无 &lt; 实体', !snapText.includes('&lt;'), snapText.slice(0, 300));
     check('快照弹窗无 &quot; 实体', !snapText.includes('&quot;'), snapText.slice(0, 300));
     check('快照弹窗正确解码 &#39;', snapText.includes("We're looking"), snapText.slice(0, 300));
+    t.dom.window.close();
+  }
+
+  // T17 — 画像页保存（Issue 1）：点保存要立刻有忙态、成功有 toast、失败有可见报错。
+  // 背景：Victoria 点岗位画像保存后“没反应”——保存是 PUT + 两次画像重载共 3 轮串行接口，
+  // 全程零反馈（向导 Step-2 同款问题在 Deploy #7 修过，画像页漏了）；失败只写页面顶部
+  // 的 #err，滚到表单处根本看不到。修复前 T17b/T17c 应失败，T17a 是回归守护。
+  console.log('T17 画像页保存忙态与报错');
+  const JOB_PROFILE = { id: 7, name: '默认画像', kind: 'job', is_active: true, tailor_enabled: true,
+    profile: { targetTitles: ['AI Engineer'], salaryCurrency: 'CAD', salaryPeriod: 'annual',
+      salaryMin: 95000, oteMin: null, oteMax: null, segments: [], needsSponsorship: false } };
+  const PERSON_PROFILE = { id: 3, name: '默认画像', kind: 'person', is_active: true,
+    profile: { firstName: 'Victoria', lastName: 'Liu', email: 'v@test.com', authorizedWorkCountries: ['Canada'] } };
+  const profilesBody = { person: [PERSON_PROFILE], job: [JOB_PROFILE] };
+  {
+    // T17a — 正常保存：PUT 发出、toast 出现、表单收起（修复前后都应通过）
+    const t = boot({ profilesBody });
+    await sleep(700);
+    const editBtn = t.document.getElementById('jobEditBtn');
+    if (editBtn) editBtn.click();
+    await sleep(100);
+    const sel = t.document.getElementById('jp_needsSponsorship');
+    check('担保下拉按已存值 false 显示“不需要雇主担保”', sel && sel.value === 'no', sel && sel.value);
+    const saveBtn = t.document.getElementById('jobSaveBtn');
+    if (saveBtn) saveBtn.click();
+    await sleep(300);
+    const put = t.calls.find((c) => c.method === 'PUT' && c.url.includes('/api/v1/profiles/7'));
+    check('点保存发出 PUT /api/v1/profiles/7', !!put, JSON.stringify(t.calls.map((c) => c.method + ' ' + c.url)));
+    let saved = null;
+    try { saved = put && JSON.parse(put.body || '{}'); } catch (e) {}
+    check('PUT 体里 needsSponsorship=false', saved && saved.profile && saved.profile.needsSponsorship === false,
+      put && put.body);
+    const toastEl = t.document.getElementById('toast');
+    check('保存成功出现 toast', toastEl && toastEl.style.display === 'block' && (toastEl.textContent || '').includes('已保存'),
+      toastEl && `${toastEl.style.display} ${toastEl.textContent}`);
+    check('保存成功后表单收起', t.document.getElementById('jobForm').style.display === 'none'
+      && t.document.getElementById('jobView').style.display !== 'none',
+      `form=${t.document.getElementById('jobForm').style.display}`);
+    t.dom.window.close();
+  }
+  {
+    // T17b — 慢服务器：PUT 3 秒才回，期间按钮必须有忙态（修复前失败：全程零反馈，看着像没反应）
+    const t = boot({ profilesBody, putDelayMs: 3000 });
+    await sleep(700);
+    const editBtn = t.document.getElementById('jobEditBtn');
+    if (editBtn) editBtn.click();
+    await sleep(100);
+    const saveBtn = t.document.getElementById('jobSaveBtn');
+    if (saveBtn) saveBtn.click();
+    await sleep(300);
+    check('保存等待中按钮禁用', saveBtn && saveBtn.disabled === true, saveBtn && String(saveBtn.disabled));
+    check('保存等待中按钮显示“保存中”', saveBtn && (saveBtn.textContent || '').includes('保存中'),
+      saveBtn && saveBtn.textContent);
+    await sleep(3200);
+    const toastEl = t.document.getElementById('toast');
+    check('慢保存完成后 toast 出现', toastEl && toastEl.style.display === 'block' && (toastEl.textContent || '').includes('已保存'),
+      toastEl && `${toastEl.style.display} ${toastEl.textContent}`);
+    check('慢保存完成后按钮恢复', saveBtn && saveBtn.disabled === false, saveBtn && String(saveBtn.disabled));
+    t.dom.window.close();
+  }
+  {
+    // T17c — PUT 500：错误必须出现在用户看得见的地方（toast，8 秒），不能只写顶部 #err
+    const t = boot({ profilesBody, putErrorStatus: 500 });
+    await sleep(700);
+    const editBtn = t.document.getElementById('jobEditBtn');
+    if (editBtn) editBtn.click();
+    await sleep(100);
+    const saveBtn = t.document.getElementById('jobSaveBtn');
+    if (saveBtn) saveBtn.click();
+    await sleep(300);
+    const toastEl = t.document.getElementById('toast');
+    check('保存失败时 toast 显示错误', toastEl && toastEl.style.display === 'block' && (toastEl.textContent || '').includes('保存失败'),
+      toastEl && `${toastEl.style.display} ${toastEl.textContent}`);
+    check('保存失败后按钮恢复可用', saveBtn && saveBtn.disabled === false, saveBtn && String(saveBtn.disabled));
+    check('保存失败后表单保持打开（可重试）', t.document.getElementById('jobForm').style.display !== 'none',
+      t.document.getElementById('jobForm').style.display);
     t.dom.window.close();
   }
 

@@ -200,9 +200,32 @@ async function getResumeForJob(jobId, profile) {
       return { name: r.filename, dataUrl: blob.data_url, versionId: r.version_id,
                tailored: true, hash: r.pdf_hash };
     }
+    // 母版：后端 for-job 直接回了 data_url（画像里简历的正文），优先用它——
+    // 插件侧 profile.resumeFile 可能来自旧缓存，不一定有正文。
+    if (r.data_url) {
+      const rf = (profile && profile.resumeFile) || {};
+      return { name: r.filename || rf.name || "", dataUrl: r.data_url, versionId: 0, tailored: false };
+    }
   } catch (e) { /* 降级用母版 */ }
   const rf = (profile && profile.resumeFile) || {};
   return { name: rf.name || "", dataUrl: rf.dataUrl || "", versionId: 0, tailored: false };
+}
+
+async function resolveJobCountries(job) {
+  // Issue 3：职位国家解析。队列自带的直接用；没有时问后端（先确定性直认，
+  // 认不出再调 LLM，结果存回职位）；同一地点串只问一次（本地缓存）。
+  // 任何失败都返回 []——填表侧再就地解析地点串，解析失败绝不能中断跑批。
+  try {
+    if (job.countries && job.countries.length) return job.countries;
+    const loc = job.location || '';
+    const key = 'countries:' + loc;
+    const cached = (await chrome.storage.local.get([key]))[key];
+    if (Array.isArray(cached)) return cached;
+    const r = await apiPost('/api/v1/location/countries', { job_id: job.id, location: loc });
+    const list = (r && Array.isArray(r.countries)) ? r.countries : [];
+    await chrome.storage.local.set({ [key]: list });
+    return list;
+  } catch (e) { return []; }
 }
 
 async function fetchBackendProfile() {
@@ -435,13 +458,16 @@ async function _runDailyQueueImpl(trigger) {
         resumeInfo.name = displayResumeName(profile, resumeInfo.name);
         profile.resumeFile = { name: resumeInfo.name, dataUrl: resumeInfo.dataUrl };
       }
-      let fill = await withHeartbeat(sendToTab(tab.id, { type: 'AUTOAPPLY_FILL', profile: profile || {}, options: { jobLocation: job.location || '' } }, 120000), counts);
+      // 职位国家（Issue 3）：队列自带的优先；没有时问后端（先确定性直认，
+      // 认不出再调 LLM，结果存回职位）。拿不到也不要紧——填表侧再就地解析。
+      const jobCountries = await resolveJobCountries(job);
+      let fill = await withHeartbeat(sendToTab(tab.id, { type: 'AUTOAPPLY_FILL', profile: profile || {}, options: { jobLocation: job.location || '', jobCountries } }, 120000), counts);
       if (!fill.ok) throw new Error('fill failed: ' + (fill.error || ''));
       // 后台标签页渲染慢：首扫没找到表单时多等几次再扫，表单出现即填上。
       // 只在 noForm（整页无字段）时重试，正常填过的页面不受影响。
       for (let attempt = 0; attempt < 2 && fill.result && fill.result.noForm; attempt++) {
         await sleep(3000);
-        const retry = await withHeartbeat(sendToTab(tab.id, { type: 'AUTOAPPLY_FILL', profile: profile || {}, options: { jobLocation: job.location || '' } }, 120000), counts);
+        const retry = await withHeartbeat(sendToTab(tab.id, { type: 'AUTOAPPLY_FILL', profile: profile || {}, options: { jobLocation: job.location || '', jobCountries } }, 120000), counts);
         if (retry.ok && retry.result) fill = retry;
         else break;
       }

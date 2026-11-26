@@ -91,7 +91,74 @@ def _queue_jobs(uid: str) -> list:
     fresh = [j for j in jobs
              if j["id"] not in done and (j.get("score") or 0) >= 40]
     fresh.sort(key=lambda j: (-(j.get("score") or 0), j.get("created_at", 0)))
-    return manual + fresh
+    out = manual + fresh
+    # 插件填表直接读归一化国家，不用每次重新解析地点串（Issue 3）
+    for j in out:
+        j["countries"] = db.get_job_countries(j)
+    return out
+
+
+# ---------- 职位国家解析（Issue 3） ----------
+
+# 地点串里的国家名直认（确定性第一层；LLM 只在认不出时才调）。
+# 刻意只放国家名，不放省/市映射——省/市由插件侧的表 + LLM 兜底，避免两边大表漂移。
+_COUNTRY_NAME_ALIASES = {
+    "canada": "Canada",
+    "united states": "United States", "usa": "United States", "us": "United States",
+    "america": "United States",
+    "united kingdom": "United Kingdom", "great britain": "United Kingdom",
+    "britain": "United Kingdom", "england": "United Kingdom", "uk": "United Kingdom",
+    "ireland": "Ireland", "germany": "Germany", "deutschland": "Germany",
+    "france": "France", "netherlands": "Netherlands", "holland": "Netherlands",
+    "australia": "Australia", "new zealand": "New Zealand", "singapore": "Singapore",
+    "india": "India", "japan": "Japan", "china": "China",
+    "south korea": "South Korea", "korea": "South Korea", "taiwan": "Taiwan",
+    "mexico": "Mexico", "brazil": "Brazil", "spain": "Spain", "italy": "Italy",
+    "switzerland": "Switzerland", "sweden": "Sweden", "norway": "Norway",
+    "denmark": "Denmark", "finland": "Finland", "belgium": "Belgium",
+    "austria": "Austria", "portugal": "Portugal", "israel": "Israel",
+    "czech republic": "Czech Republic", "czechia": "Czech Republic",
+    "poland": "Poland", "greece": "Greece", "turkey": "Türkiye",
+    "south africa": "South Africa", "thailand": "Thailand", "vietnam": "Vietnam",
+    "philippines": "Philippines", "indonesia": "Indonesia", "malaysia": "Malaysia",
+}
+
+
+def deterministic_job_countries(location: str) -> list:
+    """地点串里直接找国家名（不区分大小写、按词边界），命中即返回。"""
+    text = " " + re.sub(r"[^a-z0-9 ]+", " ", (location or "").lower()) + " "
+    found = []
+    for alias, name in _COUNTRY_NAME_ALIASES.items():
+        if f" {alias} " in text and name not in found:
+            found.append(name)
+    return found
+
+
+def resolve_job_countries(uid: str, job_id: int, location: str = "") -> dict:
+    """Issue 3：取职位的归一化国家列表。已存的直接用；没有时先确定性直认，
+    认不出再调 LLM（只对真正跑批/查看的职位花 token），结果存回职位上。
+    永远失败静默，返回 {"countries": [], "source": ...}；插件拿不到时按
+    “认不出”进待人工，永不替答。"""
+    try:
+        job = db.get_job(job_id) or {}
+        if not job or job.get("user_id") != uid:
+            return {"countries": [], "source": "none"}
+        stored = db.get_job_countries(job)
+        if stored:
+            return {"countries": stored, "source": "stored"}
+        loc = location or job.get("location") or ""
+        det = deterministic_job_countries(loc)
+        if det:
+            db.set_job_countries(job_id, det, "deterministic")
+            return {"countries": det, "source": "deterministic"}
+        jd = db.job_description(job) or ""
+        llm_countries = llm.llm_extract_job_countries(loc, jd)
+        if llm_countries:
+            db.set_job_countries(job_id, llm_countries, "llm")
+            return {"countries": llm_countries, "source": "llm"}
+        return {"countries": [], "source": "none"}
+    except Exception:
+        return {"countries": [], "source": "none"}
 
 
 def get_queue(uid: str, top_n: int = 10):

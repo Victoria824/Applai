@@ -1540,11 +1540,20 @@ function collectForm(f, fields) {
 }
 async function savePerson() {
   if (!curPerson) { toast("没有可保存的画像"); return; }
-  const p = collectForm("pp", PERSON_PF_FIELDS);
-  if (!p.email) { toast("请填写邮箱 / Email required"); return; }
-  if (pendingResume) p.resumeFile = pendingResume;
-  else if (curPerson.profile && curPerson.profile.resumeFile) p.resumeFile = curPerson.profile.resumeFile;
+  // Issue 1：保存是 PUT + 两次画像重载共 3 轮串行接口，慢服务器上全程零反馈
+  // 就是“点了保存没反应”的现场——保存期间锁住按钮并显示“保存中…”（向导 Step-2
+  // 同款修法，Deploy #7；画像页漏了）。失败除了写顶部 #err，还要 toast 8 秒，
+  // 否则滚到表单处根本看不到报错。
+  const btn = $("personSaveBtn");
+  const label = btn ? btn.innerHTML : "";
+  if (btn) { btn.disabled = true; btn.innerHTML = "保存中…<span class=\"en\">Saving…</span>"; }
   try {
+    const p = collectForm("pp", PERSON_PF_FIELDS);
+    if (!p.email) { toast("请填写邮箱 / Email required"); return; }
+    if (pendingResume) p.resumeFile = pendingResume;
+    // 注意：不要把 curPerson.profile.resumeFile 原样带回去——列表接口返回的是
+    // 剥离了 dataUrl 的 stub（{name, hasData}），带回去会把库里的简历正文覆盖掉
+    // （Issue 2 根因）。不传 resumeFile 时后端保留已存的简历。
     await api(`/api/v1/profiles/${curPerson.id}`, {
       method: "PUT", headers: {"Content-Type": "application/json"},
       body: JSON.stringify({ profile: p })
@@ -1552,13 +1561,17 @@ async function savePerson() {
     closePersonEdit();
     await loadAllProfiles();
     toast("简历画像已保存 ✓");
-  } catch (e) { showErr("保存失败：" + e.message); }
+  } catch (e) { showErr("保存失败：" + e.message); toast("保存失败：" + e.message, 8000); }
+  finally { if (btn) { btn.disabled = false; btn.innerHTML = label; } }
 }
 async function saveJob() {
   if (!curJob) { toast("没有可保存的画像"); return; }
-  const p = collectForm("jp", JOB_PF_FIELDS);
-  const tailorEl = $("jp__tailor");
+  const btn = $("jobSaveBtn");
+  const label = btn ? btn.innerHTML : "";
+  if (btn) { btn.disabled = true; btn.innerHTML = "保存中…<span class=\"en\">Saving…</span>"; }
   try {
+    const p = collectForm("jp", JOB_PF_FIELDS);
+    const tailorEl = $("jp__tailor");
     await api(`/api/v1/profiles/${curJob.id}`, {
       method: "PUT", headers: {"Content-Type": "application/json"},
       body: JSON.stringify({ profile: p, tailor_enabled: tailorEl ? tailorEl.checked : false })
@@ -1566,7 +1579,8 @@ async function saveJob() {
     closeJobEdit();
     await loadAllProfiles();
     toast("岗位画像已保存 ✓");
-  } catch (e) { showErr("保存失败：" + e.message); }
+  } catch (e) { showErr("保存失败：" + e.message); toast("保存失败：" + e.message, 8000); }
+  finally { if (btn) { btn.disabled = false; btn.innerHTML = label; } }
 }
 
 /* ----- 侧栏 widget ----- */
@@ -2402,9 +2416,13 @@ $("obNext").onclick = async () => {
             body: JSON.stringify({ name: "默认画像", kind, profile: {} }) });
           act = { id: cr.id, profile: {} };
         }
+        // 列表接口剥离了简历 dataUrl：合并回去的 resumeFile 只是 stub，
+        // 带上它会把库里的简历正文覆盖掉（Issue 2 根因）；删掉它，后端保留已存简历。
+        const merged = { ...(act.profile || {}), ...payload };
+        if (merged.resumeFile && !merged.resumeFile.dataUrl) delete merged.resumeFile;
         await api(`/api/v1/profiles/${act.id}`, { method: "PUT",
           headers: {"Content-Type": "application/json"},
-          body: JSON.stringify({ profile: { ...(act.profile || {}), ...payload } }) });
+          body: JSON.stringify({ profile: merged }) });
       };
       await saveKind("person", {
         authorizedWorkCountries: countries,

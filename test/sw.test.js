@@ -33,8 +33,8 @@ async function waitFor(cond, timeoutMs, stepMs = 100) {
 function ok(body) { return { ok: true, status: 200, json: async () => body }; }
 
 function makeEnv(cfg = {}) {
-  const api = { progressPosts: [], controlState: 'running', apps: [], snapshots: [] };
-  const tabs = { updatedListeners: [], created: [] };
+  const api = { progressPosts: [], controlState: 'running', apps: [], snapshots: [], countriesCalls: [] };
+  const tabs = { updatedListeners: [], created: [], fillMessages: [] };
   let fillStart = 0, loadStart = 0;
   const runtime = { messageHandler: null };
   const chromeStub = {
@@ -44,6 +44,7 @@ function makeEnv(cfg = {}) {
       async remove() {},
       sendMessage(tabId, msg, cb) {
         if (msg.type === 'AUTOAPPLY_FILL') {
+          tabs.fillMessages.push(msg);
           fillStart = Date.now();
           if (cfg.flipControlAtFillMs != null) setTimeout(() => { api.controlState = 'stopped'; }, cfg.flipControlAtFillMs);
           setTimeout(() => cb(cfg.fillResponse || FILL_MANUAL), cfg.fillDelayMs ?? 0);
@@ -73,7 +74,12 @@ function makeEnv(cfg = {}) {
     if (p.startsWith('/api/v1/jobs/discover/auto')) return ok({});
     if (p.startsWith('/api/v1/queue')) return ok({ jobs: cfg.jobs ?? [JOB] });
     if (p.startsWith('/api/v1/profile')) return ok({ profile: null });
-    if (p.startsWith('/api/v1/resume/for-job')) return ok({});
+    if (p.startsWith('/api/v1/resume/for-job')) return ok(cfg.forJobBody ?? {});
+    if (p.startsWith('/api/v1/location/countries')) {
+      if (cfg.countriesFail) throw new Error('countries endpoint down');
+      api.countriesCalls.push(JSON.parse(opts.body || '{}'));
+      return ok(cfg.countriesBody ?? { countries: [], source: 'none' });
+    }
     if (p.startsWith('/api/v1/applications/snapshot')) { api.snapshots.push(JSON.parse(opts.body || '{}')); return ok({ ok: true }); }
     if (p.startsWith('/api/v1/applications')) { api.apps.push(JSON.parse(opts.body || '{}')); return ok({ ok: true }); }
     if (p.startsWith('/api/v1/settings')) return ok({ schedule_enabled: false });
@@ -149,6 +155,78 @@ console.log('\n[S3] 快速跑批：1 个待人工职位，应以 done 结束');
   check('本轮最终状态 done', last && last.state === 'done', JSON.stringify(last));
   check('已处理 1 个、待人工 1 个、成功 0、失败 0', last && last.processed === 1 && last.manual === 1 && last.submitted === 0 && last.failed === 0, JSON.stringify(last));
   check('待人工记录已上报', env.api.apps.length === 1 && env.api.apps[0].status === 'needs_manual', JSON.stringify(env.api.apps));
+}
+
+/* ---------- S4: 母版简历走 for-job 的 data_url（Issue 2） ---------- */
+// 后端 for-job 在非改写分支直接回了母版 data_url；旧 sw.js 只认 tailored 分支，
+// 其余一律回退到插件侧 profile.resumeFile——它可能来自旧缓存或已被剥离，
+// 结果就是填表时没有简历可附、职位进待人工。修好后 for-job 的 data_url 要进
+// 填表消息和快照。修复前（旧 sw.js）应失败。
+console.log('\n[S4] 母版简历用 for-job 返回的 data_url');
+{
+  const MASTER = 'data:application/pdf;base64,JVBERi0xLjQKZmFrZS1tYXN0ZXI=';
+  const env = makeEnv({ fillDelayMs: 0,
+    forJobBody: { tailored: false, pdf_hash: '', filename: 'Victoria_Liu_Resume.pdf', version_id: 0, data_url: MASTER } });
+  env.startRun();
+  await waitFor(() => env.tabs.created.length === 1, 5000);
+  env.fireTabComplete();
+  await waitFor(() => env.api.apps.length === 1, 20000);
+  const sent = env.tabs.fillMessages[0] || {};
+  check('填表消息里带上母版简历 dataUrl', sent.profile && sent.profile.resumeFile
+    && sent.profile.resumeFile.dataUrl === MASTER, JSON.stringify(sent.profile && sent.profile.resumeFile));
+  const snap = env.api.snapshots[0] || {};
+  check('快照里 resume_data_url 是母版', snap.resume_data_url === MASTER, JSON.stringify(snap.resume_data_url));
+  await waitFor(() => env.lastProgress() && env.lastProgress().state === 'done', 40000);
+}
+
+/* ---------- S5: 职位国家解析进填表消息（Issue 3） ---------- */
+// 跑批时插件先问后端要归一化国家（已存的直接用；没有时后端确定性直认，
+// 认不出再调 LLM）；同一地点串只问一次；后端挂了也不许中断跑批。
+console.log('\n[S5] 职位国家解析进填表消息');
+{
+  const PARIS1 = { ...JOB, id: 201, location: 'Paris, France' };
+  const PARIS2 = { ...JOB, id: 202, location: 'Paris, France' };
+  // (a) 同地点两职位：端点只问一次（第二份走本地缓存），两份填表消息都带 France
+  const envA = makeEnv({ fillDelayMs: 0, jobs: [PARIS1, PARIS2],
+    countriesBody: { countries: ['France'], source: 'llm' } });
+  envA.startRun();
+  await waitFor(() => envA.tabs.created.length === 1, 5000);
+  envA.fireTabComplete();
+  await waitFor(() => envA.tabs.fillMessages.length === 2, 45000);
+  check('同地点只问一次端点', envA.api.countriesCalls.length === 1,
+    JSON.stringify(envA.api.countriesCalls));
+  check('端点请求带 job_id 和地点', envA.api.countriesCalls[0]
+    && envA.api.countriesCalls[0].job_id === 201 && envA.api.countriesCalls[0].location === 'Paris, France',
+    JSON.stringify(envA.api.countriesCalls[0]));
+  check('两份填表消息都带 jobCountries France',
+    envA.tabs.fillMessages.every((m) => JSON.stringify(m.options.jobCountries) === '["France"]'),
+    JSON.stringify(envA.tabs.fillMessages.map((m) => m.options)));
+  await waitFor(() => envA.lastProgress() && envA.lastProgress().state === 'done', 45000);
+  // (b) 队列自带国家：不问端点，直接用
+  const envB = makeEnv({ fillDelayMs: 0, jobs: [{ ...JOB, id: 203, countries: ['Canada'] }],
+    countriesBody: { countries: ['France'], source: 'llm' } });
+  envB.startRun();
+  await waitFor(() => envB.tabs.created.length === 1, 5000);
+  envB.fireTabComplete();
+  await waitFor(() => envB.tabs.fillMessages.length === 1, 20000);
+  check('队列自带国家时不问端点', envB.api.countriesCalls.length === 0,
+    JSON.stringify(envB.api.countriesCalls));
+  check('填表消息用队列自带的 Canada',
+    JSON.stringify(envB.tabs.fillMessages[0].options.jobCountries) === '["Canada"]',
+    JSON.stringify(envB.tabs.fillMessages[0].options));
+  await waitFor(() => envB.lastProgress() && envB.lastProgress().state === 'done', 40000);
+  // (c) 端点挂了：跑批照常走完，jobCountries 为空（填表侧再就地解析）
+  const envC = makeEnv({ fillDelayMs: 0, countriesFail: true });
+  envC.startRun();
+  await waitFor(() => envC.tabs.created.length === 1, 5000);
+  envC.fireTabComplete();
+  await waitFor(() => envC.tabs.fillMessages.length === 1, 20000);
+  check('端点挂了填表消息 jobCountries 为空',
+    JSON.stringify(envC.tabs.fillMessages[0].options.jobCountries) === '[]',
+    JSON.stringify(envC.tabs.fillMessages[0].options));
+  await waitFor(() => envC.lastProgress() && envC.lastProgress().state === 'done', 40000);
+  check('端点挂了跑批仍以 done 结束', envC.lastProgress() && envC.lastProgress().state === 'done',
+    JSON.stringify(envC.lastProgress()));
 }
 
 console.log(`\n结果：${passed} 通过，${failed} 失败`);

@@ -107,6 +107,57 @@ def llm_score(profile: dict, job: dict, timeout: int = 60) -> tuple[float | None
         return None, []
 
 
+COUNTRIES_PROMPT = """从下面的职位地点和职位描述里，判断这个职位实际在哪些国家工作。
+只返回 JSON（不要用 markdown 包裹）：{{"countries": ["Canada"]}}
+要求：
+- 用英文国家标准名（如 Canada、United States、France、United Kingdom、Germany）。
+- 地点是城市/省份时按常识推断国家（如 Toronto→Canada，Paris→France，Berlin→Germany）。
+- 远程（Remote）且没有国家信息时返回 []，不要猜。
+- 多地职位列出所有国家；实在判断不出也返回 []，不要编。
+
+职位地点：
+{location}
+
+职位描述（截取）：
+{jd}
+"""
+
+
+def llm_extract_job_countries(location: str, jd_text: str = "", timeout: int = 20) -> list:
+    """LLM 解析职位国家（Issue 3 兜底）：地点串里认不出国家时才调。
+    任何失败返回 []，调用方按“认不出”处理（进待人工，永不替答）。
+    每次调用约 100 输入 token + 几十输出 token，极便宜；结果会存到职位上，
+    同一职位只解析一次。"""
+    cfg = get_config()
+    if not cfg["api_key"]:
+        return []
+    try:
+        r = httpx.post(
+            f"{cfg['base_url']}/chat/completions",
+            headers={"Authorization": f"Bearer {cfg['api_key']}", "Content-Type": "application/json"},
+            json={
+                "model": cfg["model"],
+                "messages": [{"role": "user", "content": COUNTRIES_PROMPT.format(
+                    location=location or "（无地点）", jd=(jd_text or "")[:1500] or "（无描述）")}],
+                "temperature": 0,
+                "max_tokens": 120,
+            },
+            timeout=timeout,
+        )
+        r.raise_for_status()
+        data = _extract_json(r.json()["choices"][0]["message"]["content"])
+        if not data:
+            return []
+        out = []
+        for c in data.get("countries") or []:
+            name = str(c).strip()
+            if name and name not in out:
+                out.append(name)
+        return out[:5]
+    except Exception:
+        return []
+
+
 RESUME_PROMPT = """从下面的简历文本中提取求职者信息，只返回 JSON，不要任何解释。
 字段（没有就留空字符串 / 空数组 / null）：
 {"firstName": "", "lastName": "", "email": "", "phone": "", "location": "",
